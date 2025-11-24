@@ -1,10 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { CreateJobDto } from './dto/create-job.dto';
 import { UpdateJobDto } from './dto/update-job.dto';
-import { Like, Repository } from 'typeorm';
+import { ILike, Like, Repository } from 'typeorm';
 import { JobEntity } from 'src/Entities/job.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { title } from 'process';
+import { FilterJobDto } from './dto/filter-job.dto';
 
 @Injectable()
 export class JobService {
@@ -16,19 +17,34 @@ export class JobService {
     return job;
   }
 
-  async findAll() {
-    const jobs = await this.jobRepo.find();
-    return jobs;
-  }
+  async findAll(filterDto: FilterJobDto) {
+    const { vacancy, page = 1, limit = 20 } = filterDto;
+    const skip = (page - 1) * limit;
 
+    if (vacancy) {
+      return await this.jobRepo
+        .createQueryBuilder('job')
+        .where('LOWER(job.vacancy) LIKE LOWER(:vacancy)', {
+          vacancy: `%${vacancy}%`,
+        })
+        .take(limit)
+        .skip(skip)
+        .getManyAndCount();
+    }
+
+    return await this.jobRepo.findAndCount({
+      take: limit,
+      skip: skip
+    });
+  }
   async findAllByQuery(query: string) {
-  return await this.jobRepo
-    .createQueryBuilder('job')
-    .where('LOWER(job.vacancy) LIKE :q', {
-      q: `%${query.toLowerCase()}%`,
-    })
-    .getMany();
-}
+    return await this.jobRepo
+      .createQueryBuilder('job')
+      .where('LOWER(job.vacancy) LIKE :q', {
+        q: `%${query.toLowerCase()}%`,
+      })
+      .getMany();
+  }
 
   async findOne(id: number) {
     const job = await this.jobRepo.findOne({ where: { id } });

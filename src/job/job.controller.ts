@@ -2,6 +2,8 @@ import { Controller, Get, Post, Body, Patch, Param, Delete, Query } from '@nestj
 import { JobService } from './job.service';
 import { UpdateJobDto } from './dto/update-job.dto';
 import { CreateJobDto } from './dto/create-job.dto';
+import { FilterJobDto } from './dto/filter-job.dto';
+import { ApiQuery } from '@nestjs/swagger';
 
 @Controller('job')
 export class JobController {
@@ -11,10 +13,12 @@ export class JobController {
   async create(@Body() createJobDto: CreateJobDto) {
     return await this.jobService.create(createJobDto);
   }
-
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'vacancy', required: false, type: String })
   @Get('all')
-  async findAll() {
-    return await this.jobService.findAll();
+  async findAll(@Query() filterDto: FilterJobDto) {
+    return await this.jobService.findAll(filterDto);
   }
   @Get('search')
   async searchJobs(@Query('query') query: string) {
