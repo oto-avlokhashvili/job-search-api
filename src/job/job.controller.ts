@@ -1,0 +1,38 @@
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query } from '@nestjs/common';
+import { JobService } from './job.service';
+import { UpdateJobDto } from './dto/update-job.dto';
+import { CreateJobDto } from './dto/create-job.dto';
+
+@Controller('job')
+export class JobController {
+  constructor(private readonly jobService: JobService) {}
+
+  @Post('create')
+  async create(@Body() createJobDto: CreateJobDto) {
+    return await this.jobService.create(createJobDto);
+  }
+
+  @Get('all')
+  async findAll() {
+    return await this.jobService.findAll();
+  }
+  @Get('search')
+  async searchJobs(@Query('query') query: string) {
+    return this.jobService.findAllByQuery(query);
+  }
+
+  @Get(':id')
+  async findOne(@Param('id') id: string) {
+    return await this.jobService.findOne(+id);
+  }
+
+  @Patch(':id')
+  async update(@Param('id') id: string, @Body() updateJobDto: UpdateJobDto) {
+    return await this.jobService.update(+id, updateJobDto);
+  }
+
+  @Delete(':id')
+  async remove(@Param('id') id: string) {
+    return await this.jobService.remove(+id);
+  }
+}
