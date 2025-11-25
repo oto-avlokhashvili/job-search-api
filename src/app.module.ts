@@ -8,9 +8,10 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { ScheduleService } from './Schedulers/schedule.service';
 import { TelegramService } from './Schedulers/telegram.service';
 import { ScraperService } from './Schedulers/scrapper.service';
+import { UserModule } from './user/user.module';
 
 @Module({
-  imports: [TypeOrmModule.forRoot(pgConfig), JobModule, ScheduleModule.forRoot()],
+  imports: [TypeOrmModule.forRoot(pgConfig), JobModule, ScheduleModule.forRoot(), UserModule],
   controllers: [AppController],
   providers: [AppService, ScheduleService, ScraperService],
   
