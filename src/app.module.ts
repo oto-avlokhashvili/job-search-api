@@ -9,9 +9,10 @@ import { ScheduleService } from './Schedulers/schedule.service';
 import { TelegramService } from './Schedulers/telegram.service';
 import { ScraperService } from './Schedulers/scrapper.service';
 import { UserModule } from './user/user.module';
+import { AuthModule } from './auth/auth.module';
 
 @Module({
-  imports: [TypeOrmModule.forRoot(pgConfig), JobModule, ScheduleModule.forRoot(), UserModule],
+  imports: [TypeOrmModule.forRoot(pgConfig), JobModule, ScheduleModule.forRoot(), UserModule, AuthModule],
   controllers: [AppController],
   providers: [AppService, ScheduleService, ScraperService],
   
