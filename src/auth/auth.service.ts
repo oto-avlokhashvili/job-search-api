@@ -20,4 +20,11 @@ export class AuthService {
         const payload: AuthJwtPayload = {sub: userId}
         return this.jwtService.sign(payload);
     }
+
+    async validateJwtUser(userId:number){
+        const user = await this.userService.findOne(userId)
+        if(!user) throw new UnauthorizedException();
+            const currentUser = user;            
+        return currentUser;
+    }
 }

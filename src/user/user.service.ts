@@ -22,8 +22,13 @@ export class UserService {
     return users;
   }
 
-  findOne(id: number) {
-    return `This action returns a #${id} user`;
+  async findOne(id: number) {
+    return await this.userRepo.findOne({
+      where: {
+        id,
+      },
+      select: ['id', 'firstName', 'lastName', 'email', 'createdAt']
+    })
   }
 
   update(id: number, updateUserDto: UpdateUserDto) {
