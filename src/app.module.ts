@@ -10,9 +10,12 @@ import { TelegramService } from './Schedulers/telegram.service';
 import { ScraperService } from './Schedulers/scrapper.service';
 import { UserModule } from './user/user.module';
 import { AuthModule } from './auth/auth.module';
+import { ConfigModule } from '@nestjs/config';
 
 @Module({
-  imports: [TypeOrmModule.forRoot(pgConfig), JobModule, ScheduleModule.forRoot(), UserModule, AuthModule],
+  imports: [TypeOrmModule.forRoot(pgConfig), JobModule, ScheduleModule.forRoot(), UserModule, AuthModule, ConfigModule.forRoot({
+    isGlobal:true
+  })],
   controllers: [AppController],
   providers: [AppService, ScheduleService, ScraperService],
   
