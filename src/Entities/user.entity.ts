@@ -1,6 +1,7 @@
 import { BeforeInsert, Column, CreateDateColumn, Entity, OneToMany, PrimaryGeneratedColumn } from "typeorm";
 import { JobEntity } from "./job.entity";
 import * as bcrypt from 'bcrypt'
+import { Subscription } from "src/enums/subscriptions.enum";
 @Entity()
 export class User {
     @PrimaryGeneratedColumn()
@@ -14,6 +15,13 @@ export class User {
 
     @Column()
     email:string;
+    
+    @Column({
+        type:'enum',
+        enum: Subscription,
+        default:Subscription.BASIC
+    })
+    subscription: Subscription
 
     @CreateDateColumn()
     createdAt:Date;
