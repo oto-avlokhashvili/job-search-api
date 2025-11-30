@@ -8,7 +8,11 @@ import { ApiQuery } from '@nestjs/swagger';
 @Controller('job')
 export class JobController {
   constructor(private readonly jobService: JobService) {}
-
+   @Post('scrapper')
+  async insertMany(): Promise<boolean> {
+    await this.jobService.scrapper();
+    return true;
+  }
   @Post('create')
   async create(@Body() createJobDto: CreateJobDto) {
     return await this.jobService.create(createJobDto);
@@ -38,5 +42,10 @@ export class JobController {
   @Delete(':id')
   async remove(@Param('id') id: string) {
     return await this.jobService.remove(+id);
+  }
+
+  @Delete()
+  hardDelete() {
+    return this.jobService.hardRemove();
   }
 }

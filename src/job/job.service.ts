@@ -6,15 +6,30 @@ import { JobEntity } from 'src/Entities/job.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { title } from 'process';
 import { FilterJobDto } from './dto/filter-job.dto';
+import { ScraperService } from 'src/Schedulers/scrapper.service';
 
 @Injectable()
 export class JobService {
-  constructor(@InjectRepository(JobEntity) private jobRepo: Repository<JobEntity>) {
+  constructor(private scraperService: ScraperService, @InjectRepository(JobEntity) private jobRepo: Repository<JobEntity>) {
 
   }
   async create(createJobDto: CreateJobDto) {
     const job = await await this.jobRepo.save(createJobDto);
     return job;
+  }
+
+  async scrapper(){
+     await this.scraperService.scrapeJobs('', 1, {
+      maxPages: 17
+    });
+  }
+  async insertMany(createJobDto: CreateJobDto[]) {
+    await this.jobRepo
+      .createQueryBuilder()
+      .insert()
+      .into(JobEntity)
+      .values(createJobDto)
+      .execute();
   }
 
   async findAll(filterDto: FilterJobDto) {
@@ -70,5 +85,17 @@ export class JobService {
       throw new NotFoundException(`Job with ID ${id} not found`);
     }
     return await this.jobRepo.remove(job);
+  }
+
+  hardRemove() {
+    return this.jobRepo.clear();
+  }
+
+  async manualScrapper(){
+    await this.scraperService.scrapeJobs('', 1, {
+            maxJobs: 100,
+            delayBetweenRequests: 2000,
+            maxPages: 17
+        });
   }
 }

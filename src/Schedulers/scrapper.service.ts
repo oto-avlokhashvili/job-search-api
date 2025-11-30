@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import { JobService } from 'src/job/job.service';
@@ -26,7 +26,8 @@ export interface ScraperResult {
 
 @Injectable()
 export class ScraperService {
-  constructor(private readonly jobService:JobService){}
+  constructor(@Inject(forwardRef(() => JobService))
+    private readonly jobService: JobService,){}
   private readonly logger = new Logger(ScraperService.name);
   private readonly baseUrl = 'https://www.jobs.ge';
 
@@ -239,9 +240,10 @@ export class ScraperService {
         this.logger.log('============================================================');
         console.log(JSON.stringify(allJobs, null, 2));
         console.log(allJobs.length);
-        allJobs.forEach((item) => {
+        /* allJobs.forEach((item) => {
             this.jobService.create(item)
-        })
+        }) */
+        this.jobService.insertMany(allJobs);
         this.logger.log('============================================================');
       } else {
         this.logger.log('\n❌ No jobs found');
