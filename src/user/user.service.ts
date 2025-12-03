@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -44,5 +44,22 @@ export class UserService {
         email,
       },
     })
+  }
+  async linkTelegramId(userId: number, chatId: number) {
+  const user = await this.userRepo.findOne({ where: { id:userId } })
+      if (!user) {
+        throw new NotFoundException(`user with ID ${userId} not found`);
+      }
+      await this.userRepo.update({id:userId}, {telegramChatId:chatId})
+      user.telegramChatId = chatId
+      return user;
+}
+
+
+  async findByTelegramId(chatId: number) {
+    return await this.userRepo.findOne({
+      where: { telegramChatId: chatId },
+      select: ['id', 'firstName', 'lastName', 'email', 'subscription', 'telegramChatId']
+    });
   }
 }
