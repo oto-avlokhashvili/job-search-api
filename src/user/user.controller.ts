@@ -26,7 +26,7 @@ export class UserController {
   @Patch('link-telegram/:id/:chatId')
   linkTelegram(
     @Param('id', ParseIntPipe) id: number,
-    @Param('chatId', ParseIntPipe) chatId: number | null
+    @Param('chatId', ParseIntPipe) chatId: number
   ) {
     return this.userService.linkTelegramId(id, chatId);
   }
