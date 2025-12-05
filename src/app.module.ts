@@ -6,18 +6,18 @@ import { pgConfig } from 'dbConfig';
 import { JobModule } from './job/job.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ScheduleService } from './Schedulers/schedule.service';
-import { TelegramService } from './Schedulers/telegram.service';
 import { ScraperService } from './Schedulers/scrapper.service';
 import { UserModule } from './user/user.module';
 import { AuthModule } from './auth/auth.module';
 import { ConfigModule } from '@nestjs/config';
+import { TelegramModule } from './telegram/telegram.module';
 
 @Module({
-  imports: [TypeOrmModule.forRoot(pgConfig), JobModule, ScheduleModule.forRoot(), UserModule, AuthModule, ConfigModule.forRoot({
+  imports: [TypeOrmModule.forRoot(pgConfig), JobModule, ScheduleModule.forRoot(), UserModule, TelegramModule, AuthModule , ConfigModule.forRoot({
     isGlobal:true
   })],
   controllers: [AppController],
-  providers: [AppService, ScheduleService, ScraperService],
+  providers: [AppService, ScheduleService],
   
 })
 export class AppModule {}

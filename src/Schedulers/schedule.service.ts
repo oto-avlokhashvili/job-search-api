@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression, Interval } from '@nestjs/schedule';
-import { TelegramService } from './telegram.service';
 import { ScraperService } from './scrapper.service';
+import { TelegramService } from 'src/telegram/telegram.service';
 
 @Injectable()
 export class ScheduleService {
@@ -16,7 +16,7 @@ export class ScheduleService {
             maxPages: 17
         });
     } */
-    @Cron(CronExpression.EVERY_10_SECONDS) // Every 10 minutes
+  @Cron(CronExpression.EVERY_10_SECONDS) // Every 10 minutes
   // @Cron(CronExpression.EVERY_10_SECONDS) // For testing - uncomment this and comment above
   async handleCron() {
     const stats = this.telegramService.getStats();

@@ -22,7 +22,9 @@ export class TelegramService implements OnModuleInit {
   // Default search query
   private readonly DEFAULT_SEARCH_QUERY = 'ანალიტიკოსი';
 
-  constructor(private readonly jobService: JobService) {}
+  constructor(private readonly jobService: JobService) {
+    
+  }
 
   onModuleInit() {
     const token = '8564533553:AAFJs6B3VBOoS2CFUXf0jfQhsSDTBbAniXI';
@@ -31,6 +33,7 @@ export class TelegramService implements OnModuleInit {
     this.logger.log('✅ Telegram Bot successfully started and running!');
     this.logger.log('🔗 Bot link: https://t.me/job_notifcation_bot');
   }
+
 
   private setupCommands() {
     // Handle /start command - Auto-initialize and start sending jobs
