@@ -32,6 +32,8 @@ export class User {
     @Column({ nullable: true })
     telegramChatId: number;
 
+    @Column({ nullable: true })
+    telegramToken?: string;
     @BeforeInsert()
     async hashOassword(){
         this.password = await bcrypt.hash(this.password, 10);

@@ -23,13 +23,7 @@ export class UserController {
     return this.userService.findOne(+id);
   }
   // user.controller.ts
-  @Patch('link-telegram/:id/:chatId')
-  linkTelegram(
-    @Param('id', ParseIntPipe) id: number,
-    @Param('chatId', ParseIntPipe) chatId: number
-  ) {
-    return this.userService.linkTelegramId(id, chatId);
-  }
+
 
   @Patch(':id')
   update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {

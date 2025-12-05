@@ -45,17 +45,21 @@ export class UserService {
       },
     })
   }
-  async linkTelegramId(userId: number, chatId: number) {
-  const user = await this.userRepo.findOne({ where: { id:userId } })
-      if (!user) {
-        throw new NotFoundException(`user with ID ${userId} not found`);
-      }
-      await this.userRepo.update({id:userId}, {telegramChatId:chatId})
-      user.telegramChatId = chatId
-      return user;
+  async linkTelegramToken(token: string, chatId: number) {
+  const user = await this.userRepo.findOne({ where: { telegramToken: token } });
+  if (!user) return null;
+
+  // Update user with chatId and remove token
+  user.telegramChatId = chatId;
+  user.telegramToken = '';
+  await this.userRepo.save(user);
+
+  return user;
 }
 
-
+  async saveTelegramToken(userId: number, token: string): Promise<void> {
+    await this.userRepo.update(userId, { telegramToken: token });
+  }
   async findByTelegramId(chatId: number) {
     return await this.userRepo.findOne({
       where: { telegramChatId: chatId },

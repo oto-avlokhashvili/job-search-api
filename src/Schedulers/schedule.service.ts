@@ -16,8 +16,7 @@ export class ScheduleService {
             maxPages: 17
         });
     } */
-  @Cron(CronExpression.EVERY_10_SECONDS) // Every 10 minutes
-  // @Cron(CronExpression.EVERY_10_SECONDS) // For testing - uncomment this and comment above
+  /* @Cron(CronExpression.EVERY_10_SECONDS) // Every 10 minutes
   async handleCron() {
     const stats = this.telegramService.getStats();
     
@@ -28,15 +27,7 @@ export class ScheduleService {
     } else {
       this.logger.debug(`⏸️ Scheduler running - No active users (${stats.totalUsers} total users registered)`);
     }
-  }
-
-  // Optional: Run every hour to log statistics
-  /* @Cron(CronExpression.EVERY_HOUR)
-  async logStatistics() {
-    const stats = this.telegramService.getStats();
-    this.logger.log('📊 Hourly Statistics:');
-    this.logger.log(`   Total Users: ${stats.totalUsers}`);
-    this.logger.log(`   Active Users: ${stats.activeUsers}`);
-    this.logger.log(`   Inactive Users: ${stats.inactiveUsers}`);
   } */
+
+
 }
