@@ -45,25 +45,33 @@ export class UserService {
       },
     })
   }
-  async linkTelegramToken(token: string, chatId: number) {
-  const user = await this.userRepo.findOne({ where: { telegramToken: token } });
-  if (!user) return null;
+  async linkTelegramToken(token: string, chatId: string) {
+    const user = await this.userRepo.findOne({ where: { telegramToken: token } });
+    if (!user) return null;
 
-  // Update user with chatId and remove token
-  user.telegramChatId = chatId;
-  user.telegramToken = '';
-  await this.userRepo.save(user);
+    // Update user with chatId and remove token
+    user.telegramChatId = chatId;
+    user.telegramToken = '';
+    await this.userRepo.save(user);
 
-  return user;
-}
-
-  async saveTelegramToken(userId: number, token: string): Promise<void> {
-    await this.userRepo.update(userId, { telegramToken: token });
+    return user;
   }
-  async findByTelegramId(chatId: number) {
-    return await this.userRepo.findOne({
+
+  async saveTelegramToken(userId: number, token: string) {
+    const tokenawait = await this.userRepo.update(userId, { telegramToken: token });
+    return tokenawait;
+  }
+  async findByTelegramId(chatId: string) {
+    const user = await this.userRepo.findOne({
       where: { telegramChatId: chatId },
-      select: ['id', 'firstName', 'lastName', 'email', 'subscription', 'telegramChatId']
+      select: ['id', 'firstName', 'lastName', 'email', 'subscription', 'telegramChatId'],
     });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    return user;
   }
+
+
 }

@@ -30,7 +30,7 @@ export class User {
     password:string;
 
     @Column({ nullable: true })
-    telegramChatId: number;
+    telegramChatId: string;
 
     @Column({ nullable: true })
     telegramToken?: string;
