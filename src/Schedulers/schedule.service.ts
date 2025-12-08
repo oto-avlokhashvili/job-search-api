@@ -16,18 +16,15 @@ export class ScheduleService {
             maxPages: 17
         });
     } */
-  /* @Cron(CronExpression.EVERY_10_SECONDS) // Every 10 minutes
-  async handleCron() {
-    const stats = this.telegramService.getStats();
-    
-    if (stats.activeUsers > 0) {
-      this.logger.log(`⏰ Scheduled job - Processing ${stats.activeUsers} active user(s)...`);
-      await this.telegramService.processScheduledJobs();
-      this.logger.log(`✅ Scheduled job completed`);
-    } else {
-      this.logger.debug(`⏸️ Scheduler running - No active users (${stats.totalUsers} total users registered)`);
-    }
-  } */
+@Cron('50 0 * * *')
+async startTelegramBot() {
+    this.logger.log('🚀 Starting Telegram bot via cron...');
+    this.telegramService.startBot();
+}
 
-
+@Cron('55 0 * * *')
+async stopTelegramBot() {
+    this.logger.log('🛑 Stopping Telegram bot via cron...');
+    await this.telegramService.stopBot();
+}
 }

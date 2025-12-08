@@ -5,7 +5,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { create } from 'domain';
 import { remove } from 'node_modules/cheerio/dist/commonjs/api/manipulation';
 import { JobEntity } from 'src/Entities/job.entity';
-import { Repository } from 'typeorm';
+import { IsNull, Not, Repository } from 'typeorm';
 import { User } from 'src/Entities/user.entity';
 
 @Injectable()
@@ -72,6 +72,15 @@ export class UserService {
     }
     return user;
   }
-
+// In user.service.ts
+async findAllWithTelegram() {
+    // Adjust this based on your database/ORM setup
+    // This should return all users who have a linked telegramId
+    return await this.userRepo.find({
+        where: {
+            telegramChatId: Not(IsNull()) // Or however you check for non-null in your ORM
+        }
+    });
+}
 
 }
