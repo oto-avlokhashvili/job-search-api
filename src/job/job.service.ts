@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { CreateJobDto } from './dto/create-job.dto';
 import { UpdateJobDto } from './dto/update-job.dto';
-import { ILike, Like, Repository } from 'typeorm';
+import { ILike, In, Like, Repository } from 'typeorm';
 import { JobEntity } from 'src/Entities/job.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { title } from 'process';
@@ -24,14 +24,31 @@ export class JobService {
     });
   }
   async insertMany(createJobDto: CreateJobDto[]) {
-    await this.jobRepo
-      .createQueryBuilder()
-      .insert()
-      .into(JobEntity)
-      .values(createJobDto)
-      .execute();
+  await this.jobRepo
+    .createQueryBuilder()
+    .insert()
+    .into(JobEntity)
+    .values(createJobDto)
+    .orIgnore() // <-- skips duplicates based on the unique 'link' column
+    .execute();
+}
+
+  async getAllJobs() {
+    return await this.jobRepo.find();
   }
 
+   async findDuplicates() {
+    // Group by link and count occurrences
+    const duplicates = await this.jobRepo
+      .createQueryBuilder('job')
+      .select('job.link', 'link')
+      .addSelect('COUNT(job.id)', 'count')
+      .groupBy('job.link')
+      .having('COUNT(job.id) > 1')
+      .getRawMany();
+
+    return duplicates; // returns array of { link: '...', count: 2 }
+  }
   async findAll(filterDto: FilterJobDto) {
     const { vacancy, page = 1, limit = 20 } = filterDto;
     const skip = (page - 1) * limit;

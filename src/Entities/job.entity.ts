@@ -1,7 +1,8 @@
-import { Column, Entity, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, OneToMany, PrimaryGeneratedColumn, Unique } from 'typeorm';
 import { SentJob } from './sent-jobs.entity';
 
 @Entity()
+@Unique(['link'])
 export class JobEntity {
   @PrimaryGeneratedColumn()
   id: number;
