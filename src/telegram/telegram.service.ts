@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import TelegramBot from 'node-telegram-bot-api';
 import { from, lastValueFrom } from 'rxjs';
 import { JobService } from 'src/job/job.service';
+import { SentJobsService } from 'src/sent-jobs/sent-jobs.service';
 import { UserService } from 'src/user/user.service';
 
 interface UserSession {
@@ -27,6 +28,7 @@ export class TelegramService implements OnModuleInit {
     private token = process.env.TELEGRAM_TOKEN!;
     
     constructor(
+        private readonly sentJobsService: SentJobsService,
         private readonly jobService: JobService, 
         private userService: UserService
     ) {}
@@ -108,29 +110,43 @@ private async autoStartForAllUsers() {
     try {
         const users = await this.userService.findAllWithTelegram();
         
-        for (const user of users) {
-            if (user.telegramChatId) {
-                try {
-                    // Create or activate user session
-                    this.userSessions.set(parseInt(user.telegramChatId), {
-                        chatId: parseInt(user.telegramChatId),
-                        firstName: user.firstName,
-                        lastName: user.lastName,
-                        isActive: true,
-                        jobQueue: [],
-                        searchQuery: this.DEFAULT_SEARCH_QUERY,
-                        startedAt: new Date()
-                    });
-                    const jobs = await this.jobService.findAllByQuery(this.DEFAULT_SEARCH_QUERY)
-                    await this.bot?.sendMessage(
-                        user.telegramChatId, 
-                        `✅ გამარჯობა, ${user.firstName}! ბოტი აქტიურია და ეძებს ვაკანსიებს.`
-                    );
-                    for(const job of jobs){
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-await this.bot?.sendMessage(
-    user.telegramChatId, 
-    `━━━━━━━━━━━━━━━━━━━
+for (const user of users) {
+    if (!user.telegramChatId) continue;
+
+    try {
+        // Create or activate user session
+        this.userSessions.set(parseInt(user.telegramChatId), {
+            chatId: parseInt(user.telegramChatId),
+            firstName: user.firstName,
+            lastName: user.lastName,
+            isActive: true,
+            jobQueue: [],
+            searchQuery: this.DEFAULT_SEARCH_QUERY,
+            startedAt: new Date()
+        });
+
+        const jobs = await this.jobService.findAllByQuery(this.DEFAULT_SEARCH_QUERY);
+        await this.bot?.sendMessage(
+            user.telegramChatId, 
+            `✅ გამარჯობა, ${user.firstName}! ბოტი აქტიურია და ეძებს ვაკანსიებს.`
+        );
+
+        const userSentJobs = await this.sentJobsService.findByUserId(user.id); // get already sent jobs
+        let newJobSent = false;
+
+        for (const job of jobs) {
+            // Check if job was already sent
+            const alreadySent = userSentJobs.some(sj => sj.jobId === job.id);
+            if (alreadySent) continue;
+
+            // Mark job as sent
+            await this.sentJobsService.create({ userId: user.id, jobId: job.id });
+
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            await this.bot?.sendMessage(
+                user.telegramChatId,
+                `━━━━━━━━━━━━━━━━━━━
 🔔 *ახალი ვაკანსია*
 ━━━━━━━━━━━━━━━━━━━
 📌 *${job.vacancy}*
@@ -139,15 +155,25 @@ await this.bot?.sendMessage(
 📅 ${job.publishDate} - ${job.deadline}
 🔗 [დეტალები](${job.link})
 ━━━━━━━━━━━━━━━━━━━`,
-    { parse_mode: 'Markdown' }
+                { parse_mode: 'Markdown' }
+            );
 
-);
-                    }
-                } catch (error) {
-                    this.logger.error(`Failed to start session for user ${user.telegramChatId}:`, error);
-                }
-            }
+            newJobSent = true;
         }
+
+        // Send message if no new jobs were found
+        if (!newJobSent) {
+            await this.bot?.sendMessage(
+                user.telegramChatId,
+                `ℹ️ ახალი ვაკანსია ვერ მოიძებნა`
+            );
+        }
+
+    } catch (error) {
+        this.logger.error(`Failed to start session for user ${user.telegramChatId}:`, error);
+    }
+}
+
 
         this.logger.log(`✅ Started sessions for ${users.length} users`);
     } catch (error) {

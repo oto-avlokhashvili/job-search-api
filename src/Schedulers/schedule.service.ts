@@ -16,13 +16,13 @@ export class ScheduleService {
             maxPages: 17
         });
     } */
-@Cron('50 0 * * *')
+@Cron('21 17 * * *')
 async startTelegramBot() {
     this.logger.log('🚀 Starting Telegram bot via cron...');
     this.telegramService.startBot();
 }
 
-@Cron('55 0 * * *')
+@Cron('25 17 * * *')
 async stopTelegramBot() {
     this.logger.log('🛑 Stopping Telegram bot via cron...');
     await this.telegramService.stopBot();

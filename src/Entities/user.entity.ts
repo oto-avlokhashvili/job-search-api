@@ -2,6 +2,7 @@ import { BeforeInsert, Column, CreateDateColumn, Entity, OneToMany, PrimaryGener
 import { JobEntity } from "./job.entity";
 import * as bcrypt from 'bcrypt'
 import { Subscription } from "src/enums/subscriptions.enum";
+import { SentJob } from "./sent-jobs.entity";
 @Entity()
 export class User {
     @PrimaryGeneratedColumn()
@@ -34,6 +35,10 @@ export class User {
 
     @Column({ nullable: true })
     telegramToken?: string;
+    
+    @OneToMany(() => SentJob, sentJob => sentJob.job)
+    sentJobs: SentJob[];
+
     @BeforeInsert()
     async hashOassword(){
         this.password = await bcrypt.hash(this.password, 10);

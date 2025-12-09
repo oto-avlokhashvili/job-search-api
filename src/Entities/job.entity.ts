@@ -1,4 +1,5 @@
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
+import { SentJob } from './sent-jobs.entity';
 
 @Entity()
 export class JobEntity {
@@ -16,4 +17,7 @@ export class JobEntity {
   deadline:string;
   @Column()
   page:number;
+  
+  @OneToMany(() => SentJob, sentJob => sentJob.job)
+  sentJobs: SentJob[];
 }
