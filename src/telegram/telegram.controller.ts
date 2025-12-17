@@ -6,9 +6,9 @@ import { v4 as uuidv4 } from 'uuid';
 import { ApiBearerAuth } from '@nestjs/swagger';
 @Controller('telegram')
 export class TelegramController {
-  constructor(private readonly usersService: UserService) {}
-      @ApiBearerAuth('bearerAuth')  
-      @UseGuards(JwtAuthGuard)
+  constructor(private readonly usersService: UserService) { }
+  @ApiBearerAuth('bearerAuth')
+  @UseGuards(JwtAuthGuard)
   @Get('generate-link-token')
   async generateLinkToken(@Req() req) {
     const userId = req.user.id;
