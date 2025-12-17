@@ -2,27 +2,25 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression, Interval } from '@nestjs/schedule';
 import { ScraperService } from './scrapper.service';
 import { TelegramService } from 'src/telegram/telegram.service';
+import { JobService } from 'src/job/job.service';
 
 @Injectable()
 export class ScheduleService {
     private readonly logger = new Logger(ScheduleService.name);
 
-    constructor(private readonly telegramService: TelegramService, private readonly scraperService: ScraperService) { }
-    /* @Cron(CronExpression.EVERY_10_MINUTES)
-    async scrape() {
-        const result = await this.scraperService.scrapeJobs('', 1, {
-            maxJobs: 100,
-            delayBetweenRequests: 2000,
-            maxPages: 17
-        });
-    } */
-@Cron('21 17 * * *')
-async startTelegramBot() {
-    this.logger.log('🚀 Starting Telegram bot via cron...');
-    this.telegramService.startBot();
+    constructor(private readonly telegramService: TelegramService, private readonly scraperService: ScraperService, private readonly jobsService: JobService) { }
+@Cron('17 13 * * *')
+async removeOutDated(): Promise<void> {
+  await this.jobsService.removeOutDated();
 }
 
-@Cron('25 17 * * *')
+@Cron('08 17 * * *')
+async startTelegramBot() {
+    this.logger.log('🚀 Starting Telegram bot via cron...');
+    await this.telegramService.startBot();
+}
+
+@Cron('05 17 * * *')
 async stopTelegramBot() {
     this.logger.log('🛑 Stopping Telegram bot via cron...');
     await this.telegramService.stopBot();

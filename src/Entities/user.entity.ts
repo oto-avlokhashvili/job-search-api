@@ -31,6 +31,9 @@ export class User {
     password:string;
 
     @Column({ nullable: true })
+    searchQuery:string;
+
+    @Column({ nullable: true })
     telegramChatId: string;
 
     @Column({ nullable: true })

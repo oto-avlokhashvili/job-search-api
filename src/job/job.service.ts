@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { CreateJobDto } from './dto/create-job.dto';
 import { UpdateJobDto } from './dto/update-job.dto';
-import { ILike, In, Like, Repository } from 'typeorm';
+import { ILike, In, LessThan, Like, Repository } from 'typeorm';
 import { JobEntity } from 'src/Entities/job.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { title } from 'process';
@@ -104,6 +104,16 @@ export class JobService {
     return await this.jobRepo.remove(job);
   }
 
+  async removeOutDated(): Promise<void> {
+    console.log("removed");
+    
+  await this.jobRepo
+  .createQueryBuilder()
+  .delete()
+  .where('deadline IS NOT NULL')
+  .andWhere('deadline < :now', { now: new Date() })
+  .execute();
+}
   hardRemove() {
     return this.jobRepo.clear();
   }
