@@ -12,8 +12,11 @@ async function bootstrap() {
     transform: true,
     transformOptions: { enableImplicitConversion: true },
   }));
+  
+  // Updated CORS configuration to allow credentials
   app.enableCors({
-    origin: '*',
+    origin: 'http://localhost:4200', // Replace with your Angular app URL
+    credentials: true, // This is the key change - allows cookies
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     allowedHeaders: 'Content-Type, Authorization',
   });
@@ -25,7 +28,7 @@ async function bootstrap() {
     .setVersion('1.0')
     .addBearerAuth(
       { type: 'http', scheme: 'bearer', bearerFormat: 'JWT', in: 'header' },
-      'bearerAuth', // <-- name/ID of the security scheme
+      'bearerAuth',
     )
     .build();
 
