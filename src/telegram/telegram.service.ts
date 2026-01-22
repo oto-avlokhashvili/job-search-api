@@ -189,7 +189,7 @@ private async processUserStart(user: any): Promise<void> {
         ]);
 
         // Create a Set for faster lookup
-        const sentJobIds = new Set(userSentJobs.map(sj => sj.jobId));
+        const sentJobIds = new Set(userSentJobs.sentJobs.map(sj => sj.jobId));
         
         // Filter new jobs that haven't been sent
         const newJobs = jobs.filter(job => !sentJobIds.has(job.id));

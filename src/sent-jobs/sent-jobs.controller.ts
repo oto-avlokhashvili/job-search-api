@@ -24,7 +24,7 @@ export class SentJobsController {
   @UseGuards(JwtAuthGuard)
   @Get(':id')
   findOne(@Param('id') id: string) {
-    return this.sentJobsService.findOne(+id);
+    return this.sentJobsService.findByUserId(+id);
   }
   @ApiBearerAuth('bearerAuth')  
   @UseGuards(JwtAuthGuard)

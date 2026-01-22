@@ -18,10 +18,14 @@ export class SentJobsService {
     return `This action returns all sentJobs`;
   }
 
-  async findByUserId(id:number) {
-    const sentJobs = await this.sentJobRepo.find({where: {userId:id}})
-    return sentJobs
-  }
+  async findByUserId(id: number) {
+  const [sentJobs, count] = await this.sentJobRepo.findAndCount({
+    where: { userId: id },
+  });
+
+  return { sentJobs, count };
+}
+
   findOne(id: number) {
     return `This action returns a #${id} sentJob`;
   }

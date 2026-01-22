@@ -64,10 +64,11 @@ export class JobService {
         .getManyAndCount();
     }
 
-    return await this.jobRepo.findAndCount({
+    const [jobs, count] = await this.jobRepo.findAndCount({
       take: limit,
       skip: skip
     });
+    return { jobs, count };
   }
   async findAllByQuery(query: string) {
     return await this.jobRepo
