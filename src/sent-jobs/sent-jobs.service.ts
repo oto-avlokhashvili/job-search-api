@@ -18,13 +18,30 @@ export class SentJobsService {
     return `This action returns all sentJobs`;
   }
 
-  async findByUserId(id: number) {
+async findByUserId(id: number, page = 1) {
+  const take = 3;
+  const skip = (page - 1) * take;
+
   const [sentJobs, count] = await this.sentJobRepo.findAndCount({
     where: { userId: id },
+    relations: {
+      job: true,
+    },
+    take,
+    skip,
+    order: {
+      id: 'DESC', // optional but recommended
+    },
   });
 
-  return { sentJobs, count };
+  return {
+    sentJobs,
+    count,
+    page,
+    totalPages: Math.ceil(count / take),
+  };
 }
+
 
   findOne(id: number) {
     return `This action returns a #${id} sentJob`;

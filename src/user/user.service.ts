@@ -27,7 +27,7 @@ export class UserService {
       where: {
         id,
       },
-      select: ['id', 'firstName', 'lastName', 'email', 'createdAt', 'subscription']
+      select: ['id', 'firstName', 'lastName', 'email', 'createdAt', 'subscription', 'searchQuery']
     })
   }
 
