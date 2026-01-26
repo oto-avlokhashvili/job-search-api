@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query } from '@nestjs/common';
 import { SentJobsService } from './sent-jobs.service';
 import { CreateSentJobDto } from './dto/create-sent-job.dto';
 import { UpdateSentJobDto } from './dto/update-sent-job.dto';
@@ -20,12 +20,14 @@ export class SentJobsController {
   findAll() {
     return this.sentJobsService.findAll();
   }
-  @ApiBearerAuth('bearerAuth')  
-  @UseGuards(JwtAuthGuard)
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.sentJobsService.findByUserId(+id);
-  }
+findOne(
+  @Param('id') id: string,
+  @Query('page') page = '1',
+) {
+  return this.sentJobsService.findByUserId(+id, Number(page));
+}
+
   @ApiBearerAuth('bearerAuth')  
   @UseGuards(JwtAuthGuard)
   @Patch(':id')

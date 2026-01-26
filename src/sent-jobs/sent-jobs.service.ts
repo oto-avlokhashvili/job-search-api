@@ -19,7 +19,7 @@ export class SentJobsService {
   }
 
 async findByUserId(id: number, page = 1) {
-  const take = 3;
+  const take = 10;
   const skip = (page - 1) * take;
 
   const [sentJobs, count] = await this.sentJobRepo.findAndCount({
