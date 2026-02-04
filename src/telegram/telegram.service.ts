@@ -35,33 +35,36 @@ export class TelegramService implements OnModuleInit {
 
     onModuleInit() {
         // Bot will be started by ScheduleService
+        this.setupCommands();
     }
 
     setupCommands() {
         this.logger.log('✅ Telegram Bot successfully started and running!');
         this.logger.log('🔗 Bot link: https://t.me/job_notifcation_bot');
-        
+        this.bot = new TelegramBot(this.token, { polling: true });
+
         this.bot?.onText(/\/start(?: (.+))?/, async (msg, match) => {
             const chatId = msg.chat.id.toString();
             const user$ = from(this.userService.findByTelegramId(chatId));
             const linkedUser = await lastValueFrom(user$);
+            console.log(linkedUser);
             
             if (linkedUser) {
-                this.bot?.sendMessage(chatId, `✅ Telegram Started Successfully, ${linkedUser.firstName}!`);
+                this.bot?.sendMessage(chatId, `✅ ტელეგრამ ბოტი წარმატებულად ჩაირთო, ${linkedUser.firstName}!`);
             } else {
                 const token = match?.[1];
                 if (!token) {
-                    this.bot?.sendMessage(chatId, '❌ No token provided.');
+                    this.bot?.sendMessage(chatId, '❌ დამაკავშირებელი ტოკენბი ვერ მოიძებნა.');
                     return;
                 }
 
                 const user = await this.userService.linkTelegramToken(token, chatId);
                 if (!user) {
-                    this.bot?.sendMessage(chatId, '❌ Invalid or expired token.');
+                    this.bot?.sendMessage(chatId, '❌ ტოკენი არ არის ვალიდური.');
                     return;
                 }
 
-                this.bot?.sendMessage(chatId, `✅ Telegram successfully linked to your account, ${user.firstName}!`);
+                this.bot?.sendMessage(chatId, `✅ ტელეგრამი წარმატებით დაუკავშირდა თქვენს ანგარიშს, ${user.firstName}! ვაკანსიებს მიიღებთ ყოველ დღე 10:00 საათზე.`);
             }
         });
     }
@@ -73,8 +76,8 @@ export class TelegramService implements OnModuleInit {
     }
 
     try {
-        this.bot = new TelegramBot(this.token, { polling: true });
-        this.setupCommands();
+        //this.bot = new TelegramBot(this.token, { polling: true });
+        //this.setupCommands();
         this.isRunning = true;
         this.logger.log('🚀 Telegram Bot started successfully!');
 

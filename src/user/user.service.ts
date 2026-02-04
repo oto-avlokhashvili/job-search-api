@@ -27,7 +27,7 @@ export class UserService {
       where: {
         id,
       },
-      select: ['id', 'firstName', 'lastName', 'email', 'createdAt', 'subscription', 'searchQuery']
+      select: ['id', 'firstName', 'lastName', 'email', 'createdAt', 'subscription', 'searchQuery', 'telegramChatId']
     })
   }
 
@@ -61,17 +61,18 @@ export class UserService {
     const tokenawait = await this.userRepo.update(userId, { telegramToken: token });
     return tokenawait;
   }
-  async findByTelegramId(chatId: string) {
-    const user = await this.userRepo.findOne({
-      where: { telegramChatId: chatId },
-      select: ['id', 'firstName', 'lastName', 'email', 'subscription', 'telegramChatId'],
-    });
-
-    if (!user) {
-      throw new NotFoundException('User not found');
+  // user.service.ts
+async findByTelegramId(telegramChatId: string) {
+    try {
+        const user = await this.userRepo.findOne({
+            where: { telegramChatId }
+        });
+        return user; // Returns null if not found, instead of throwing
+    } catch (error) {
+        console.error('Error finding user by telegram ID:', error);
+        return null; // Return null on error
     }
-    return user;
-  }
+}
 // In user.service.ts
 async findAllWithTelegram() {
     // Adjust this based on your database/ORM setup

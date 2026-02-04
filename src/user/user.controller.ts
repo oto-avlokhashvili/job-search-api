@@ -8,8 +8,6 @@ import { ApiBearerAuth } from '@nestjs/swagger';
 @Controller('user')
 export class UserController {
   constructor(private readonly userService: UserService) { }
-  @ApiBearerAuth('bearerAuth')  
-  @UseGuards(JwtAuthGuard)
   @Post()
   create(@Body() createUserDto: CreateUserDto) {
     return this.userService.create(createUserDto);
