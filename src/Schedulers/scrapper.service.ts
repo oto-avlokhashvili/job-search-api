@@ -5,6 +5,7 @@ import { JobService } from 'src/job/job.service';
 
 export interface JobData {
   vacancy: string;
+  location: string;
   company: string;
   link: string;
   publishDate: string;
@@ -27,7 +28,7 @@ export interface ScraperResult {
 @Injectable()
 export class ScraperService {
   constructor(@Inject(forwardRef(() => JobService))
-    private readonly jobService: JobService,){}
+  private readonly jobService: JobService,) { }
   private readonly logger = new Logger(ScraperService.name);
   private readonly baseUrl = 'https://www.jobs.ge';
 
@@ -58,7 +59,7 @@ export class ScraperService {
 
     try {
       const parts = georgianDate.trim().split(' ');
-      
+
       if (parts.length < 2) {
         return georgianDate; // Return as-is if format is unexpected
       }
@@ -156,11 +157,18 @@ export class ScraperService {
           if (cells.length < 6) return;
 
           const jobTitleEl = $(cells[1]).find('a.vip').first();
+          const jobLocationEl = $(cells[1])
+            .find('i')
+            .first()
+            .text()
+            .replace(/^-?\s*/, '')  // removes leading dash and spaces
+            || "თბილისი";
           const companyEl = $(cells[3]).find('a').first();
           const publishEl = $(cells[4]);
           const deadlineEl = $(cells[5]);
 
           const vacancy = jobTitleEl.text().trim();
+          const location = jobLocationEl.trim();
           const jobLink = jobTitleEl.attr('href');
           const company = companyEl.text().trim();
           const publishDateRaw = publishEl.text().trim();
@@ -183,6 +191,7 @@ export class ScraperService {
             if (!q || vacancyLower.includes(q)) {
               allJobs.push({
                 vacancy,
+                location,
                 company: company || 'კომპანია',
                 link,
                 publishDate,

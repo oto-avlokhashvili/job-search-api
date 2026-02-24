@@ -30,8 +30,8 @@ export class User {
     @Column()
     password:string;
 
-    @Column({ nullable: true })
-    searchQuery:string;
+    @Column({ type: 'json', nullable: true })
+    searchQuery: string[];
 
     @Column({ nullable: true })
     telegramChatId: string;

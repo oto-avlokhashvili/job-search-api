@@ -8,20 +8,20 @@ import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 
 @Controller('job')
 export class JobController {
-  constructor(private readonly jobService: JobService) {}
-  
+  constructor(private readonly jobService: JobService) { }
+
   @Post('scrapper')
   async insertMany(): Promise<boolean> {
     await this.jobService.scrapper();
     return true;
   }
-  @ApiBearerAuth('bearerAuth')  
+  @ApiBearerAuth('bearerAuth')
   @UseGuards(JwtAuthGuard)
   @Post('create')
   async create(@Body() createJobDto: CreateJobDto) {
     return await this.jobService.create(createJobDto);
   }
-  @ApiBearerAuth('bearerAuth')  
+  @ApiBearerAuth('bearerAuth')
   @UseGuards(JwtAuthGuard)
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'page', required: false, type: Number })
@@ -30,14 +30,13 @@ export class JobController {
   async findAll(@Query() filterDto: FilterJobDto) {
     return await this.jobService.findAll(filterDto);
   }
-  @ApiBearerAuth('bearerAuth')  
+  @ApiBearerAuth('bearerAuth')
   @UseGuards(JwtAuthGuard)
   @Get('search')
-  async searchJobs(@Query('query') query: string) {
+  async searchJobs(@Query('query') query: string | string[]) {
     return this.jobService.findAllByQuery(query);
   }
-
-  @ApiBearerAuth('bearerAuth')  
+  @ApiBearerAuth('bearerAuth')
   @UseGuards(JwtAuthGuard)
   @Get('check-duplicates')
   async checkDuplicates() {
@@ -47,25 +46,25 @@ export class JobController {
       duplicates,
     };
   }
-  @ApiBearerAuth('bearerAuth')  
+  @ApiBearerAuth('bearerAuth')
   @UseGuards(JwtAuthGuard)
   @Get(':id')
   async findOne(@Param('id', ParseIntPipe) id: number) {
     return await this.jobService.findOne(id);
   }
-  @ApiBearerAuth('bearerAuth')  
+  @ApiBearerAuth('bearerAuth')
   @UseGuards(JwtAuthGuard)
   @Patch(':id')
   async update(@Param('id', ParseIntPipe) id: number, @Body() updateJobDto: UpdateJobDto) {
     return await this.jobService.update(id, updateJobDto);
   }
-  @ApiBearerAuth('bearerAuth')  
+  @ApiBearerAuth('bearerAuth')
   @UseGuards(JwtAuthGuard)
   @Delete(':id')
   async remove(@Param('id', ParseIntPipe) id: number) {
     return await this.jobService.remove(id);
   }
-  @ApiBearerAuth('bearerAuth')  
+  @ApiBearerAuth('bearerAuth')
   @UseGuards(JwtAuthGuard)
   @Delete()
   async hardDelete() {

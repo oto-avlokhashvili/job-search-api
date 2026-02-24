@@ -14,8 +14,8 @@ export class SentJob {
     user: User;
 
     @Column()
-    jobId: number;
+    jobId: number | null;
 
-    @ManyToOne(() => JobEntity, { onDelete: 'CASCADE' })
+    @ManyToOne(() => JobEntity, { onDelete: 'SET NULL', nullable: true })
     job: JobEntity;
 }

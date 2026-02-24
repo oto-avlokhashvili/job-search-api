@@ -8,6 +8,8 @@ export class JobEntity {
   id: number;
   @Column()
   vacancy:string;
+  @Column({ nullable: true })
+  location:string;
   @Column()
   company:string;
   @Column()

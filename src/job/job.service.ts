@@ -70,14 +70,27 @@ export class JobService {
     });
     return { jobs, count };
   }
-  async findAllByQuery(query: string) {
-    return await this.jobRepo
-      .createQueryBuilder('job')
-      .where('LOWER(job.vacancy) LIKE :q', {
-        q: `%${query.toLowerCase()}%`,
-      })
-      .getMany();
-  }
+  async findAllByQuery(query: string | string[]) {
+  const queries = Array.isArray(query) ? query : [query];
+
+  const qb = this.jobRepo.createQueryBuilder('job');
+
+  queries.forEach((q, index) => {
+    const param = `q${index}`;
+
+    if (index === 0) {
+      qb.where(`LOWER(job.vacancy) LIKE :${param}`, {
+        [param]: `%${q.toLowerCase()}%`,
+      });
+    } else {
+      qb.orWhere(`LOWER(job.vacancy) LIKE :${param}`, {
+        [param]: `%${q.toLowerCase()}%`,
+      });
+    }
+  });
+
+  return qb.getMany();
+}
 
   async findOne(id: number) {
     const job = await this.jobRepo.findOne({ where: { id } });

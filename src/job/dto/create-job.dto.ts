@@ -15,6 +15,10 @@ export class CreateJobDto {
 
   @IsString()
   @IsNotEmpty()
+  location: string;
+
+  @IsString()
+  @IsNotEmpty()
   @MinLength(2)
   company: string;
 
