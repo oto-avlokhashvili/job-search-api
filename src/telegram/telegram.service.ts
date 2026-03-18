@@ -203,17 +203,20 @@ export class TelegramService implements OnModuleInit {
             const jobPromises = user.searchQuery
                 .filter(q => q.trim() !== '')
                 .map(q => this.jobService.findAllByQuery(q.trim()));
-
-            const [jobsArray, userSentJobs] = await Promise.all([
+            
+            const [jobsArray, sentJobIdsArr] = await Promise.all([
                 Promise.all(jobPromises),
-                this.sentJobsService.findByUserId(user.id)
+                this.sentJobsService.findAllJobIdsByUserId(user.id)
             ]);
+            const sentJobIds = new Set<number>(sentJobIdsArr);
 
-            // Flatten jobsArray into a single array
-            const jobs = jobsArray.flat();
-
-            // Create a Set for faster lookup
-            const sentJobIds = new Set(userSentJobs.sentJobs.map(sj => sj.jobId));
+            // Flatten and deduplicate by job ID
+            const seen = new Set<number>();
+            const jobs = jobsArray.flat().filter(job => {
+                if (seen.has(job.id)) return false;
+                seen.add(job.id);
+                return true;
+            });
 
             // Filter new jobs that haven't been sent
             const newJobs = jobs.filter(job => !sentJobIds.has(job.id));
@@ -275,22 +278,24 @@ ${subscriptionEmoji[user.subscription] || '🆓'} თქვენი გამ�
                 }
             }
 
-            // Notify if there are more jobs but limit reached
-            if (newJobs.length > jobsToSend.length) {
-                const remainingJobs = newJobs.length - jobsToSend.length;
-                let upgradeMessage = '';
+            // Always notify remaining jobs count after sending
+            const remainingJobs = newJobs.length - jobsToSend.length;
 
+            let upgradeMessage = '';
+            if (remainingJobs > 0) {
                 if (user.subscription === 'BASIC') {
                     upgradeMessage = '\n\n⭐ PRO გამოწერით მიიღებთ 20 ვაკანსიას დღეში!\n👑 PREMIUM-ით - შეუზღუდავად!';
                 } else if (user.subscription === 'PRO') {
                     upgradeMessage = '\n\n👑 PREMIUM გამოწერით მიიღებთ შეუზღუდავ ვაკანსიებს!';
                 }
-
-                await this.bot?.sendMessage(
-                    user.telegramChatId,
-                    `ℹ️ კიდევ ${remainingJobs} ვაკანსია არსებობს, მაგრამ თქვენი დღიური ლიმიტი ამოიწურა.${upgradeMessage}`
-                );
             }
+
+            await this.bot?.sendMessage(
+                user.telegramChatId,
+                remainingJobs > 0
+                    ? `ℹ️ კიდევ ${remainingJobs} ვაკანსია არსებობს, მაგრამ თქვენი დღიური ლიმიტი ამოიწურა.${upgradeMessage}`
+                    : `✅ ყველა ვაკანსია გამოიგზავნა. დარჩენილია: 0. ${upgradeMessage}`
+            );
 
         } catch (error) {
             this.logger.error(`Failed to start session for user ${user.telegramChatId}:`, error);

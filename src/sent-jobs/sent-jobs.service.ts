@@ -22,17 +22,15 @@ async findByUserId(id: number, page = 1) {
   const take = 10;
   const skip = (page - 1) * take;
 
-  const [sentJobs, count] = await this.sentJobRepo.findAndCount({
-    where: { userId: id },
-    relations: {
-      job: true,
-    },
-    take,
-    skip,
-    order: {
-      id: 'DESC', // optional but recommended
-    },
-  });
+  const qb = this.sentJobRepo
+    .createQueryBuilder('sentJob')
+    .leftJoinAndSelect('sentJob.job', 'job')
+    .where('sentJob.userId = :id', { id })
+    .orderBy('sentJob.id', 'DESC')
+    .take(take)
+    .skip(skip);
+
+  const [sentJobs, count] = await qb.getManyAndCount();
 
   return {
     sentJobs,
@@ -42,6 +40,15 @@ async findByUserId(id: number, page = 1) {
   };
 }
 
+  /** Returns ALL sent job IDs for a user — no pagination, used for dedup checks */
+  async findAllJobIdsByUserId(id: number): Promise<number[]> {
+    const rows = await this.sentJobRepo
+      .createQueryBuilder('sentJob')
+      .select('sentJob.jobId')
+      .where('sentJob.userId = :id', { id })
+      .getRawMany();
+    return rows.map(r => r.sentJob_jobId);
+  }
 
   findOne(id: number) {
     return `This action returns a #${id} sentJob`;

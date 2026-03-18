@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { CreateJobDto } from './dto/create-job.dto';
 import { UpdateJobDto } from './dto/update-job.dto';
-import { ILike, In, LessThan, Like, Repository } from 'typeorm';
+import { Brackets, ILike, In, LessThan, Like, Repository } from 'typeorm';
 import { JobEntity } from 'src/Entities/job.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { title } from 'process';
@@ -18,26 +18,22 @@ export class JobService {
     return job;
   }
 
-  async scrapper(){
-     await this.scraperService.scrapeJobs('', 1, {
+  async scrapper() {
+    await this.scraperService.scrapeJobs('', 1, {
       maxPages: 17
     });
   }
   async insertMany(createJobDto: CreateJobDto[]) {
-  await this.jobRepo
-    .createQueryBuilder()
-    .insert()
-    .into(JobEntity)
-    .values(createJobDto)
-    .orIgnore() // <-- skips duplicates based on the unique 'link' column
-    .execute();
-}
-
-  async getAllJobs() {
-    return await this.jobRepo.find();
+    await this.jobRepo
+      .createQueryBuilder()
+      .insert()
+      .into(JobEntity)
+      .values(createJobDto)
+      .orIgnore() // <-- skips duplicates based on the unique 'link' column
+      .execute();
   }
 
-   async findDuplicates() {
+  async findDuplicates() {
     // Group by link and count occurrences
     const duplicates = await this.jobRepo
       .createQueryBuilder('job')
@@ -49,48 +45,77 @@ export class JobService {
 
     return duplicates; // returns array of { link: '...', count: 2 }
   }
-  async findAll(filterDto: FilterJobDto) {
-    const { vacancy, page = 1, limit = 20 } = filterDto;
+async findAll(filterDto: FilterJobDto) {
+    const { query, page = 1, limit = 10 } = filterDto;
     const skip = (page - 1) * limit;
 
-    if (vacancy) {
-      return await this.jobRepo
-        .createQueryBuilder('job')
-        .where('LOWER(job.vacancy) LIKE LOWER(:vacancy)', {
-          vacancy: `%${vacancy}%`,
+    const qb = this.jobRepo.createQueryBuilder('job');
+    qb.where('job.archived = :archived', { archived: false });
+
+    let hasFilter = false;
+
+    if (query && query.length > 0) {
+      hasFilter = true;
+
+      qb.andWhere(
+        new Brackets((qb2) => {
+          query.forEach((val, i) => {
+            const param = `query${i}`;
+            if (i === 0) {
+              qb2.where(`LOWER(job.vacancy) LIKE :${param}`, { [param]: `%${val.toLowerCase()}%` });
+            } else {
+              qb2.orWhere(`LOWER(job.vacancy) LIKE :${param}`, { [param]: `%${val.toLowerCase()}%` });
+            }
+          });
         })
-        .take(limit)
-        .skip(skip)
-        .getManyAndCount();
+      );
     }
 
-    const [jobs, count] = await this.jobRepo.findAndCount({
-      take: limit,
-      skip: skip
-    });
-    return { jobs, count };
+    const [jobs, filteredRecords] = await qb.take(limit).skip(skip).getManyAndCount();
+    const totalRecords = await this.jobRepo.count({ where: { archived: false } });
+
+    return {
+      jobs,
+      counts: {
+        totalRecords,
+        filteredRecords: hasFilter ? filteredRecords : totalRecords
+      },
+      page,
+      limit
+    };
   }
+
   async findAllByQuery(query: string | string[]) {
-  const queries = Array.isArray(query) ? query : [query];
+    const queries = (Array.isArray(query) ? query : [query])
+      .filter((q) => typeof q === 'string' && q.trim().length > 0);
 
-  const qb = this.jobRepo.createQueryBuilder('job');
-
-  queries.forEach((q, index) => {
-    const param = `q${index}`;
-
-    if (index === 0) {
-      qb.where(`LOWER(job.vacancy) LIKE :${param}`, {
-        [param]: `%${q.toLowerCase()}%`,
-      });
-    } else {
-      qb.orWhere(`LOWER(job.vacancy) LIKE :${param}`, {
-        [param]: `%${q.toLowerCase()}%`,
-      });
+    if (queries.length === 0) {
+      return [];
     }
-  });
 
-  return qb.getMany();
-}
+    const qb = this.jobRepo.createQueryBuilder('job');
+
+    qb.where('job.archived = false')
+      .andWhere(
+        new Brackets((qb2) => {
+          queries.forEach((q, index) => {
+            const param = `q${index}`;
+
+            if (index === 0) {
+              qb2.where(`LOWER(job.vacancy) LIKE :${param}`, {
+                [param]: `%${q.toLowerCase()}%`,
+              });
+            } else {
+              qb2.orWhere(`LOWER(job.vacancy) LIKE :${param}`, {
+                [param]: `%${q.toLowerCase()}%`,
+              });
+            }
+          });
+        }),
+      );
+
+    return qb.getMany();
+  }
 
   async findOne(id: number) {
     const job = await this.jobRepo.findOne({ where: { id } });
@@ -120,23 +145,31 @@ export class JobService {
 
   async removeOutDated(): Promise<void> {
     console.log("removed");
-    
-  await this.jobRepo
-  .createQueryBuilder()
-  .delete()
-  .where('deadline IS NOT NULL')
-  .andWhere('deadline < :now', { now: new Date() })
-  .execute();
-}
+
+    await this.jobRepo
+      .createQueryBuilder()
+      .update()
+      .set({ archived: true })
+      .where('archived = false')
+      .andWhere('deadline IS NOT NULL')
+      .andWhere(`
+        CASE 
+          WHEN deadline ~ '^\\d{2}/\\d{2}/\\d{4}$' 
+          THEN TO_DATE(deadline, 'DD/MM/YYYY') < CURRENT_DATE 
+          ELSE false 
+        END
+      `)
+      .execute();
+  }
   hardRemove() {
     return this.jobRepo.clear();
   }
 
-  async manualScrapper(){
+  async manualScrapper() {
     await this.scraperService.scrapeJobs('', 1, {
-            maxJobs: 100,
-            delayBetweenRequests: 2000,
-            maxPages: 17
-        });
+      maxJobs: 100,
+      delayBetweenRequests: 2000,
+      maxPages: 17
+    });
   }
 }

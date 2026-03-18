@@ -25,7 +25,7 @@ export class JobController {
   @UseGuards(JwtAuthGuard)
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'page', required: false, type: Number })
-  @ApiQuery({ name: 'vacancy', required: false, type: String })
+  @ApiQuery({ name: 'query', required: false, type: [String] })
   @Get('all')
   async findAll(@Query() filterDto: FilterJobDto) {
     return await this.jobService.findAll(filterDto);
@@ -33,6 +33,7 @@ export class JobController {
   @ApiBearerAuth('bearerAuth')
   @UseGuards(JwtAuthGuard)
   @Get('search')
+  @ApiQuery({ name: 'query', required: false, type: [String] })
   async searchJobs(@Query('query') query: string | string[]) {
     return this.jobService.findAllByQuery(query);
   }
