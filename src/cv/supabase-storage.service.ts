@@ -40,7 +40,19 @@ export class SupabaseStorageService {
 
     return data.publicUrl;
   }
+async downloadFile(path: string): Promise<Buffer> {
+  console.log('Bucket:', this.bucket);
+  console.log('File path:', path);
 
+  const { data, error } = await this.supabase.storage
+    .from(this.bucket)
+    .download(path);
+
+  if (error) throw new Error(`Download failed: ${error.message}`);
+
+  const arrayBuffer = await data.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
   async deleteFile(storagePath: string): Promise<void> {
     const { error } = await this.supabase.storage
       .from(this.bucket)

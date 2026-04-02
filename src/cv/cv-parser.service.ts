@@ -1,15 +1,14 @@
 // cv-parser.service.ts
 import { Injectable } from '@nestjs/common';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const pdfParse: (buffer: Buffer) => Promise<{ text: string }> = require('pdf-parse');
 import * as mammoth from 'mammoth';
 
 @Injectable()
 export class CvParserService {
-  
+
   async parseCV(file: Express.Multer.File): Promise<string> {
     const fileExtension = file.originalname.split('.').pop()?.toLowerCase();
-    
+
     try {
       switch (fileExtension) {
         case 'pdf':
@@ -26,10 +25,17 @@ export class CvParserService {
   }
 
   private async parsePDF(buffer: Buffer): Promise<string> {
-    const data = await pdfParse(buffer);
-    return data.text;
-  }
 
+    const { PDFParse } = require('pdf-parse');
+
+    const parser = new PDFParse({
+      data: buffer,
+    });
+
+    const result = await parser.parse();
+
+    return result.text;
+  }
   private async parseDOCX(buffer: Buffer): Promise<string> {
     const result = await mammoth.extractRawText({ buffer });
     return result.value;

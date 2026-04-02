@@ -1,3 +1,5 @@
+import { ApiProperty } from "@nestjs/swagger";
+
 export class AnalyzeJobDto {
   id: number;
   vacancy: string;
@@ -8,4 +10,10 @@ export class AnalyzeJobDto {
   deadline: string;
   page: number;
   archived: boolean;
+}
+
+
+export class ChatDto {
+  @ApiProperty({ example: 'hello' })
+  prompt: string;
 }

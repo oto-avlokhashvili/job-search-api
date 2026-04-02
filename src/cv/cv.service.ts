@@ -6,12 +6,14 @@ import { Cv } from 'src/Entities/cv.entity';
 import { Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { SupabaseStorageService } from './supabase-storage.service';
+import { CvParserService } from './cv-parser.service';
 @Injectable()
 export class CvService {
   constructor(
     @InjectRepository(Cv)
     private readonly cvRepository: Repository<Cv>,
-    private readonly storageService: SupabaseStorageService, 
+    private readonly storageService: SupabaseStorageService,
+    private readonly cvParserService: CvParserService 
   ) { }
 
   async uploadCv(userId: number, file: Express.Multer.File): Promise<Cv> {
@@ -45,11 +47,13 @@ export class CvService {
     return this.cvRepository.save(cv);
   }
 
-  async getCvByUser(userId: number): Promise<Cv> {
-    const cv = await this.cvRepository.findOne({ where: { userId } });
-    if (!cv) throw new NotFoundException('No CV found for this user');
-    return cv;
-  }
+async getCvByUser(userId: number): Promise<Cv & { buffer?: Buffer }> {
+  const cv = await this.cvRepository.findOne({ where: { userId } });
+  if (!cv) throw new NotFoundException('No CV found for this user');
+
+  const buffer = await this.storageService.downloadFile(cv.storagePath);
+  return { ...cv, buffer };
+}
 
   async deleteCv(userId: number): Promise<void> {
     const cv = await this.cvRepository.findOne({ where: { userId } });
