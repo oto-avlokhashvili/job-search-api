@@ -120,25 +120,33 @@ const prompt = `
 You are an expert Technical Recruiter and Job Matching AI. 
 
 ### STEP 1: CV ROLE IDENTIFICATION
-Carefully analyze the provided CV to determine the candidate's **Primary Professional Identity** (e.g., the specific type of developer or engineer they are based on their most recent roles and projects).
+Analyze the CV to determine the candidate's **Primary Professional Identity** (e.g., Angular Developer, DevOps Engineer) and their **Seniority Level** (Junior, Mid, Senior, Lead).
 
-### STEP 2: DYNAMIC MATCHING LOGIC
-The user has provided a specific database filter via these search terms: ${JSON.stringify(searchQuery)}. 
+### STEP 2: SENIORITY-FIRST MATCHING LOGIC
+Compare the CV against "JOB VACANCIES DATA" using these strict priority rules:
 
-Compare the CV against "JOB VACANCIES DATA" using these priority tiers:
-1. **Implicit Role Match:** Prioritize vacancies that match the **Primary Professional Identity** you identified in Step 1. If the candidate is a specialist in a specific framework or language, those vacancies MUST be ranked #1.
-2. **Search Query Enforcement:** Within the results, prioritize jobs that contain terms from the search query array provided above.
-3. **Location & Seniority:** Prioritize matches in Georgia (Tbilisi) or remote, and align the vacancy with the candidate's experience and current education.
+1. **Seniority Alignment (60% of Match Score):** - Start by identifying the candidate's level (Senior, Mid, Junior, Intern).
+   - **Perfect Alignment:** If the job title matches the candidate's level (e.g., Senior to Senior), assign **60 points**.
+   - **Partial Mismatch:** If the candidate is one level above/below (e.g., Senior to Mid), assign **30 points**.
+   - **Hard Mismatch:** If the candidate is a **Senior** and the job is an **Intern (სტაჟიორი)** or **Junior**, assign **0 points** for this category.
 
-### STEP 3: OUTPUT REQUIREMENTS
-1. **Identify Top 5:** Select the 5 best matches. If a vacancy exists that perfectly aligns with the candidate's primary tech stack and the search query, it must be the top result.
-2. **Salary Estimation:** Provide a realistic range in GEL for the Tbilisi market based on the candidate's specific profile.
-3. **Gap Analysis:** Identify any missing skills relative to the specific requirements of the top-ranked jobs.
+2. **Skill & Tech Stack (30% of Match Score):** - If the Primary Tech Stack (e.g., Angular) matches, add **30 points**.
+   - If the Tech Stack is different but related, add **10 points**.
+
+3. **Search Query & Location (10% of Match Score):**
+   - If it matches terms in ${JSON.stringify(searchQuery)} and is in Tbilisi/Remote, add **10 points**.
+
+### STEP 3: MATCH SCORE CALIBRATION (MANDATORY)
+- **90-100%:** Only for jobs that match BOTH Seniority and Tech Stack.
+- **50-70%:** Jobs that match the Tech Stack but have a **Seniority Mismatch** (e.g., a Senior looking at an Intern role).
+- **Below 40%:** Jobs with no Tech or Seniority match.
+
+**EXAMPLE RULE:** An "Angular სტაჟიორი" (Intern) role for a **Senior Developer** MUST be calculated as: 0 (Seniority) + 30 (Tech) + 10 (Location) = **40% Match**.
 
 ### IMPORTANT CONSTRAINTS:
 - Return ONLY valid JSON.
 - No markdown, no conversational filler.
-- Do not hallucinate vacancies; use ONLY provided data.
+- Use ONLY provided vacancy data.
 
 RESPONSE FORMAT:
 {
@@ -157,7 +165,7 @@ RESPONSE FORMAT:
       "page": number,
       "archived": boolean,
       "salaryRange": "string",
-      "match": "string (percentage)"
+      "match": "number"
     }
   ]
 }
