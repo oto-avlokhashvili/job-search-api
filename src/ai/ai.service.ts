@@ -114,7 +114,8 @@ ${pageText}
 
   async analyzeCvAndTopJobs(userId: number, searchQuery: string[]): Promise<string> {
     const cv = await this.cvService.getCvByUser(userId);
-    const base64Data = cv.buffer?.toString('base64');
+    const buffer = await this.storageService.downloadFile(cv.storagePath);
+    const base64Data = buffer.toString('base64');
     const jobs = await this.jobService.findAllByQuery(searchQuery);
 const prompt = `
 You are an expert Technical Recruiter and Job Matching AI. 
@@ -136,17 +137,23 @@ Compare the CV against "JOB VACANCIES DATA" using these strict priority rules:
 3. **Search Query & Location (10% of Match Score):**
    - If it matches terms in ${JSON.stringify(searchQuery)} and is in Tbilisi/Remote, add **10 points**.
 
-### STEP 3: MATCH SCORE CALIBRATION (MANDATORY)
-- **90-100%:** Only for jobs that match BOTH Seniority and Tech Stack.
-- **50-70%:** Jobs that match the Tech Stack but have a **Seniority Mismatch** (e.g., a Senior looking at an Intern role).
-- **Below 40%:** Jobs with no Tech or Seniority match.
+### STEP 3: OUTPUT REQUIREMENTS (STRICT)
+1. **Identify Top 5 (MANDATORY):** You MUST return exactly 5 jobs from the "JOB VACANCIES DATA" ranked from highest to lowest score. 
+   - Even if the match score is low (e.g., 40% for a Senior looking at an Intern role), you must include them to fill the list.
+   - Do not return fewer than 5 jobs unless the "JOB VACANCIES DATA" provided below contains fewer than 5 items total.
 
-**EXAMPLE RULE:** An "Angular სტაჟიორი" (Intern) role for a **Senior Developer** MUST be calculated as: 0 (Seniority) + 30 (Tech) + 10 (Location) = **40% Match**.
+2. **Match Score Calibration:**
+   - **90-100%:** Only for jobs that match BOTH Seniority and Tech Stack.
+   - **40-70%:** Jobs that match the Tech Stack but have a **Seniority Mismatch** (e.g., a Senior matched with a Junior/Intern role).
+   - **Below 40%:** Weak technical or seniority overlap.
+
+
 
 ### IMPORTANT CONSTRAINTS:
 - Return ONLY valid JSON.
 - No markdown, no conversational filler.
 - Use ONLY provided vacancy data.
+- Do not duplicate jobs.
 
 RESPONSE FORMAT:
 {
@@ -193,7 +200,7 @@ ${JSON.stringify(jobs)}
           ],
           generationConfig: {
             response_mime_type: "application/json",
-            temperature: 0.2
+            temperature: 0.1
           }
         },
         { headers: { 'Content-Type': 'application/json' }, timeout: 60_000 }

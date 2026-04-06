@@ -47,12 +47,11 @@ export class CvService {
     return this.cvRepository.save(cv);
   }
 
-async getCvByUser(userId: number): Promise<Cv & { buffer?: Buffer }> {
+async getCvByUser(userId: number): Promise<Cv> {
   const cv = await this.cvRepository.findOne({ where: { userId } });
   if (!cv) throw new NotFoundException('No CV found for this user');
 
-  const buffer = await this.storageService.downloadFile(cv.storagePath);
-  return { ...cv, buffer };
+  return cv;
 }
 
   async deleteCv(userId: number): Promise<void> {

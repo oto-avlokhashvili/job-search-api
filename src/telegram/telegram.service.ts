@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import TelegramBot from 'node-telegram-bot-api';
 import { from, lastValueFrom } from 'rxjs';
 import { JobService } from 'src/job/job.service';
@@ -17,7 +17,7 @@ interface UserSession {
 }
 
 @Injectable()
-export class TelegramService implements OnModuleInit {
+export class TelegramService implements OnModuleInit, OnModuleDestroy {
     private readonly logger = new Logger(TelegramService.name);
     private bot: TelegramBot | null = null;  // ← Changed this line
     private userSessions: Map<number, UserSession> = new Map();
@@ -38,17 +38,37 @@ export class TelegramService implements OnModuleInit {
         this.setupCommands();
     }
 
+    onModuleDestroy() {
+        this.stopBot();
+    }
+
     setupCommands() {
         this.logger.log('✅ Telegram Bot successfully started and running!');
         this.logger.log('🔗 Bot link: https://t.me/job_notifcation_bot');
+        
+        if (this.bot) {
+            this.bot.stopPolling();
+        }
+
         this.bot = new TelegramBot(this.token, {
             polling: {
-                interval: 300,
+                interval: 2000, // Increased to 2s to be less aggressive
                 autoStart: true,
                 params: {
-                    timeout: 10,
+                    timeout: 50, // Increased to 50s for more stable long polling
                 },
             },
+        });
+
+        // Add error listener to handle ECONNRESET and other polling errors gracefully
+        this.bot.on('polling_error', (error: any) => {
+            // These errors are commonly related to the long polling connection being recycled
+            // or the dev server hot-reloading. We'll log them as warnings instead of errors.
+            if (error.code === 'EFATAL' || error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT') {
+                this.logger.warn(`Telegram Polling connection issue (${error.code}). Usually transient, retrying...`);
+                return;
+            }
+            this.logger.error(`Unhandled Telegram polling error: ${error.message}`, error.stack);
         });
 
         this.bot?.onText(/\/start(?: (.+))?/, async (msg, match) => {
