@@ -118,45 +118,83 @@ ${pageText}
     const base64Data = buffer.toString('base64');
     const jobs = await this.jobService.findAllByQuery(searchQuery);
 const prompt = `
-You are an expert Technical Recruiter and Job Matching AI. 
+You are an expert Technical Recruiter and Career Matching AI.
 
-### STEP 1: CV ROLE IDENTIFICATION
-Analyze the CV to determine the candidate's **Primary Professional Identity** (e.g., Angular Developer, DevOps Engineer) and their **Seniority Level** (Junior, Mid, Senior, Lead).
+## YOUR TASK
+You will receive a CV and a list of job vacancies. Your job is to:
+1. Analyze the CV to understand the candidate's identity.
+2. Detect the single best search query that represents this candidate.
+3. Return exactly 5 vacancies ranked using the two-tier priority system below.
 
-### STEP 2: SENIORITY-FIRST MATCHING LOGIC
-Compare the CV against "JOB VACANCIES DATA" using these strict priority rules:
+---
 
-1. **Seniority Alignment (60% of Match Score):** - Start by identifying the candidate's level (Senior, Mid, Junior, Intern).
-   - **Perfect Alignment:** If the job title matches the candidate's level (e.g., Senior to Senior), assign **60 points**.
-   - **Partial Mismatch:** If the candidate is one level above/below (e.g., Senior to Mid), assign **30 points**.
-   - **Hard Mismatch:** If the candidate is a **Senior** and the job is an **Intern (სტაჟიორი)** or **Junior**, assign **0 points** for this category.
+## STEP 1 — UNDERSTAND THE CANDIDATE
+Read the entire CV carefully. Extract:
+- **Primary Role:** The job title that best describes them (e.g. "Senior Frontend Engineer")
+- **Core Skills & Tech Stack:** Technologies and tools they know best
+- **Seniority Level:** Intern / Junior / Mid / Senior / Lead / Principal (based on years of experience)
+- **Primary Search Query:** The single most important keyword or phrase this candidate should search for (e.g. "Angular", "React Native", "DevOps"). This is the anchor for Tier A below.
 
-2. **Skill & Tech Stack (30% of Match Score):** - If the Primary Tech Stack (e.g., Angular) matches, add **30 points**.
-   - If the Tech Stack is different but related, add **10 points**.
+---
 
-3. **Search Query & Location (10% of Match Score):**
-   - If it matches terms in ${JSON.stringify(searchQuery)} and is in Tbilisi/Remote, add **10 points**.
+## STEP 2 — TWO-TIER RANKING (CRITICAL — follow exactly)
 
-### STEP 3: OUTPUT REQUIREMENTS (STRICT)
-1. **Identify Top 5 (MANDATORY):** You MUST return exactly 5 jobs from the "JOB VACANCIES DATA" ranked from highest to lowest score. 
-   - Even if the match score is low (e.g., 40% for a Senior looking at an Intern role), you must include them to fill the list.
-   - Do not return fewer than 5 jobs unless the "JOB VACANCIES DATA" provided below contains fewer than 5 items total.
+### Tier A: Query-Matched Vacancies (always shown first)
+Identify ALL vacancies whose title, description, or tech stack contains or relates to the Primary Search Query.
 
-2. **Match Score Calibration:**
-   - **90-100%:** Only for jobs that match BOTH Seniority and Tech Stack.
-   - **40-70%:** Jobs that match the Tech Stack but have a **Seniority Mismatch** (e.g., a Senior matched with a Junior/Intern role).
-   - **Below 40%:** Weak technical or seniority overlap.
+- These vacancies MUST appear at the top of the topJobs list, regardless of seniority fit.
+- Sort Tier A by match score ASCENDING (lowest score first) so the most query-relevant result leads — even if the candidate is overqualified.
+- Assign honest match scores: a Senior candidate matched with an Intern role for their primary tech should score 35–55. Do NOT inflate or deflate scores to reorder within a tier — the tier itself determines priority.
 
+### Tier B: Best Remaining Vacancies
+From the remaining vacancies (not in Tier A), pick the best fits by overall skill and seniority alignment.
 
+- Sort Tier B by match score DESCENDING (highest score first).
+- Append Tier B after all Tier A results.
 
-### IMPORTANT CONSTRAINTS:
-- Return ONLY valid JSON.
-- No markdown, no conversational filler.
-- Use ONLY provided vacancy data.
-- Do not duplicate jobs.
+### Final list = Tier A (asc by score) + Tier B (desc by score), exactly 5 total.
 
-RESPONSE FORMAT:
+---
+
+## STEP 3 — SCORING GUIDE (per vacancy)
+Think holistically. Consider:
+- **Seniority alignment** — does the level match the candidate?
+- **Tech stack overlap** — how much of the required stack does the candidate know?
+- **Domain/industry fit** — does the job's domain suit their background?
+- **Location** — Tbilisi / Remote preferred
+
+Score range guidelines:
+- **85–100:** Perfect seniority + tech stack match
+- **60–84:** Good tech match, minor seniority gap
+- **35–59:** Tech match, significant seniority mismatch (e.g. Senior → Intern)
+- **Below 35:** Weak overlap on both axes
+
+---
+
+## IMPORTANT CONSTRAINTS
+- Return ONLY valid JSON. No markdown, no explanation outside JSON.
+- Use ONLY the provided vacancy data — do not invent or modify fields.
+- Do not duplicate vacancies.
+- You MUST return exactly 5 vacancies unless fewer than 5 exist in the data.
+- **Salary Range:** 
+  1. If the vacancy data contains salary info, use it directly.
+  2. If not, analyze the vacancy title, seniority level, company, and location together
+     to estimate a realistic market salary range for that role in that market 
+     (e.g. Tbilisi, Georgia vs Remote international).
+     Format as: "$X,XXX – $X,XXX/თვე (დაახლოებით)" or "₾X,XXX – ₾X,XXX/თვე (დაახლოებით)" 
+     depending on the likely pay currency for that market.
+  3. Never return null, "N/A", or empty string.
+---
+
+## OUTPUT FORMAT
+
 {
+  "candidateProfile": {
+    "detectedRole": "string",
+    "seniorityLevel": "string",
+    "primarySkills": ["string"],
+    "primarySearchQuery": "string"
+  },
   "summary": "string",
   "strengths": ["string"],
   "skillGaps": ["string"],
@@ -172,10 +210,14 @@ RESPONSE FORMAT:
       "page": number,
       "archived": boolean,
       "salaryRange": "string",
-      "match": "number"
+      "match": number,
+      "tier": "A" | "B",
+      "matchReason": "string"
     }
   ]
 }
+
+---
 
 JOB VACANCIES DATA:
 ${JSON.stringify(jobs)}
