@@ -14,12 +14,12 @@ async function bootstrap() {
   }));
   
   // Updated CORS configuration to allow credentials
-  app.enableCors({
-    origin: 'http://localhost:4200', // Replace with your Angular app URL
-    credentials: true, // This is the key change - allows cookies
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-    allowedHeaders: 'Content-Type, Authorization',
-  });
+app.enableCors({
+  origin: ['http://localhost:4200', 'https://frontend-project-20c52.web.app'], // ← removed trailing slash
+  credentials: true,
+  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+  allowedHeaders: 'Content-Type, Authorization',
+});
 
   // Swagger configuration
   const config = new DocumentBuilder()

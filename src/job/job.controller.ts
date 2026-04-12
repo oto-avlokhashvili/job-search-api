@@ -21,8 +21,7 @@ export class JobController {
   async create(@Body() createJobDto: CreateJobDto) {
     return await this.jobService.create(createJobDto);
   }
-  @ApiBearerAuth('bearerAuth')
-  @UseGuards(JwtAuthGuard)
+  
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'query', required: false, type: [String] })

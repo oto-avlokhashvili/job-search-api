@@ -4,9 +4,10 @@ import { AiController } from './ai.controller';
 import { CvModule } from 'src/cv/cv.module';
 import { SupabaseStorageService } from 'src/cv/supabase-storage.service';
 import { JobModule } from 'src/job/job.module';
+import { UserModule } from 'src/user/user.module';
 
 @Module({
-  imports: [CvModule, JobModule],
+  imports: [CvModule, JobModule, UserModule],
   controllers: [AiController],
   providers: [AiService, SupabaseStorageService],
 })

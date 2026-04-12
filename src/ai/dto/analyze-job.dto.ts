@@ -17,3 +17,8 @@ export class ChatDto {
   @ApiProperty({ example: 'hello' })
   prompt: string;
 }
+
+export class AiChatDto {
+  @ApiProperty({ type: 'string' })
+  prompt: string;
+}
