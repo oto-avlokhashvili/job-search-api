@@ -6,10 +6,10 @@ import { ConfigService } from '@nestjs/config';
 import { SupabaseStorageService } from 'src/cv/supabase-storage.service';
 import { JobService } from 'src/job/job.service';
 import { UserService } from 'src/user/user.service';
-
+import { jsonrepair } from 'jsonrepair';
 @Injectable()
 export class AiService {
-  private readonly apiKey = process.env.GEMINI_API_KEY;
+  private readonly apiKey = process.env.GEMINI_API_KEY2;
   private readonly logger = new Logger(AiService.name);
   constructor(private readonly configService: ConfigService,
     private readonly cvService: CvService,
@@ -321,6 +321,7 @@ Text: ${input}
       }
     }
   }
+
   async aiChat(
     userId: number,
     body: AiChatDto,
@@ -417,6 +418,7 @@ ${hasCV ? `### Secondary factors — CV fit (base score 0–70)
 - Return ONLY valid JSON. No markdown, no explanation outside the JSON.
 - Use ONLY the provided vacancy data — do not invent or modify fields.
 - Do not duplicate vacancies.
+- Do not change the data other than salary range and match.
 - **Salary Range:**
   1. If the vacancy data contains salary info, use it directly.
   2. If not, estimate a realistic market salary range based on the vacancy title, seniority, company, and location.
@@ -493,7 +495,7 @@ ${JSON.stringify(jobs)}
           contents: [{ parts }],
           generationConfig: {
             temperature: 0.1,
-            responseMimeType: 'application/json', // 👈 forces pure JSON response, no markdown
+            responseMimeType: 'application/json',
           },
         },
         {
@@ -504,26 +506,44 @@ ${JSON.stringify(jobs)}
 
       const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
       const responseText = typeof raw === 'string' ? raw : JSON.stringify(raw);
-      
-      // Extract the first complete JSON object from the response — bulletproof against markdown fences
+
+      // Extract the first complete JSON object from the response
       const jsonMatch = responseText.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
         this.logger.warn('No JSON found in Gemini response');
         return { response: responseText, comment: 'შეცდომა' };
       }
-      
+
       try {
-        const parsedResponse = JSON.parse(jsonMatch[0]);
+        // jsonrepair handles: trailing commas, unescaped quotes, single quotes,
+        // truncated JSON, control characters — all common LLM output issues
+        const repaired = jsonrepair(jsonMatch[0]);
+        const parsedResponse = JSON.parse(repaired);
+
         await this.userService.update(userId, { searchQuery: searchQuery });
         if (files) {
           await this.cvService.uploadCv(userId, files[0]);
         }
-        return { response: parsedResponse, comment: `ნაპოვნია ${parsedResponse.topJobs.length} ვაკანსია` };
+
+        return {
+          response: parsedResponse,
+          comment: `ნაპოვნია ${parsedResponse.topJobs?.length ?? 0} ვაკანსია`,
+        };
       } catch (parseErr) {
-        this.logger.warn('Failed to parse Gemini JSON', parseErr);
+        // Log a snippet around the problem area to aid debugging
+        this.logger.warn('Failed to parse Gemini JSON even after repair', parseErr);
+        const errMsg = (parseErr as SyntaxError).message ?? '';
+        const posMatch = errMsg.match(/position (\d+)/);
+        if (posMatch) {
+          const pos = parseInt(posMatch[1], 10);
+          this.logger.debug(
+            'JSON snippet around error:',
+            jsonMatch[0].slice(Math.max(0, pos - 80), pos + 80)
+          );
+        }
         return { response: responseText, comment: 'შეცდომა' };
       }
-      
+
     } catch (err: any) {
       this.logger.error('Gemini call failed', err?.response?.data ?? err.message);
       throw new HttpException(
@@ -531,6 +551,5 @@ ${JSON.stringify(jobs)}
         err?.response?.status ?? 500
       );
     }
-    
   }
 }

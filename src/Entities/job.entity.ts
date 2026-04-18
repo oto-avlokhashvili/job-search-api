@@ -21,8 +21,6 @@ export class JobEntity {
   @Column()
   page:number;
   
-  @OneToMany(() => SentJob, sentJob => sentJob.job)
-  sentJobs: SentJob[];
   @Column({ default: false })
   archived: boolean;
 }

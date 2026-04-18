@@ -39,9 +39,6 @@ export class User {
     @Column({ nullable: true })
     telegramToken?: string;
     
-    @OneToMany(() => SentJob, sentJob => sentJob.job)
-    sentJobs: SentJob[];
-
     @BeforeInsert()
     async hashOassword(){
         this.password = await bcrypt.hash(this.password, 10);

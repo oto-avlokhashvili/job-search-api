@@ -18,25 +18,23 @@ export class SentJobsService {
     return `This action returns all sentJobs`;
   }
 
-async findByUserId(id: number, page = 1) {
-  const take = 10;
+async findByUserId(id: number, page = 1, limit = 10) {
+  const take = limit;
   const skip = (page - 1) * take;
 
-  const qb = this.sentJobRepo
-    .createQueryBuilder('sentJob')
-    .leftJoinAndSelect('sentJob.job', 'job')
-    .where('sentJob.userId = :id', { id })
-    .orderBy('sentJob.id', 'DESC')
-    .take(take)
-    .skip(skip);
-
-  const [sentJobs, count] = await qb.getManyAndCount();
+  const [sentJobs, total] = await this.sentJobRepo.findAndCount({
+    where: { userId: id },
+    order: { match: 'DESC' },
+    take,
+    skip,
+  });
 
   return {
     sentJobs,
-    count,
+    total,
     page,
-    totalPages: Math.ceil(count / take),
+    limit,
+    lastPage: Math.ceil(total / take),
   };
 }
 

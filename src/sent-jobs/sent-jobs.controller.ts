@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, Req } from '@nestjs/common';
 import { SentJobsService } from './sent-jobs.service';
 import { CreateSentJobDto } from './dto/create-sent-job.dto';
 import { UpdateSentJobDto } from './dto/update-sent-job.dto';
@@ -14,18 +14,15 @@ export class SentJobsController {
   create(@Body() createSentJobDto: CreateSentJobDto) {
     return this.sentJobsService.create(createSentJobDto);
   }
-  @ApiBearerAuth('bearerAuth')  
-  @UseGuards(JwtAuthGuard)
-  @Get()
-  findAll() {
-    return this.sentJobsService.findAll();
-  }
-  @Get(':id')
+@UseGuards(JwtAuthGuard)
+@ApiBearerAuth('bearerAuth')
+@Get()
 findOne(
-  @Param('id') id: string,
+  @Req() req,
   @Query('page') page = '1',
+  @Query('limit') limit = '10',
 ) {
-  return this.sentJobsService.findByUserId(+id, Number(page));
+  return this.sentJobsService.findByUserId(req.user.id, Number(page), Number(limit));
 }
 
   @ApiBearerAuth('bearerAuth')  

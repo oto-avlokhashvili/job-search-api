@@ -14,8 +14,20 @@ export class SentJob {
     user: User;
 
     @Column()
-    jobId: number | null;
+    jobId: number;
 
-    @ManyToOne(() => JobEntity, { onDelete: 'SET NULL', nullable: true })
-    job: JobEntity;
+    @Column()
+    vacancy: string;
+
+    @Column()
+    location: string;
+
+    @Column()
+    company: string;
+
+    @Column()
+    match: number;
+
+    @Column()
+    salaryRange: string;
 }
