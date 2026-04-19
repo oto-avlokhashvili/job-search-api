@@ -2,6 +2,10 @@ import {
   Controller, Post, Get, Delete,
   UseGuards, UseInterceptors, UploadedFile,
   Req, HttpCode, HttpStatus,
+  Body,
+  Param,
+  ParseIntPipe,
+  Patch,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
@@ -13,6 +17,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CvService } from './cv.service';
 import { Cv } from 'src/Entities/cv.entity';
 import { CvFileValidationPipe } from './cv-file-validation.pipe';
+import { UpdateCvSummaryDto } from './dto/update-cv.dto';
 
 
 @ApiTags('CV')
@@ -63,4 +68,15 @@ export class CvController {
   async deleteMyCv(@Req() req) {
     return this.cvService.deleteCv(req.user.id);
   }
+
+  // cv.controller.ts
+@Patch('cv-summary')
+@ApiBearerAuth('bearerAuth')
+@ApiBody({ type: UpdateCvSummaryDto, required: false })
+updateSummary(
+  @Req() req,
+  @Body() dto: UpdateCvSummaryDto ,
+) {
+  return this.cvService.updateSummary(req.user.id, dto);
+}
 }

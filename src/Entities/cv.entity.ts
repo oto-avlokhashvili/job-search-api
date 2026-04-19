@@ -1,3 +1,4 @@
+import { CvSummaryDetails } from "src/cv/dto/cv-summary.dto";
 import { PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Entity } from "typeorm";
 @Entity('cv_files')
 export class Cv {
@@ -24,6 +25,9 @@ export class Cv {
 
   @Column()
   publicUrl: string;
+
+  @Column({ type: 'jsonb', nullable: true, default: null })
+  summary: CvSummaryDetails | null;
 
   @CreateDateColumn()
   createdAt: Date;

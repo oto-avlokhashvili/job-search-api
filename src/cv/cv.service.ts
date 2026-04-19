@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { CreateCvDto } from './dto/create-cv.dto';
-import { UpdateCvDto } from './dto/update-cv.dto';
+import { UpdateCvDto, UpdateCvSummaryDto } from './dto/update-cv.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Cv } from 'src/Entities/cv.entity';
 import { Repository } from 'typeorm';
@@ -42,6 +42,7 @@ export class CvService {
       size: file.size,
       storagePath,
       publicUrl,
+      summary: {},
     });
 
     return this.cvRepository.save(cv);
@@ -60,4 +61,11 @@ async getCvByUser(userId: number): Promise<Cv> {
     await this.storageService.deleteFile(cv.storagePath);
     await this.cvRepository.remove(cv);
   }
+
+// service
+async updateSummary(userId: number, dto: UpdateCvSummaryDto | null): Promise<Cv> {
+  const cv = await this.getCvByUser(userId);
+  cv.summary = dto ? { ...dto } : null;
+  return this.cvRepository.save(cv);
+}
 }

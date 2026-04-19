@@ -21,4 +21,7 @@ export class ChatDto {
 export class AiChatDto {
   @ApiProperty({ type: 'string' })
   prompt: string;
+
+  @ApiProperty({ type: 'string', required: false })
+  useStoredCv?: string;
 }
