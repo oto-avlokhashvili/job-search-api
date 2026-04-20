@@ -12,7 +12,7 @@ import { CvSummaryDetails } from 'src/cv/dto/cv-summary.dto';
 
 @Injectable()
 export class AiService {
-  private readonly apiKey = process.env.GEMINI_API_KEY2;
+  private readonly apiKey = process.env.GEMINI_API_KEY;
   private readonly logger = new Logger(AiService.name);
   constructor(private readonly configService: ConfigService,
     private readonly cvService: CvService,
@@ -21,36 +21,43 @@ export class AiService {
     private readonly userService: UserService
   ) { }
 
+  SEARCH_TERMS_PROMPT = (prompt: string) => `
+Extract search terms to search job vacancies from the following query.
+
+Rules for searchTerms:
+- Max 8 lowercase stems
+- For EACH detected technology/role, include ALL of these variations:
+  - The exact term (e.g. "angular")
+  - Its Georgian equivalent (e.g. "ანგულარი")
+  - Its implied category in English (e.g. "frontend", "front-end", "developer")
+  - Its implied category in Georgian (e.g. "ფრონტენდი", "დეველოპერი")
+- Implication map (1 level only, do not chain):
+  Angular | React | Vue | Svelte → frontend, front-end, developer
+  Python | Node.js | Laravel | Django | Spring → backend, back-end, developer
+  Figma | Adobe XD | Sketch → designer, ui/ux
+  AWS | Docker | Kubernetes | Terraform → devops, cloud, engineer
+  Swift | Kotlin | Flutter | React Native → mobile, developer
+- No duplicates
+- EXCLUDE generic words: "vacancy", "ვაკანსია", "job", "ვაკანსიებს", "find", "search"
+
+Return ONLY valid raw JSON, no markdown, no backticks:
+{ "searchTerms": ["string"] }
+
+Search Query: "${prompt}"
+`.trim();
+
 public async analyzeInput(
   prompt: string,
   cvFile?: Express.Multer.File,
   existingSummary?: CvSummaryDetails | null
 ): Promise<{ summary: CvSummaryDetails | null; searchTerms: string[] }> {
 
-  // If summary already exists, only extract search terms from prompt — skip CV analysis
+  // ── Branch 1: summary already exists — only extract search terms ──
   if (existingSummary) {
-    const textPart = {
-      text: `
-Extract search terms to search job vacancies from the following query.
-
-Rules for searchTerms:
-- Max 8 lowercase stems
-- Include English + Georgian versions of each term
-- 1 level of implication max (e.g. Angular → frontend, React → frontend, Vue → frontend, Python → backend, Node.js → backend, Laravel → backend, Figma → designer, AWS → devops, Docker → devops) — do not chain further
-- No duplicates
-- EXCLUDE generic words like "vacancy", "ვაკანსია", "job", "ვაკანსიებს", "find", "search" — extract only tech/role terms
-
-Return ONLY valid raw JSON, no markdown, no backticks:
-{ "searchTerms": ["string"] }
-
-Search Query: "${prompt}"
-      `.trim(),
-    };
-
     const { data } = await axios.post(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${this.apiKey}`,
       {
-        contents: [{ parts: [textPart] }],
+        contents: [{ parts: [{ text: this.SEARCH_TERMS_PROMPT(prompt) }] }],
         generationConfig: { temperature: 0, responseMimeType: 'application/json' },
       },
       { headers: { 'Content-Type': 'application/json' }, timeout: 15000 }
@@ -58,7 +65,7 @@ Search Query: "${prompt}"
 
     const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}';
     try {
-      console.log("call 1");
+      console.log('call 1');
       const parsed = JSON.parse(raw);
       return { summary: existingSummary, searchTerms: parsed.searchTerms ?? [] };
     } catch {
@@ -67,9 +74,8 @@ Search Query: "${prompt}"
     }
   }
 
-  // No existing summary — full analysis with CV
-  const textPart = {
-    text: `
+  // ── Branch 2: full analysis — CV + search terms ──
+  const fullPrompt = `
 Analyze the input and return two things:
 
 1. "searchTerms" — keywords to search job vacancies
@@ -77,13 +83,21 @@ Analyze the input and return two things:
 
 Rules for searchTerms:
 - Max 8 lowercase stems
-- Include English + Georgian versions of each term
-- 1 level of implication max (e.g. Angular → frontend, React → frontend, Vue → frontend, Python → backend, Node.js → backend, Laravel → backend, Figma → designer, AWS → devops, Docker → devops) — do not chain further
+- For EACH detected technology/role, include ALL of these variations:
+  - The exact term (e.g. "angular")
+  - Its Georgian equivalent (e.g. "ანგულარი")
+  - Its implied category in English (e.g. "frontend", "front-end", "developer")
+  - Its implied category in Georgian (e.g. "ფრონტენდი", "დეველოპერი")
+- Implication map (1 level only, do not chain):
+  Angular | React | Vue | Svelte → frontend, front-end, developer
+  Python | Node.js | Laravel | Django | Spring → backend, back-end, developer
+  Figma | Adobe XD | Sketch → designer, ui/ux
+  AWS | Docker | Kubernetes | Terraform → devops, cloud, engineer
+  Swift | Kotlin | Flutter | React Native → mobile, developer
 - If both prompt and CV provided → prioritize terms appearing in BOTH
-- If only prompt → extract from prompt only
 - If only CV → extract from CV only
 - No duplicates
-- EXCLUDE generic words like "vacancy", "ვაკანსია", "job", "ვაკანსიებს", "find", "search" — extract only tech/role terms
+- EXCLUDE generic words: "vacancy", "ვაკანსია", "job", "ვაკანსიებს", "find", "search"
 
 Rules for summary (only when CV is present):
 - Lowercase stems for skills, English + Georgian versions
@@ -101,7 +115,6 @@ Rules for summary (only when CV is present):
   - Never default to Junior without evidence — if unsure between two levels, pick the higher one
 
 Return ONLY valid raw JSON, no markdown, no backticks:
-
 {
   "searchTerms": ["string"],
   "summary": {
@@ -116,11 +129,9 @@ Return ONLY valid raw JSON, no markdown, no backticks:
 }
 
 Search Query: "${prompt}"
-    `.trim(),
-  };
+  `.trim();
 
   const parts: any[] = [];
-
   if (cvFile) {
     parts.push({
       inline_data: {
@@ -129,8 +140,7 @@ Search Query: "${prompt}"
       },
     });
   }
-
-  parts.push(textPart);
+  parts.push({ text: fullPrompt });
 
   const { data } = await axios.post(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${this.apiKey}`,
@@ -142,9 +152,8 @@ Search Query: "${prompt}"
   );
 
   const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}';
-
   try {
-    console.log("call 2");
+    console.log('call 2');
     const parsed = JSON.parse(raw);
     return {
       summary: parsed.summary ?? null,
@@ -154,7 +163,6 @@ Search Query: "${prompt}"
     const clean = raw.replace(/```json|```/gi, '').trim();
     try {
       const parsed = JSON.parse(clean);
-      
       return {
         summary: parsed.summary ?? null,
         searchTerms: parsed.searchTerms ?? [],
