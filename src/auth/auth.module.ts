@@ -11,14 +11,17 @@ import { ConfigModule } from '@nestjs/config';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import refreshJwtConfig from './config/refresh-jwt-config';
 import { RefreshJwtStrategy } from './strategies/refresh.strategy';
+import googleOauthConfig from './config/google-oauth.config';
+import { GoogleStrategy } from './strategies/google.strategy';
 @Module({
   imports: [
     TypeOrmModule.forFeature([User]),
     JwtModule.registerAsync(jwtConfig.asProvider()), 
     ConfigModule.forFeature(jwtConfig),
-    ConfigModule.forFeature(refreshJwtConfig)
+    ConfigModule.forFeature(refreshJwtConfig),
+    ConfigModule.forFeature(googleOauthConfig)
   ],
   controllers: [AuthController],
-  providers: [AuthService, UserService, LocalStrategy, JwtStrategy, RefreshJwtStrategy],
+  providers: [AuthService, UserService, LocalStrategy, JwtStrategy, RefreshJwtStrategy, GoogleStrategy],
 })
 export class AuthModule { }

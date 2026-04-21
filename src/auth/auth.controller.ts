@@ -6,7 +6,9 @@ import { LocalAuthGuard } from './guards/local-auth.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RefreshAuthGuard } from './guards/refresh-auth.guard';
 import { LoginDto } from './dto/login.dto';
-import { ApiBearerAuth } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiExcludeEndpoint } from '@nestjs/swagger';
+import { GoogleAuthGuard } from './guards/google-auth.guard';
+import { Public } from './decorators/public.decorator';
 
 
 @Controller('auth')
@@ -57,4 +59,21 @@ export class AuthController {
     response.clearCookie('refreshToken');
     return { message: 'Logged out successfully' };
   }
+
+
+@Public()
+@ApiExcludeEndpoint()
+@Get('google/login')
+@UseGuards(GoogleAuthGuard)
+googleLogin() {}
+
+@Public()
+@ApiExcludeEndpoint()
+@Get('google/callback')
+@UseGuards(GoogleAuthGuard)
+async googleCallback(@Req() req, @Res() res) {
+  const response = await this.authService.login(req.user.id);
+  res.redirect(`${process.env.FRONTEND_URL}?token=${response.token}`);
+}
+
 }

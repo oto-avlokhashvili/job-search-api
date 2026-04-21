@@ -5,6 +5,7 @@ import { JwtService } from '@nestjs/jwt';
 import { AuthJwtPayload } from './types/auth-jwtPayload';
 import type { ConfigType } from '@nestjs/config';
 import refreshJwtConfig from './config/refresh-jwt-config';
+import { CreateUserDto } from 'src/user/dto/create-user.dto';
 
 @Injectable()
 export class AuthService {
@@ -44,5 +45,11 @@ export class AuthService {
         if(!user) throw new UnauthorizedException();
             const currentUser = user;            
         return currentUser;
+    }
+
+    async validateGoogleUser(googleUser:CreateUserDto){
+        const user = await this.userService.findByEmail(googleUser.email);
+        if(user) return user;
+        return await this.userService.create(googleUser);
     }
 }

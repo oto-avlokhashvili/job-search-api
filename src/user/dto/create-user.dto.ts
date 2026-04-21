@@ -15,6 +15,6 @@ export class CreateUserDto {
     password:string;
 
     @IsString()
-    searchQuery:string[];
+    searchQuery?:string[];
     
 }
