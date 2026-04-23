@@ -14,7 +14,7 @@ export class JobService {
 
   }
   async create(createJobDto: CreateJobDto) {
-    const job = await await this.jobRepo.save(createJobDto);
+    const job = await this.jobRepo.save(createJobDto);
     return job;
   }
 
@@ -23,7 +23,7 @@ export class JobService {
       fetchDescriptions: true,
       descriptionDelay: 1500,      // 1.5s between each detail page
       descriptionBatchSize: 10,
-      maxPages:1
+      maxPages:17
     });
   }
   async insertMany(createJobDto: CreateJobDto[]) {

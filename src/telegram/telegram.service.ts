@@ -47,7 +47,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     setupCommands() {
         this.logger.log('✅ Telegram Bot successfully started and running!');
         this.logger.log('🔗 Bot link: https://t.me/job_notifcation_bot');
-        
+
         if (this.bot) {
             this.bot.stopPolling();
         }
@@ -149,29 +149,32 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     private async autoStartForAllUsers() {
         try {
             const users = await this.userService.findAllWithTelegram();
-            this.logger.log(`🚀 Starting sessions for ${users.length} users...`);
+            this.logger.log(`🚀 Starting queue for ${users.length} users...`);
 
-            // Process users in parallel batches to avoid rate limits
-            const BATCH_SIZE = 10; // Process 10 users at a time
-            const DELAY_BETWEEN_BATCHES = 2000; // 2 seconds between batches
+            let successCount = 0;
+            let failCount = 0;
 
-            for (let i = 0; i < users.length; i += BATCH_SIZE) {
-                const batch = users.slice(i, i + BATCH_SIZE);
+            for (let i = 0; i < users.length; i++) {
+                const user = users[i];
 
-                // Process batch in parallel
-                await Promise.allSettled(
-                    batch.map(user => this.processUserStart(user))
-                );
+                try {
+                    await this.processUserStart(user);
+                    successCount++;
+                    this.logger.log(`✅ [${i + 1}/${users.length}] Processed user ${user.telegramChatId}`);
+                } catch (error) {
+                    failCount++;
+                    this.logger.error(`❌ [${i + 1}/${users.length}] Failed for user ${user.telegramChatId}:`, error);
+                }
 
-                // Delay between batches to respect Telegram rate limits
-                if (i + BATCH_SIZE < users.length) {
-                    await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_BATCHES));
+                // Wait 1.5s between each user to respect Telegram rate limits
+                if (i < users.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 1500));
                 }
             }
 
-            this.logger.log(`✅ Completed processing ${users.length} users`);
+            this.logger.log(`✅ Queue finished. Success: ${successCount}, Failed: ${failCount}`);
         } catch (error) {
-            this.logger.error('Failed to auto-start for users:', error);
+            this.logger.error('Failed to process user queue:', error);
         }
     }
 
@@ -190,114 +193,114 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         }
     }
 
-private async processUserStart(user: any): Promise<void> {
-    if (!user.telegramChatId) return;
+    private async processUserStart(user: any): Promise<void> {
+        if (!user.telegramChatId) return;
 
-    try {
-        // Fetch matched jobs and sent jobs in parallel
-        const [matchedJobs, sentJobIdsArr] = await Promise.all([
-            this.aiMatchedJobsService.findAllMatched(user.id),
-            this.sentJobsService.findAllJobIdsByUserId(user.id)
-        ]);
+        try {
+            // Fetch matched jobs and sent jobs in parallel
+            const [matchedJobs, sentJobIdsArr] = await Promise.all([
+                this.aiMatchedJobsService.findAllMatched(user.id),
+                this.sentJobsService.findAllJobIdsByUserId(user.id)
+            ]);
 
-        const sentJobIds = new Set<number>(sentJobIdsArr);
+            const sentJobIds = new Set<number>(sentJobIdsArr);
 
-        // Filter new jobs that haven't been sent
-        const newJobs = matchedJobs.filter(job => !sentJobIds.has(job.id));
+            // Filter new jobs that haven't been sent
+            const newJobs = matchedJobs.filter(job => !sentJobIds.has(job.id));
 
-        // Get job limit based on subscription
-        const jobLimit = this.getJobLimitForUser(user.subscription);
+            // Get job limit based on subscription
+            const jobLimit = this.getJobLimitForUser(user.subscription);
 
-        // Send welcome message with subscription info
-        const subscriptionEmoji = {
-            'BASIC': '🆓',
-            'PRO': '⭐',
-            'PREMIUM': '👑',
-        };
+            // Send welcome message with subscription info
+            const subscriptionEmoji = {
+                'BASIC': '🆓',
+                'PRO': '⭐',
+                'PREMIUM': '👑',
+            };
 
-        await this.bot?.sendMessage(
-            user.telegramChatId,
-            `✅ გამარჯობა, ${user.firstName}! ბოტი აქტიურია და ეძებს ვაკანსიებს.\n` +
-            `${subscriptionEmoji[user.subscription] || '🆓'} თქვენი გამოწერა: ${user.subscription}\n` +
-            `📊 დღეს მიიღებთ: ${jobLimit === Infinity ? 'შეუზღუდავ' : jobLimit} ვაკანსიას`
-        );
-
-        if (newJobs.length === 0) {
             await this.bot?.sendMessage(
                 user.telegramChatId,
-                `ℹ️ ახალი ვაკანსია ვერ მოიძებნა`
+                `✅ გამარჯობა, ${user.firstName}! ბოტი აქტიურია და ეძებს ვაკანსიებს.\n` +
+                `${subscriptionEmoji[user.subscription] || '🆓'} თქვენი გამოწერა: ${user.subscription}\n` +
+                `📊 დღეს მიიღებთ: ${jobLimit === Infinity ? 'შეუზღუდავ' : jobLimit} ვაკანსიას`
             );
-            return;
-        }
 
-        // Limit jobs based on subscription
-        const jobsToSend = newJobs.slice(0, jobLimit === Infinity ? newJobs.length : jobLimit);
-
-        this.logger.log(`📨 Sending ${jobsToSend.length} jobs to user ${user.telegramChatId} (${user.subscription})`);
-
-        // Send jobs with delay between each
-        for (const job of jobsToSend) {
-            try {
-                await this.sentJobsService.create({ userId: user.id, jobId: job.id, vacancy: job.vacancy, location: job.location, company: job.company, match: job.match, salaryRange: job.salaryRange });
-
-                const matchBar = this.buildMatchBar(job.match);
-                const salaryLine = job.salaryRange
-                    ? `💰 ${job.salaryRange}\n`
-                    : '';
-                const gapsLine = job.matchGaps?.length
-                    ? `⚠️ *გაფრთხილება:* ${job.matchGaps.join(', ')}\n`
-                    : '';
-
+            if (newJobs.length === 0) {
                 await this.bot?.sendMessage(
                     user.telegramChatId,
-                    `━━━━━━━━━━━━━━━━━━━\n` +
-                    `🔔 *ახალი ვაკანსია*\n` +
-                    `━━━━━━━━━━━━━━━━━━━\n` +
-                    `📌 *${job.vacancy}*\n` +
-                    `🏢 ${job.company}\n` +
-                    `📍 ${job.location ?? 'თბილისი'}\n` +
-                    `${salaryLine}` +
-                    `📅 ${job.publishDate} – ${job.deadline}\n` +
-                    `🎯 შესაბამისობა: ${matchBar} ${job.match}%\n` +
-                    `${gapsLine}` +
-                    `🔗 [დეტალები](${job.link})\n` +
-                    `━━━━━━━━━━━━━━━━━━━`,
-                    { parse_mode: 'Markdown' }
+                    `ℹ️ ახალი ვაკანსია ვერ მოიძებნა`
                 );
-
-                await new Promise(resolve => setTimeout(resolve, 500));
-            } catch (jobError) {
-                this.logger.error(`Failed to send job ${job.id} to user ${user.telegramChatId}:`, jobError);
+                return;
             }
-        }
 
-        // Notify remaining jobs count
-        const remainingJobs = newJobs.length - jobsToSend.length;
-        let upgradeMessage = '';
-        if (remainingJobs > 0) {
-            if (user.subscription === 'BASIC') {
-                upgradeMessage = '\n\n⭐ PRO გამოწერით მიიღებთ 20 ვაკანსიას დღეში!\n👑 PREMIUM-ით - შეუზღუდავად!';
-            } else if (user.subscription === 'PRO') {
-                upgradeMessage = '\n\n👑 PREMIUM გამოწერით მიიღებთ შეუზღუდავ ვაკანსიებს!';
+            // Limit jobs based on subscription
+            const jobsToSend = newJobs.slice(0, jobLimit === Infinity ? newJobs.length : jobLimit);
+
+            this.logger.log(`📨 Sending ${jobsToSend.length} jobs to user ${user.telegramChatId} (${user.subscription})`);
+
+            // Send jobs with delay between each
+            for (const job of jobsToSend) {
+                try {
+                    await this.sentJobsService.create({ userId: user.id, jobId: job.id, vacancy: job.vacancy, location: job.location, company: job.company, match: job.match, salaryRange: job.salaryRange });
+
+                    const matchBar = this.buildMatchBar(job.match);
+                    const salaryLine = job.salaryRange
+                        ? `💰 ${job.salaryRange}\n`
+                        : '';
+                    const gapsLine = job.matchGaps?.length
+                        ? `⚠️ *გაფრთხილება:* ${job.matchGaps.join(', ')}\n`
+                        : '';
+
+                    await this.bot?.sendMessage(
+                        user.telegramChatId,
+                        `━━━━━━━━━━━━━━━━━━━\n` +
+                        `🔔 *ახალი ვაკანსია*\n` +
+                        `━━━━━━━━━━━━━━━━━━━\n` +
+                        `📌 *${job.vacancy}*\n` +
+                        `🏢 ${job.company}\n` +
+                        `📍 ${job.location ?? 'თბილისი'}\n` +
+                        `${salaryLine}` +
+                        `📅 ${job.publishDate} – ${job.deadline}\n` +
+                        `🎯 შესაბამისობა: ${matchBar} ${job.match}%\n` +
+                        `${gapsLine}` +
+                        `🔗 [დეტალები](${job.link})\n` +
+                        `━━━━━━━━━━━━━━━━━━━`,
+                        { parse_mode: 'Markdown' }
+                    );
+
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                } catch (jobError) {
+                    this.logger.error(`Failed to send job ${job.id} to user ${user.telegramChatId}:`, jobError);
+                }
             }
+
+            // Notify remaining jobs count
+            const remainingJobs = newJobs.length - jobsToSend.length;
+            let upgradeMessage = '';
+            if (remainingJobs > 0) {
+                if (user.subscription === 'BASIC') {
+                    upgradeMessage = '\n\n⭐ PRO გამოწერით მიიღებთ 20 ვაკანსიას დღეში!\n👑 PREMIUM-ით - შეუზღუდავად!';
+                } else if (user.subscription === 'PRO') {
+                    upgradeMessage = '\n\n👑 PREMIUM გამოწერით მიიღებთ შეუზღუდავ ვაკანსიებს!';
+                }
+            }
+
+            await this.bot?.sendMessage(
+                user.telegramChatId,
+                remainingJobs > 0
+                    ? `ℹ️ კიდევ ${remainingJobs} ვაკანსია არსებობს, მაგრამ თქვენი დღიური ლიმიტი ამოიწურა.${upgradeMessage}`
+                    : `✅ ყველა ვაკანსია გამოიგზავნა. დარჩენილია: 0.`
+            );
+
+        } catch (error) {
+            this.logger.error(`Failed to start session for user ${user.telegramChatId}:`, error);
         }
-
-        await this.bot?.sendMessage(
-            user.telegramChatId,
-            remainingJobs > 0
-                ? `ℹ️ კიდევ ${remainingJobs} ვაკანსია არსებობს, მაგრამ თქვენი დღიური ლიმიტი ამოიწურა.${upgradeMessage}`
-                : `✅ ყველა ვაკანსია გამოიგზავნა. დარჩენილია: 0.`
-        );
-
-    } catch (error) {
-        this.logger.error(`Failed to start session for user ${user.telegramChatId}:`, error);
     }
-}
 
-private buildMatchBar(match: number): string {
-    const filled = Math.round(match / 10);
-    return '🟩'.repeat(filled) + '⬜'.repeat(10 - filled);
-}
+    private buildMatchBar(match: number): string {
+        const filled = Math.round(match / 10);
+        return '🟩'.repeat(filled) + '⬜'.repeat(10 - filled);
+    }
 
     private async autoStopForAllUsers() {
         try {
@@ -346,4 +349,29 @@ private buildMatchBar(match: number): string {
             this.logger.error(`Failed to stop session for user ${user.telegramChatId}:`, error);
         }
     }
+
+
+    /*     async runDailyAnalysis() {
+        const users = await this.userService.findAllWithTelegram();
+        const proUsers = users.filter(u => u.subscription === 'PRO' || u.subscription === 'PREMIUM');
+        
+        this.logger.log(`🤖 Running AI analysis for ${proUsers.length} PRO/PREMIUM users...`);
+    
+        for (let i = 0; i < proUsers.length; i++) {
+            const user = proUsers[i];
+            try {
+                await this.aiChatService.analyzeAndSave(user.id); // your modified aichat
+                this.logger.log(`✅ [${i + 1}/${proUsers.length}] Analyzed jobs for ${user.id}`);
+            } catch (error) {
+                this.logger.error(`❌ Failed analysis for user ${user.id}:`, error);
+            }
+    
+            if (i < proUsers.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 1500));
+            }
+        }
+    
+        this.logger.log(`✅ AI analysis complete. Starting Telegram delivery...`);
+        await this.startBot(); // existing send logic
+    } */
 }
