@@ -20,7 +20,10 @@ export class JobService {
 
   async scrapper() {
     await this.scraperService.scrapeJobs('', 1, {
-      maxPages: 17
+      fetchDescriptions: true,
+      descriptionDelay: 1500,      // 1.5s between each detail page
+      descriptionBatchSize: 10,
+      maxPages:1
     });
   }
   async insertMany(createJobDto: CreateJobDto[]) {
@@ -167,9 +170,10 @@ async findAll(filterDto: FilterJobDto) {
 
   async manualScrapper() {
     await this.scraperService.scrapeJobs('', 1, {
-      maxJobs: 100,
-      delayBetweenRequests: 2000,
-      maxPages: 17
+      fetchDescriptions: true,
+      descriptionDelay: 1500,      // 1.5s between each detail page
+      descriptionBatchSize: 10,
+      maxPages:1
     });
   }
 }
