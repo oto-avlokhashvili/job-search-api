@@ -46,36 +46,36 @@ Return ONLY valid raw JSON, no markdown, no backticks:
 Search Query: "${prompt}"
 `.trim();
 
-public async analyzeInput(
-  prompt: string,
-  cvFile?: Express.Multer.File,
-  existingSummary?: CvSummaryDetails | null
-): Promise<{ summary: CvSummaryDetails | null; searchTerms: string[] }> {
+  public async analyzeInput(
+    prompt: string,
+    cvFile?: Express.Multer.File,
+    existingSummary?: CvSummaryDetails | null
+  ): Promise<{ summary: CvSummaryDetails | null; searchTerms: string[] }> {
 
-  // ── Branch 1: summary already exists — only extract search terms ──
-  if (existingSummary) {
-    const { data } = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${this.apiKey}`,
-      {
-        contents: [{ parts: [{ text: this.SEARCH_TERMS_PROMPT(prompt) }] }],
-        generationConfig: { temperature: 0, responseMimeType: 'application/json' },
-      },
-      { headers: { 'Content-Type': 'application/json' }, timeout: 15000 }
-    );
+    // ── Branch 1: summary already exists — only extract search terms ──
+    if (existingSummary) {
+      const { data } = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${this.apiKey}`,
+        {
+          contents: [{ parts: [{ text: this.SEARCH_TERMS_PROMPT(prompt) }] }],
+          generationConfig: { temperature: 0, responseMimeType: 'application/json' },
+        },
+        { headers: { 'Content-Type': 'application/json' }, timeout: 15000 }
+      );
 
-    const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}';
-    try {
-      console.log('call 1');
-      const parsed = JSON.parse(raw);
-      return { summary: existingSummary, searchTerms: parsed.searchTerms ?? [] };
-    } catch {
-      this.logger.warn('Failed to parse searchTerms response');
-      return { summary: existingSummary, searchTerms: [] };
+      const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}';
+      try {
+        console.log('call 1');
+        const parsed = JSON.parse(raw);
+        return { summary: existingSummary, searchTerms: parsed.searchTerms ?? [] };
+      } catch {
+        this.logger.warn('Failed to parse searchTerms response');
+        return { summary: existingSummary, searchTerms: [] };
+      }
     }
-  }
 
-  // ── Branch 2: full analysis — CV + search terms ──
-  const fullPrompt = `
+    // ── Branch 2: full analysis — CV + search terms ──
+    const fullPrompt = `
 Analyze the input and return two things:
 
 1. "searchTerms" — keywords to search job vacancies
@@ -131,96 +131,96 @@ Return ONLY valid raw JSON, no markdown, no backticks:
 Search Query: "${prompt}"
   `.trim();
 
-  const parts: any[] = [];
-  if (cvFile) {
-    parts.push({
-      inline_data: {
-        mime_type: cvFile.mimetype,
-        data: cvFile.buffer.toString('base64'),
+    const parts: any[] = [];
+    if (cvFile) {
+      parts.push({
+        inline_data: {
+          mime_type: cvFile.mimetype,
+          data: cvFile.buffer.toString('base64'),
+        },
+      });
+    }
+    parts.push({ text: fullPrompt });
+
+    const { data } = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${this.apiKey}`,
+      {
+        contents: [{ parts }],
+        generationConfig: { temperature: 0, responseMimeType: 'application/json' },
       },
-    });
-  }
-  parts.push({ text: fullPrompt });
+      { headers: { 'Content-Type': 'application/json' }, timeout: 15000 }
+    );
 
-  const { data } = await axios.post(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${this.apiKey}`,
-    {
-      contents: [{ parts }],
-      generationConfig: { temperature: 0, responseMimeType: 'application/json' },
-    },
-    { headers: { 'Content-Type': 'application/json' }, timeout: 15000 }
-  );
-
-  const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}';
-  try {
-    console.log('call 2');
-    const parsed = JSON.parse(raw);
-    return {
-      summary: parsed.summary ?? null,
-      searchTerms: parsed.searchTerms ?? [],
-    };
-  } catch {
-    const clean = raw.replace(/```json|```/gi, '').trim();
+    const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}';
     try {
-      const parsed = JSON.parse(clean);
+      console.log('call 2');
+      const parsed = JSON.parse(raw);
       return {
         summary: parsed.summary ?? null,
         searchTerms: parsed.searchTerms ?? [],
       };
     } catch {
-      this.logger.warn('Failed to parse analyzeInput response');
-      return { summary: null, searchTerms: [] };
-    }
-  }
-}
-
-async aiChat(
-  userId: number,
-  body: AiChatDto,
-  files?: Express.Multer.File[]
-): Promise<{ response: any; comment: string }> {
-
-  let cvFile = files?.find(f =>
-    f.mimetype === 'application/pdf' || f.mimetype.startsWith('text/')
-  );
-
-  // Fetch stored CV safely
-  const storedCv = await this.cvService.getCvByUser(userId).catch(() => null);
-  const existingSummary = storedCv?.summary && Object.keys(storedCv.summary).length > 0
-    ? storedCv.summary as CvSummaryDetails
-    : null;
-
-  // If the frontend signals to use the stored CV and no file was uploaded,
-  // fetch the CV bytes from Supabase storage
-  if (!cvFile && body.useStoredCv === 'true' && storedCv) {
-    try {
-      const buffer = await this.storageService.downloadFile(storedCv.storagePath);
-      cvFile = {
-        buffer,
-        mimetype: storedCv.mimeType,
-        originalname: storedCv.originalName,
-        size: storedCv.size,
-      } as Express.Multer.File;
-    } catch (e) {
-      this.logger.warn(`Could not load stored CV for user ${userId}: ${e.message}`);
+      const clean = raw.replace(/```json|```/gi, '').trim();
+      try {
+        const parsed = JSON.parse(clean);
+        return {
+          summary: parsed.summary ?? null,
+          searchTerms: parsed.searchTerms ?? [],
+        };
+      } catch {
+        this.logger.warn('Failed to parse analyzeInput response');
+        return { summary: null, searchTerms: [] };
+      }
     }
   }
 
-  const hasCV = !!cvFile;
+  async aiChat(
+    userId: number,
+    body: AiChatDto,
+    files?: Express.Multer.File[]
+  ): Promise<{ response: any; comment: string }> {
 
-  // Analyze prompt + CV to get search terms and candidate summary
-  const { searchTerms, summary } = await this.analyzeInput(body.prompt, cvFile, existingSummary);
+    let cvFile = files?.find(f =>
+      f.mimetype === 'application/pdf' || f.mimetype.startsWith('text/')
+    );
 
-  if (summary && !existingSummary) {
-    await this.cvService.updateSummary(userId, summary);
-  }
+    // Fetch stored CV safely
+    const storedCv = await this.cvService.getCvByUser(userId).catch(() => null);
+    const existingSummary = storedCv?.summary && Object.keys(storedCv.summary).length > 0
+      ? storedCv.summary as CvSummaryDetails
+      : null;
 
-  const jobs = await this.jobService.findAllByQuery(searchTerms);
-  console.log('Search terms:', searchTerms);
-  console.log('Summary:', summary);
+    // If the frontend signals to use the stored CV and no file was uploaded,
+    // fetch the CV bytes from Supabase storage
+    if (!cvFile && body.useStoredCv === 'true' && storedCv) {
+      try {
+        const buffer = await this.storageService.downloadFile(storedCv.storagePath);
+        cvFile = {
+          buffer,
+          mimetype: storedCv.mimeType,
+          originalname: storedCv.originalName,
+          size: storedCv.size,
+        } as Express.Multer.File;
+      } catch (e) {
+        this.logger.warn(`Could not load stored CV for user ${userId}: ${e.message}`);
+      }
+    }
 
-  // Call 2 — rank jobs against candidate profile
-  const prompt = `
+    const hasCV = !!cvFile;
+
+    // Analyze prompt + CV to get search terms and candidate summary
+    const { searchTerms, summary } = await this.analyzeInput(body.prompt, cvFile, existingSummary);
+
+    if (summary && !existingSummary) {
+      await this.cvService.updateSummary(userId, summary);
+    }
+
+    const jobs = await this.jobService.findAllByQuery(searchTerms);
+    console.log('Search terms:', searchTerms);
+    console.log('Summary:', summary);
+
+    // Call 2 — rank jobs against candidate profile
+    const prompt = `
 You are an expert Technical Recruiter and Career Matching AI.
 
 ## YOUR TASK
@@ -331,77 +331,238 @@ JOB VACANCIES DATA:
 ${JSON.stringify(jobs)}
   `.trim();
 
-  try {
-    const parts: any[] = [{ text: prompt }];
+    try {
+      const parts: any[] = [{ text: prompt }];
 
-    // Attach image files as inline data (e.g. scanned CV image)
-    if (files?.length) {
-      for (const file of files) {
-        if (file.mimetype.startsWith('image/')) {
-          parts.push({
-            inline_data: {
-              mime_type: file.mimetype,
-              data: file.buffer.toString('base64'),
-            },
-          });
+      // Attach image files as inline data (e.g. scanned CV image)
+      if (files?.length) {
+        for (const file of files) {
+          if (file.mimetype.startsWith('image/')) {
+            parts.push({
+              inline_data: {
+                mime_type: file.mimetype,
+                data: file.buffer.toString('base64'),
+              },
+            });
+          }
         }
       }
-    }
 
-    const { data } = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${this.apiKey}`,
-      {
-        contents: [{ parts }],
-        generationConfig: {
-          temperature: 0.1,
-          responseMimeType: 'application/json',
+      const { data } = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${this.apiKey}`,
+        {
+          contents: [{ parts }],
+          generationConfig: {
+            temperature: 0.1,
+            responseMimeType: 'application/json',
+          },
         },
-      },
-      {
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 120000,
+        {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 120000,
+        }
+      );
+
+      const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+      const responseText = typeof raw === 'string' ? raw : JSON.stringify(raw);
+
+      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        this.logger.warn('No JSON found in Gemini response');
+        return { response: responseText, comment: 'შეცდომა' };
       }
-    );
 
-    const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-    const responseText = typeof raw === 'string' ? raw : JSON.stringify(raw);
+      try {
+        const repaired = jsonrepair(jsonMatch[0]);
+        const parsedResponse = JSON.parse(repaired);
 
-    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      this.logger.warn('No JSON found in Gemini response');
-      return { response: responseText, comment: 'შეცდომა' };
+        await this.userService.update(userId, { searchQuery: searchTerms });
+
+        return {
+          response: parsedResponse,
+          comment: `ნაპოვნია ${parsedResponse.topJobs?.length ?? 0} ვაკანსია`,
+        };
+      } catch (parseErr) {
+        this.logger.warn('Failed to parse Gemini JSON even after repair', parseErr);
+        const errMsg = (parseErr as SyntaxError).message ?? '';
+        const posMatch = errMsg.match(/position (\d+)/);
+        if (posMatch) {
+          const pos = parseInt(posMatch[1], 10);
+          this.logger.debug(
+            'JSON snippet around error:',
+            jsonMatch[0].slice(Math.max(0, pos - 80), pos + 80)
+          );
+        }
+        return { response: responseText, comment: 'შეცდომა' };
+      }
+
+    } catch (err: any) {
+      this.logger.error('Gemini call failed', err?.response?.data ?? err.message);
+      throw new HttpException(
+        err?.response?.data ?? 'Gemini error',
+        err?.response?.status ?? 500
+      );
     }
+  }
+
+  async analyzeJobsForBot(
+    userId: number,
+    searchQuery: string[]
+  ): Promise<{ topJobs: any[]; summary: string }> {
+
+    // Fetch stored CV and summary
+    const storedCv = await this.cvService.getCvByUser(userId).catch(() => null);
+    const existingSummary = storedCv?.summary && Object.keys(storedCv.summary).length > 0
+      ? storedCv.summary as CvSummaryDetails
+      : null;
+
+    const hasCV = !!existingSummary;
+
+    // Fetch jobs using the user's search queries
+    const jobs = await this.jobService.findAllByQuery(searchQuery);
+
+    if (!jobs?.length) {
+      this.logger.warn(`No jobs found for user ${userId} with queries: ${searchQuery}`);
+      return { topJobs: [], summary: 'ვაკანსიები ვერ მოიძებნა' };
+    }
+
+    const prompt = `
+You are an expert Technical Recruiter and Career Matching AI.
+
+## YOUR TASK
+You will receive a search query, a list of job vacancies${hasCV ? ', and a candidate profile' : ''}.
+Your job is to:
+1. ${hasCV ? 'Use the provided candidate profile to evaluate each vacancy.' : 'Use the search query to infer what the candidate is looking for.'}
+2. Evaluate every vacancy against the candidate profile.
+3. Prioritize vacancies that match the search query AND ${hasCV ? 'the candidate profile' : 'the inferred profile'}.
+4. Return all vacancies that meaningfully match, ranked by fit score.
+
+---
+
+## STEP 1 — EVALUATE & SCORE EACH VACANCY
+For every vacancy compute a match score (0–100) using this priority order:
+
+### Primary factor — search query alignment (up to +30 bonus)
+- Does the vacancy title, description, or required stack directly match the search query?
+- If yes: apply a +30 bonus on top of the profile-based score.
+- If partially: apply +10 to +20.
+- If no relation to the query: no bonus.
+
+${hasCV ? `### Secondary factors — profile fit (base score 0–70)
+- **Seniority alignment** — does the required level match the candidate's experience?
+- **Tech stack overlap** — what fraction of the required stack does the candidate know?
+- **Domain/industry fit** — does the job's sector align with their background?
+- **Location compatibility** — is it in their city, remote-friendly, or a mismatch?
+- **Career trajectory fit** — does the role represent a natural next step for them?` : `### Secondary factors — inferred profile fit (base score 0–70)
+- **Role relevance** — does the vacancy match the role inferred from the search query?
+- **Tech stack overlap** — does the vacancy require skills implied by the search query?
+- **Seniority** — infer seniority from the query if possible (e.g. "senior", "junior")`}
+
+### Score range guidelines:
+- **85–100:** Query match + strong profile fit
+- **65–84:** Query match with minor gaps, OR strong profile fit without query match
+- **50–64:** Partial query match or decent fit with noticeable gaps
+- **Below 50:** Omit unless fewer than 3 vacancies pass the threshold
+
+---
+
+## STEP 2 — FILTER & RANK
+- Include ALL vacancies with a final score ≥ 50.
+- If fewer than 3 vacancies reach 50, include the top 3 regardless of score.
+- Sort results by final score descending.
+- Do not pad results with poor matches.
+
+---
+
+## IMPORTANT CONSTRAINTS
+- Return ONLY valid JSON. No markdown, no explanation outside the JSON.
+- Use ONLY the provided vacancy data — do not invent or modify fields.
+- Do not duplicate vacancies.
+- **Salary Range:**
+  1. If the vacancy data contains salary info, use it directly.
+  2. If not, estimate based on vacancy title, company, and location:
+     - Intern/სტაჟიორი → "₾500 – ₾1,000/mo (est.)"
+     - Junior → "₾1,000 – ₾2,000/mo (est.)"
+     - Mid → "₾2,500 – ₾4,000/mo (est.)"
+     - Senior → "₾4,000 – ₾7,000/mo (est.)"
+     - Lead/Principal → "₾7,000 – ₾12,000/mo (est.)"
+  3. Detect seniority from title first, then description, then default to Junior.
+  4. Use ₾ for Georgian companies/locations, $ for international/remote.
+  5. Never return null, "N/A", or empty string.
+
+---
+
+## OUTPUT FORMAT
+
+{
+  "summary": "string",
+  "topJobs": [
+    {
+      "id": number,
+      "vacancy": "string",
+      "location": "string",
+      "company": "string",
+      "link": "string",
+      "publishDate": "string",
+      "deadline": "string",
+      "salaryRange": "string",
+      "match": number,
+      "matchReason": "string"
+    }
+  ]
+}
+
+---
+
+SEARCH QUERY: ${JSON.stringify(searchQuery)}
+
+${hasCV ? `CANDIDATE PROFILE:\n${JSON.stringify(existingSummary)}` : ''}
+
+JOB VACANCIES DATA:
+${JSON.stringify(jobs)}
+  `.trim();
 
     try {
-      const repaired = jsonrepair(jsonMatch[0]);
-      const parsedResponse = JSON.parse(repaired);
+      const { data } = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${this.apiKey}`,
+        {
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.1,
+            responseMimeType: 'application/json',
+          },
+        },
+        {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 120000,
+        }
+      );
 
-      await this.userService.update(userId, { searchQuery: searchTerms });
+      const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+      const responseText = typeof raw === 'string' ? raw : JSON.stringify(raw);
+
+      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        this.logger.warn(`No JSON in Gemini response for user ${userId}`);
+        return { topJobs: [], summary: 'შეცდომა' };
+      }
+
+      const repaired = jsonrepair(jsonMatch[0]);
+      const parsed = JSON.parse(repaired);
 
       return {
-        response: parsedResponse,
-        comment: `ნაპოვნია ${parsedResponse.topJobs?.length ?? 0} ვაკანსია`,
+        topJobs: (parsed.topJobs ?? []).map((job: any) => ({
+          ...job,
+          page: job.page ?? 0,
+          archived: job.archived ?? false,
+          queryMatch: job.queryMatch ?? false,
+          matchGaps: job.matchGaps ?? [],
+        })),
+        summary: parsed.summary ?? '',
       };
-    } catch (parseErr) {
-      this.logger.warn('Failed to parse Gemini JSON even after repair', parseErr);
-      const errMsg = (parseErr as SyntaxError).message ?? '';
-      const posMatch = errMsg.match(/position (\d+)/);
-      if (posMatch) {
-        const pos = parseInt(posMatch[1], 10);
-        this.logger.debug(
-          'JSON snippet around error:',
-          jsonMatch[0].slice(Math.max(0, pos - 80), pos + 80)
-        );
-      }
-      return { response: responseText, comment: 'შეცდომა' };
+    } catch (err: any) {
+      this.logger.error(`Gemini bot analysis failed for user ${userId}`, err?.response?.data ?? err.message);
+      return { topJobs: [], summary: 'შეცდომა' };
     }
-
-  } catch (err: any) {
-    this.logger.error('Gemini call failed', err?.response?.data ?? err.message);
-    throw new HttpException(
-      err?.response?.data ?? 'Gemini error',
-      err?.response?.status ?? 500
-    );
   }
-}
 }

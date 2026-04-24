@@ -5,8 +5,9 @@ import { JobModule } from 'src/job/job.module';
 import { UserModule } from 'src/user/user.module';
 import { SentJobsModule } from 'src/sent-jobs/sent-jobs.module';
 import { AiMatchedJobsModule } from 'src/ai-matched-jobs/ai-matched-jobs.module';
+import { AiModule } from 'src/ai/ai.module';
 @Module({
-  imports:[forwardRef(() => JobModule), UserModule, SentJobsModule,AiMatchedJobsModule],
+  imports:[forwardRef(() => JobModule), UserModule, SentJobsModule,AiMatchedJobsModule, AiModule],
   controllers: [TelegramController],
   providers: [TelegramService],
   exports: [TelegramService], 

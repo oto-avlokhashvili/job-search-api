@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/commo
 import TelegramBot from 'node-telegram-bot-api';
 import { from, lastValueFrom } from 'rxjs';
 import { AiMatchedJobsService } from 'src/ai-matched-jobs/ai-matched-jobs.service';
+import { AiService } from 'src/ai/ai.service';
 import { JobService } from 'src/job/job.service';
 import { SentJobsService } from 'src/sent-jobs/sent-jobs.service';
 import { UserService } from 'src/user/user.service';
@@ -32,7 +33,8 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         private readonly sentJobsService: SentJobsService,
         private readonly jobService: JobService,
         private readonly aiMatchedJobsService: AiMatchedJobsService,
-        private userService: UserService
+        private userService: UserService,
+        private aiService: AiService,
     ) { }
 
     onModuleInit() {
@@ -351,27 +353,34 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     }
 
 
-    /*     async runDailyAnalysis() {
-        const users = await this.userService.findAllWithTelegram();
-        const proUsers = users.filter(u => u.subscription === 'PRO' || u.subscription === 'PREMIUM');
-        
-        this.logger.log(`🤖 Running AI analysis for ${proUsers.length} PRO/PREMIUM users...`);
-    
-        for (let i = 0; i < proUsers.length; i++) {
-            const user = proUsers[i];
-            try {
-                await this.aiChatService.analyzeAndSave(user.id); // your modified aichat
-                this.logger.log(`✅ [${i + 1}/${proUsers.length}] Analyzed jobs for ${user.id}`);
-            } catch (error) {
-                this.logger.error(`❌ Failed analysis for user ${user.id}:`, error);
-            }
-    
-            if (i < proUsers.length - 1) {
-                await new Promise(resolve => setTimeout(resolve, 1500));
-            }
-        }
-    
-        this.logger.log(`✅ AI analysis complete. Starting Telegram delivery...`);
-        await this.startBot(); // existing send logic
-    } */
+async runDailyAnalysis() {
+  const users = await this.userService.findAllWithTelegram();
+  const proUsers = users.filter(u => u.subscription === 'PRO' || u.subscription === 'PREMIUM');
+
+  this.logger.log(`🤖 Running AI analysis for ${proUsers.length} PRO/PREMIUM users...`);
+
+  for (let i = 0; i < proUsers.length; i++) {
+    const user = proUsers[i];
+    try {
+      const searchQuery = user.searchQuery ?? [];
+
+      if (!searchQuery.length) {
+        this.logger.warn(`⚠️ [${i + 1}/${proUsers.length}] No search query for user ${user.id}, skipping`);
+        continue;
+      }
+
+      const { topJobs, summary } = await this.aiService.analyzeJobsForBot(user.id, searchQuery);
+      this.logger.log(`✅ [${i + 1}/${proUsers.length}] Found ${topJobs.length} jobs for user ${user.id}`);
+
+      await this.aiMatchedJobsService.createBulk(user.id, topJobs)
+
+    } catch (error) {
+      this.logger.error(`❌ Failed analysis for user ${user.id}:`, error);
+    }
+
+    if (i < proUsers.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 1500));
+    }
+  }
+}
 }
