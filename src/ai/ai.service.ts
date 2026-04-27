@@ -375,8 +375,9 @@ ${JSON.stringify(jobs)}
       try {
         const repaired = jsonrepair(jsonMatch[0]);
         const parsedResponse = JSON.parse(repaired);
-
-        await this.userService.update(userId, { searchQuery: searchTerms });
+        if (searchTerms.length > 0) {
+          await this.userService.update(userId, { searchQuery: searchTerms });
+        }
 
         return {
           response: parsedResponse,
@@ -398,6 +399,30 @@ ${JSON.stringify(jobs)}
 
     } catch (err: any) {
       this.logger.error('Gemini call failed', err?.response?.data ?? err.message);
+
+      // On rate-limit / quota exhaustion, return raw jobs without AI ranking
+      if (err?.response?.status === 429) {
+        this.logger.warn('Gemini rate-limited (429) — returning unranked jobs');
+        const rawJobs = jobs.map((job: any) => ({
+          ...job,
+          salaryRange: null,
+          match: null,
+          queryMatch: null,
+          matchReason: null,
+          matchGaps: [],
+        }));
+        return {
+          response: {
+            candidateProfile: null,
+            summary: null,
+            strengths: [],
+            skillGaps: [],
+            topJobs: rawJobs,
+          },
+          comment: `ნაპოვნია ${rawJobs.length} ვაკანსია (AI ანალიზის გარეშე)`,
+        };
+      }
+
       throw new HttpException(
         err?.response?.data ?? 'Gemini error',
         err?.response?.status ?? 500
