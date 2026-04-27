@@ -15,7 +15,7 @@ async function bootstrap() {
   
   // Updated CORS configuration to allow credentials
 app.enableCors({
-  origin: ['http://localhost:4200', 'https://frontend-project-20c52.web.app'], // ← removed trailing slash
+  origin: ['http://localhost:4200', 'https://job-search-app-production-d867.up.railway.app'], // ← removed trailing slash
   credentials: true,
   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
   allowedHeaders: 'Content-Type, Authorization',
