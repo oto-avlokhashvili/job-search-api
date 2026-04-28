@@ -14,18 +14,18 @@ async removeOutDated(): Promise<void> {
   await this.jobsService.removeOutDated();
 }
 
-@Cron('39 13 * * *')
+@Cron('00 20 * * *')
 async analyzeJobs() {
   await this.telegramService.runDailyAnalysis();
 }
 
-@Cron('40 13 * * *')
+@Cron('10 20 * * *')
 async startTelegramBot() {
     this.logger.log('🚀 Starting Telegram bot via cron...');
     await this.telegramService.startBot();
 }
 
-@Cron('59 13 * * *')
+@Cron('40 20 * * *')
 async stopTelegramBot() {
     this.logger.log('🛑 Stopping Telegram bot via cron...');
     await this.telegramService.stopBot();
