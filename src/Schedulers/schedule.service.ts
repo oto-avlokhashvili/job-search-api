@@ -9,23 +9,23 @@ export class ScheduleService {
     private readonly logger = new Logger(ScheduleService.name);
 
     constructor(private readonly telegramService: TelegramService, private readonly scraperService: ScraperService, private readonly jobsService: JobService) { }
-@Cron('34 17 * * *')
+@Cron('10 06 * * *')
 async removeOutDated(): Promise<void> {
   await this.jobsService.removeOutDated();
 }
 
-@Cron('00 20 * * *')
+@Cron('00 10 * * *')
 async analyzeJobs() {
   await this.telegramService.runDailyAnalysis();
 }
 
-@Cron('10 20 * * *')
+@Cron('10 10 * * *')
 async startTelegramBot() {
     this.logger.log('🚀 Starting Telegram bot via cron...');
     await this.telegramService.startBot();
 }
 
-@Cron('40 20 * * *')
+@Cron('40 10 * * *')
 async stopTelegramBot() {
     this.logger.log('🛑 Stopping Telegram bot via cron...');
     await this.telegramService.stopBot();
