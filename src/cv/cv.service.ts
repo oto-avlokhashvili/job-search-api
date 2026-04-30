@@ -68,4 +68,5 @@ async updateSummary(userId: number, dto: UpdateCvSummaryDto | null): Promise<Cv>
   cv.summary = dto ? { ...dto } : null;
   return this.cvRepository.save(cv);
 }
+
 }

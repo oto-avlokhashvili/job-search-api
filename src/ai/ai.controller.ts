@@ -10,7 +10,7 @@ import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 export class AiController {
   constructor(private readonly aiService: AiService) { }
 
-  @Post('chat')
+/*   @Post('search-job')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('bearerAuth')
   @UseInterceptors(FilesInterceptor('files', 10))
@@ -31,9 +31,30 @@ export class AiController {
   })
   async chat(
     @UploadedFiles() files: Express.Multer.File[],  // will be [] if not sent
-    @Body() body: AiChatDto,
+    @Body() body: ChatDto,
     @Req() req,
   ) {
     return this.aiService.aiChat(req.user.id, body, files ?? []);
-  }
+  } */
+@Post('chat')
+@UseGuards(JwtAuthGuard)
+@ApiBearerAuth('bearerAuth')
+@ApiOperation({ summary: 'Send a prompt to the career assistant' })
+@ApiConsumes('application/json')
+@ApiBody({
+  schema: {
+    type: 'object',
+    required: ['prompt'],
+    properties: {
+      prompt: { type: 'string' },
+    },
+  },
+})
+async simpleChat(
+  @Body() body: { prompt: string },
+  @Req() req,
+) {
+  console.log('body:', body); // check what's actually coming in
+  return this.aiService.chat(req.user.id, body.prompt);
+}
 }
