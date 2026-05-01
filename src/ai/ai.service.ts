@@ -67,6 +67,7 @@ STEP 4 — Cross-check: if STEP 1 and STEP 2 conflict, trust STEP 2 (years) over
 
 ## SEARCH QUERIES — 8–14 short keyword tokens for vacancy search:
 - Each token: 1–2 words MAX, lowercase
+- Each token must be both in english and georgian (for example: "analyst" and "ანალიტიკოსი")
 - For hyphenated terms include both forms separately ("frontend" AND "front-end")
 - Include domain tokens from the candidate's actual domains
 - Include 1–2 Georgian role name translations
@@ -515,7 +516,8 @@ ${cvContext ? `User CV context:\n${cvContext}` : ''}
 
     // Fetch jobs using the user's search queries
     const jobs = await this.jobService.findAllByQuery(searchQuery);
-
+    console.log(jobs,'jobs');
+    
     if (!jobs?.length) {
       this.logger.warn(`No jobs found for user ${userId} with queries: ${searchQuery}`);
       return { topJobs: [], summary: 'ვაკანსიები ვერ მოიძებნა' };
