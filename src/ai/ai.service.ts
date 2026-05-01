@@ -13,7 +13,7 @@ import { AiMatchedJobsService } from 'src/ai-matched-jobs/ai-matched-jobs.servic
 
 @Injectable()
 export class AiService {
-  private readonly apiKey = process.env.GEMINI_API_KEY2;
+  private readonly apiKey = process.env.GEMINI_API_KEY;
   private readonly logger = new Logger(AiService.name);
   constructor(private readonly configService: ConfigService,
     private readonly cvService: CvService,
