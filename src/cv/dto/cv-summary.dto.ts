@@ -7,4 +7,5 @@ export interface CvSummaryDetails {
   domains: string[];
   locationPreference: string;
   careerDirection: string;
+  searchQueries: string[];
 }

@@ -26,4 +26,7 @@ export class UpdateCvSummaryDto implements CvSummaryDetails {
 
   @ApiProperty({ example: 'Looking to grow into a Lead role' })
   careerDirection: string;
+
+  @ApiProperty({ example: ['search', 'terms'] })
+  searchQueries: string[];
 }

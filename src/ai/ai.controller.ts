@@ -10,51 +10,30 @@ import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 export class AiController {
   constructor(private readonly aiService: AiService) { }
 
-/*   @Post('search-job')
+  @Post('search-job')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('bearerAuth')
-  @UseInterceptors(FilesInterceptor('files', 10))
-  @ApiConsumes('multipart/form-data')
+  async searchJob(@Req() req) {
+    return this.aiService.jobsearchWithCv(req.user.id);
+  }
+  @Post('chat')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('bearerAuth')
+  @ApiOperation({ summary: 'Send a prompt to the career assistant' })
+  @ApiConsumes('application/json')
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['prompt'],  // ← only prompt is required
+      required: ['prompt'],
       properties: {
         prompt: { type: 'string' },
-        files: {
-          type: 'array',
-          items: { type: 'string', format: 'binary' },
-          nullable: true,  // ← optional in Swagger UI
-        },
       },
     },
   })
   async chat(
-    @UploadedFiles() files: Express.Multer.File[],  // will be [] if not sent
-    @Body() body: ChatDto,
+    @Body() body: { prompt: string },
     @Req() req,
   ) {
-    return this.aiService.aiChat(req.user.id, body, files ?? []);
-  } */
-@Post('chat')
-@UseGuards(JwtAuthGuard)
-@ApiBearerAuth('bearerAuth')
-@ApiOperation({ summary: 'Send a prompt to the career assistant' })
-@ApiConsumes('application/json')
-@ApiBody({
-  schema: {
-    type: 'object',
-    required: ['prompt'],
-    properties: {
-      prompt: { type: 'string' },
-    },
-  },
-})
-async simpleChat(
-  @Body() body: { prompt: string },
-  @Req() req,
-) {
-  console.log('body:', body); // check what's actually coming in
-  return this.aiService.chat(req.user.id, body.prompt);
-}
+    return this.aiService.chat(req.user.id, body.prompt);
+  }
 }
