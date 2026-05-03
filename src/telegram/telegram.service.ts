@@ -353,34 +353,27 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     }
 
 
-async runDailyAnalysis() {
-  const users = await this.userService.findAllWithTelegram();
-  const proUsers = users.filter(u => u.subscription === 'PRO' || u.subscription === 'PREMIUM');
+    async runDailyAnalysis() {
+        const users = await this.userService.findAllWithTelegram();
+        const proUsers = users.filter(u => u.subscription === 'PRO' || u.subscription === 'PREMIUM');
 
-  this.logger.log(`🤖 Running AI analysis for ${proUsers.length} PRO/PREMIUM users...`);
+        this.logger.log(`🤖 Running AI analysis for ${proUsers.length} PRO/PREMIUM users...`);
 
-  for (let i = 0; i < proUsers.length; i++) {
-    const user = proUsers[i];
-    try {
-      const searchQuery = user.searchQuery ?? [];
+        for (let i = 0; i < proUsers.length; i++) {
+            const user = proUsers[i];
+            try {
+                const { response, comment } = await this.aiService.jobsearchWithCv(user.id);
 
-      if (!searchQuery.length) {
-        this.logger.warn(`⚠️ [${i + 1}/${proUsers.length}] No search query for user ${user.id}, skipping`);
-        continue;
-      }
+                const topJobs = response?.topJobs ?? [];
+                this.logger.log(`✅ [${i + 1}/${proUsers.length}] ${comment} for user ${user.id} — ${topJobs.length} jobs`);
 
-      const { topJobs, summary } = await this.aiService.analyzeJobsForBot(user.id, searchQuery);
-      this.logger.log(`✅ [${i + 1}/${proUsers.length}] Found ${topJobs.length} jobs for user ${user.id}`);
+            } catch (error) {
+                this.logger.error(`❌ Failed analysis for user ${user.id}:`, error);
+            }
 
-      await this.aiMatchedJobsService.createBulk(user.id, topJobs)
-
-    } catch (error) {
-      this.logger.error(`❌ Failed analysis for user ${user.id}:`, error);
+            if (i < proUsers.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 1500));
+            }
+        }
     }
-
-    if (i < proUsers.length - 1) {
-      await new Promise(resolve => setTimeout(resolve, 1500));
-    }
-  }
-}
 }
