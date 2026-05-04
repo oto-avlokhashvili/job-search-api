@@ -22,6 +22,5 @@ export class JobEntity {
   page:number;
   @Column({ nullable: true })
   description?: string;
-  @Column({ default: false })
-  archived: boolean;
+
 }

@@ -96,7 +96,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
                     return;
                 }
 
-                this.bot?.sendMessage(chatId, `✅ ტელეგრამი წარმატებით დაუკავშირდა თქვენს ანგარიშს, ${user.firstName}! ვაკანსიებს მიიღებთ ყოველ დღე 10:00 საათზე.`);
+                this.bot?.sendMessage(chatId, `✅ ტელეგრამი წარმატებით დაუკავშირდა თქვენს ანგარიშს, ${user.firstName}! ვაკანსიებს მიიღებთ ყოველ დღე 14:00 საათიდან.`);
             }
         });
     }

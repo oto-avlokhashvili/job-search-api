@@ -53,7 +53,6 @@ async findAll(filterDto: FilterJobDto) {
     const skip = (page - 1) * limit;
 
     const qb = this.jobRepo.createQueryBuilder('job');
-    qb.where('job.archived = :archived', { archived: false });
 
     let hasFilter = false;
 
@@ -75,7 +74,7 @@ async findAll(filterDto: FilterJobDto) {
     }
 
     const [jobs, filteredRecords] = await qb.take(limit).skip(skip).getManyAndCount();
-    const totalRecords = await this.jobRepo.count({ where: { archived: false } });
+    const totalRecords = await this.jobRepo.count();
 
     return {
       jobs,
@@ -146,24 +145,21 @@ async findAll(filterDto: FilterJobDto) {
     return await this.jobRepo.remove(job);
   }
 
-  async removeOutDated(): Promise<void> {
-    console.log("removed");
-
-    await this.jobRepo
-      .createQueryBuilder()
-      .update()
-      .set({ archived: true })
-      .where('archived = false')
-      .andWhere('deadline IS NOT NULL')
-      .andWhere(`
-        CASE 
-          WHEN deadline ~ '^\\d{2}/\\d{2}/\\d{4}$' 
-          THEN TO_DATE(deadline, 'DD/MM/YYYY') < CURRENT_DATE 
-          ELSE false 
-        END
-      `)
-      .execute();
-  }
+async removeOutdated(): Promise<void> {
+  await this.jobRepo
+    .createQueryBuilder()
+    .delete()
+    .from(JobEntity)
+    .where('deadline IS NOT NULL')
+    .andWhere(`
+      CASE 
+        WHEN deadline ~ '^\\d{2}/\\d{2}/\\d{4}$' 
+        THEN TO_DATE(deadline, 'DD/MM/YYYY') < CURRENT_DATE 
+        ELSE false 
+      END
+    `)
+    .execute();
+}
   hardRemove() {
     return this.jobRepo.clear();
   }
