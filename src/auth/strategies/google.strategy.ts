@@ -17,7 +17,9 @@ export class GoogleStrategy extends PassportStrategy(Strategy) {
             clientSecret: googleConfiguration.secret!,
             callbackURL: googleConfiguration.callbackUrl!,
             scope: ["email", "profile"],
-        });
+            accessType: "offline",
+            prompt: "consent",
+        } as any);
     }
 
     async validate(
