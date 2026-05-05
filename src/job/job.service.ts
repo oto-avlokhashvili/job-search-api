@@ -23,7 +23,7 @@ export class JobService {
       fetchDescriptions: true,
       descriptionDelay: 1500,      // 1.5s between each detail page
       descriptionBatchSize: 10,
-      maxPages:17
+      maxPages: 17
     });
   }
   async insertMany(createJobDto: CreateJobDto[]) {
@@ -48,7 +48,7 @@ export class JobService {
 
     return duplicates; // returns array of { link: '...', count: 2 }
   }
-async findAll(filterDto: FilterJobDto) {
+  async findAll(filterDto: FilterJobDto) {
     const { query, page = 1, limit = 10 } = filterDto;
     const skip = (page - 1) * limit;
 
@@ -87,38 +87,54 @@ async findAll(filterDto: FilterJobDto) {
     };
   }
 
-  async findAllByQuery(query: string | string[]) {
-    const queries = (Array.isArray(query) ? query : [query])
-      .filter((q) => typeof q === 'string' && q.trim().length > 0);
+async findAllByQuery(query: string | string[]) {
+  const queries = (Array.isArray(query) ? query : [query])
+    .filter((q) => typeof q === 'string' && q.trim().length > 0);
 
-    if (queries.length === 0) {
-      return [];
-    }
+  if (queries.length === 0) return [];
 
-    const qb = this.jobRepo.createQueryBuilder('job');
+  // Separate English and Georgian tokens
+  // Georgian unicode range: \u10D0-\u10FF
+  const georgianTokens = queries.filter(q => /[\u10D0-\u10FF]/.test(q));
+  const englishTokens = queries.filter(q => !/[\u10D0-\u10FF]/.test(q));
 
-    qb.where('job.archived = false')
-      .andWhere(
-        new Brackets((qb2) => {
-          queries.forEach((q, index) => {
-            const param = `q${index}`;
+  const qb = this.jobRepo.createQueryBuilder('job');
 
-            if (index === 0) {
-              qb2.where(`LOWER(job.vacancy) LIKE :${param}`, {
-                [param]: `%${q.toLowerCase()}%`,
-              });
-            } else {
-              qb2.orWhere(`LOWER(job.vacancy) LIKE :${param}`, {
-                [param]: `%${q.toLowerCase()}%`,
-              });
-            }
-          });
-        }),
-      );
+  // Score English matches
+  const enClauses = englishTokens.map((q, i) => {
+    const param = `en${i}`;
+    qb.setParameter(param, `%${q.toLowerCase()}%`);
+    return `CASE WHEN LOWER(job.vacancy) LIKE :${param} THEN 1 ELSE 0 END`;
+  });
 
-    return qb.getMany();
-  }
+  // Score Georgian matches
+  const kaClauses = georgianTokens.map((q, i) => {
+    const param = `ka${i}`;
+    qb.setParameter(param, `%${q.toLowerCase()}%`);
+    return `CASE WHEN LOWER(job.vacancy) LIKE :${param} THEN 1 ELSE 0 END`;
+  });
 
+  const enScore = enClauses.length > 0 ? `(${enClauses.join(' + ')})` : '0';
+  const kaScore = kaClauses.length > 0 ? `(${kaClauses.join(' + ')})` : '0';
+  const totalScore = `(${enScore} + ${kaScore})`;
+
+  qb.where(
+    // Must have at least 1 English token match OR at least 1 Georgian token match
+    // but not just noise — total score must be >= 1
+    new Brackets(qb2 => {
+      if (enClauses.length > 0) {
+        qb2.where(`(${enScore}) >= 1`);
+      }
+      if (kaClauses.length > 0) {
+        qb2.orWhere(`(${kaScore}) >= 1`);
+      }
+    }),
+  )
+  .orderBy(totalScore, 'DESC')
+  .limit(150);
+
+  return qb.getMany();
+}
   async findOne(id: number) {
     const job = await this.jobRepo.findOne({ where: { id } });
     if (!job) {
@@ -145,21 +161,21 @@ async findAll(filterDto: FilterJobDto) {
     return await this.jobRepo.remove(job);
   }
 
-async removeOutdated(): Promise<void> {
-  await this.jobRepo
-    .createQueryBuilder()
-    .delete()
-    .from(JobEntity)
-    .where('deadline IS NOT NULL')
-    .andWhere(`
+  async removeOutdated(): Promise<void> {
+    await this.jobRepo
+      .createQueryBuilder()
+      .delete()
+      .from(JobEntity)
+      .where('deadline IS NOT NULL')
+      .andWhere(`
       CASE 
         WHEN deadline ~ '^\\d{2}/\\d{2}/\\d{4}$' 
         THEN TO_DATE(deadline, 'DD/MM/YYYY') < CURRENT_DATE 
         ELSE false 
       END
     `)
-    .execute();
-}
+      .execute();
+  }
   hardRemove() {
     return this.jobRepo.clear();
   }
@@ -169,7 +185,7 @@ async removeOutdated(): Promise<void> {
       fetchDescriptions: true,
       descriptionDelay: 1500,      // 1.5s between each detail page
       descriptionBatchSize: 10,
-      maxPages:1
+      maxPages: 1
     });
   }
 }

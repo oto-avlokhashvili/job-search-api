@@ -65,15 +65,30 @@ STEP 4 — Cross-check: if STEP 1 and STEP 2 conflict, trust STEP 2 (years) over
 - locationPreference: extract city if mentioned, otherwise "Not specified"
 - careerDirection: infer the direction they are heading, not just current role
 
-## SEARCH QUERIES — 8–14 short keyword tokens for vacancy search:
-- Each token: 1–2 words MAX, lowercase
-- Each token must be both in english and georgian (for example: "analyst" and "ანალიტიკოსი")
-- For hyphenated terms include both forms separately ("frontend" AND "front-end")
-- Include domain tokens from the candidate's actual domains
-- Include 1–2 Georgian role name translations
-- DO NOT include: primary skills as standalone tokens, seniority words (junior/senior/mid),
-  city names, phrases longer than 2 words, duplicates, font/formatting words,
-  both "developer" and "engineer" forms of the same role
+## SEARCH QUERIES — 8–14 tokens total used to match this candidate to job vacancies:
+
+### What QUALIFIES as a search query token (pick from these categories only):
+  1. Role nouns — the job titles a recruiter would search for
+     (e.g. "developer", "engineer", "analyst", "designer", "architect")
+  2. Primary technology / framework / platform the candidate is strongly identified with
+     (e.g. "angular", "react", "django", — only the 2–3 most defining ones, not every skill)
+  3. Domain words — the industry or product area they work in
+     (e.g. "frontend", "backend", "mobile", "devops", "data")
+
+### What does NOT qualify:
+  - Generic tools everyone uses: git, agile, scrum, jira, docker, rest, api, sql, html, css
+  - Acronyms and patterns (spa, mvc, oop, ci/cd)
+  - Any skill already in primarySkills or secondarySkills (no duplication)
+  - Seniority words: junior, mid, senior, lead
+  - City names, company names, certification names
+
+### Formatting rules:
+  - 1 word per token (no spaces, no multi-word phrases)
+  - Every token must appear TWICE: once in English, once in Georgian translation
+    (e.g. "developer" AND "დეველოპერი" as two separate entries)
+  - For tokens with a hyphenated variant, include BOTH forms as separate tokens:
+    "frontend" → also add "front-end" (each still needs its Georgian pair)
+  - No duplicates
 
 Return ONLY valid raw JSON, no markdown, no backticks:
 {
@@ -194,10 +209,8 @@ Evaluate job vacancies against the candidate profile and return ONLY relevant ma
 ## CRITICAL RULE — ROLE RELEVANCE FILTER
 **Before scoring, apply a hard filter:**
 - The candidate's detected role is: "${summary.detectedRole}" in "${summary.careerDirection}"
-- EXCLUDE any vacancy that is NOT in software/IT development domain
-- EXCLUDE roles in: marketing, sales, retail, hospitality, food, logistics, HR, education management, finance (non-dev), or any non-technical field
-- If a vacancy title contains no technology or development keywords, EXCLUDE it
-- Only include vacancies where the core job function is writing code, building software, or closely related IT work (e.g. systems analyst, technical analyst with dev context)
+- EXCLUDE any vacancy that is NOT in ${summary.domains}
+- EXCLUDE any vacancy that is NOT in secondarySkills or primary skills ${summary.secondarySkills}
 
 ---
 
@@ -259,7 +272,7 @@ Return ONLY this JSON structure. No markdown, no explanation, no extra text.
   },
   "summary": "string",
   "strengths": ["string"],
-  "searchQueries": ["string"],
+  "searchQueries": ${summary.searchQueries},
   "topJobs": [
     {
       "id": number,
