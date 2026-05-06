@@ -48,44 +48,46 @@ export class JobService {
 
     return duplicates; // returns array of { link: '...', count: 2 }
   }
-  async findAll(filterDto: FilterJobDto) {
-    const { query, page = 1, limit = 10 } = filterDto;
-    const skip = (page - 1) * limit;
+async findAll(filterDto: FilterJobDto) {
+  const { query, page = 1, limit = 10 } = filterDto;
+  const skip = (page - 1) * limit;
 
-    const qb = this.jobRepo.createQueryBuilder('job');
+  const qb = this.jobRepo.createQueryBuilder('job');
 
-    let hasFilter = false;
+  let hasFilter = false;
 
-    if (query && query.length > 0) {
-      hasFilter = true;
+  if (query && query.trim().length > 0) {
+    hasFilter = true;
 
-      qb.andWhere(
-        new Brackets((qb2) => {
-          query.forEach((val, i) => {
-            const param = `query${i}`;
-            if (i === 0) {
-              qb2.where(`LOWER(job.vacancy) LIKE :${param}`, { [param]: `%${val.toLowerCase()}%` });
-            } else {
-              qb2.orWhere(`LOWER(job.vacancy) LIKE :${param}`, { [param]: `%${val.toLowerCase()}%` });
-            }
-          });
-        })
-      );
-    }
+    const terms = query.trim().toLowerCase().split(/\s+/);
 
-    const [jobs, filteredRecords] = await qb.take(limit).skip(skip).getManyAndCount();
-    const totalRecords = await this.jobRepo.count();
-
-    return {
-      jobs,
-      counts: {
-        totalRecords,
-        filteredRecords: hasFilter ? filteredRecords : totalRecords
-      },
-      page,
-      limit
-    };
+    qb.andWhere(
+      new Brackets((qb2) => {
+        terms.forEach((term, i) => {
+          const param = `query${i}`;
+          if (i === 0) {
+            qb2.where(`LOWER(job.vacancy) LIKE :${param}`, { [param]: `%${term}%` });
+          } else {
+            qb2.orWhere(`LOWER(job.vacancy) LIKE :${param}`, { [param]: `%${term}%` });
+          }
+        });
+      })
+    );
   }
+
+  const [jobs, filteredRecords] = await qb.take(limit).skip(skip).getManyAndCount();
+  const totalRecords = await this.jobRepo.count();
+
+  return {
+    jobs,
+    counts: {
+      totalRecords,
+      filteredRecords: hasFilter ? filteredRecords : totalRecords,
+    },
+    page,
+    limit,
+  };
+}
 
 async findAllByQuery(query: string | string[]) {
   const queries = (Array.isArray(query) ? query : [query])

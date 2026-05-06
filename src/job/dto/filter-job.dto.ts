@@ -4,9 +4,8 @@ import { Type } from "class-transformer";
 export class FilterJobDto {
 
   @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  query?: string[];
+  @IsString()
+  query?: string;
 
   @IsOptional()
   @Type(() => Number)
