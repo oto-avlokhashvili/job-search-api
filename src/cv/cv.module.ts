@@ -10,6 +10,6 @@ import { CvParserService } from './cv-parser.service';
   imports: [TypeOrmModule.forFeature([Cv])],
   controllers: [CvController],
   providers: [CvService, SupabaseStorageService, CvParserService],
-  exports: [CvService],
+  exports: [CvService, CvParserService],
 })
 export class CvModule { }

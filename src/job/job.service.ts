@@ -95,45 +95,34 @@ async findAllByQuery(query: string | string[]) {
 
   if (queries.length === 0) return [];
 
-  // Separate English and Georgian tokens
-  // Georgian unicode range: \u10D0-\u10FF
   const georgianTokens = queries.filter(q => /[\u10D0-\u10FF]/.test(q));
-  const englishTokens = queries.filter(q => !/[\u10D0-\u10FF]/.test(q));
+  const englishTokens  = queries.filter(q => !/[\u10D0-\u10FF]/.test(q));
 
   const qb = this.jobRepo.createQueryBuilder('job');
 
-  // Score English matches
-  const enClauses = englishTokens.map((q, i) => {
-    const param = `en${i}`;
-    qb.setParameter(param, `%${q.toLowerCase()}%`);
-    return `CASE WHEN LOWER(job.vacancy) LIKE :${param} THEN 1 ELSE 0 END`;
-  });
+  // Title match = 3 points, description match = 1 point
+  const buildClauses = (tokens: string[], prefix: string, titleWeight = 3, descWeight = 1) =>
+    tokens.map((q, i) => {
+      const p = `${prefix}${i}`;
+      qb.setParameter(p, `%${q.toLowerCase()}%`);
+      return `(
+        CASE WHEN LOWER(job.vacancy) LIKE :${p} THEN ${titleWeight} ELSE 0 END +
+        CASE WHEN LOWER(job.description) LIKE :${p} THEN ${descWeight} ELSE 0 END
+      )`;
+    });
 
-  // Score Georgian matches
-  const kaClauses = georgianTokens.map((q, i) => {
-    const param = `ka${i}`;
-    qb.setParameter(param, `%${q.toLowerCase()}%`);
-    return `CASE WHEN LOWER(job.vacancy) LIKE :${param} THEN 1 ELSE 0 END`;
-  });
+  const enClauses = buildClauses(englishTokens, 'en');
+  const kaClauses = buildClauses(georgianTokens, 'ka');
 
-  const enScore = enClauses.length > 0 ? `(${enClauses.join(' + ')})` : '0';
-  const kaScore = kaClauses.length > 0 ? `(${kaClauses.join(' + ')})` : '0';
-  const totalScore = `(${enScore} + ${kaScore})`;
+  const allClauses = [...enClauses, ...kaClauses];
+  const totalScore = allClauses.length > 0
+    ? `(${allClauses.join(' + ')})`
+    : '0';
 
-  qb.where(
-    // Must have at least 1 English token match OR at least 1 Georgian token match
-    // but not just noise — total score must be >= 1
-    new Brackets(qb2 => {
-      if (enClauses.length > 0) {
-        qb2.where(`(${enScore}) >= 1`);
-      }
-      if (kaClauses.length > 0) {
-        qb2.orWhere(`(${kaScore}) >= 1`);
-      }
-    }),
-  )
-  .orderBy(totalScore, 'DESC')
-  .limit(150);
+  // Minimum score of 3 = at least one title match, filters out weak description-only hits
+  qb.where(`${totalScore} >= 3`)
+    .orderBy(totalScore, 'DESC')
+    .limit(60); // send fewer, better jobs to Gemini
 
   return qb.getMany();
 }

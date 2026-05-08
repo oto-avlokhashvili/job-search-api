@@ -1,6 +1,4 @@
-// cv-parser.service.ts
 import { Injectable } from '@nestjs/common';
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 import * as mammoth from 'mammoth';
 
 @Injectable()
@@ -25,17 +23,23 @@ export class CvParserService {
   }
 
   private async parsePDF(buffer: Buffer): Promise<string> {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const PDFParser = require('pdf2json');
 
-    const { PDFParse } = require('pdf-parse');
+  return new Promise((resolve, reject) => {
+    const pdfParser = new PDFParser(null, 1); // second arg = raw text mode
 
-    const parser = new PDFParse({
-      data: buffer,
+    pdfParser.on('pdfParser_dataError', (err: any) => {
+      reject(new Error(err.parserError));
     });
 
-    const result = await parser.parse();
+    pdfParser.on('pdfParser_dataReady', () => {
+      resolve(pdfParser.getRawTextContent());
+    });
+    pdfParser.parseBuffer(buffer);
+  });
+}
 
-    return result.text;
-  }
   private async parseDOCX(buffer: Buffer): Promise<string> {
     const result = await mammoth.extractRawText({ buffer });
     return result.value;

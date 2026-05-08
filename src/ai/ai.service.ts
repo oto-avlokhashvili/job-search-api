@@ -9,7 +9,8 @@ import { UserService } from 'src/user/user.service';
 import { jsonrepair } from 'jsonrepair';
 import { CvSummaryDetails } from 'src/cv/dto/cv-summary.dto';
 import { AiMatchedJobsService } from 'src/ai-matched-jobs/ai-matched-jobs.service';
-
+import mammoth from 'mammoth';
+import { CvParserService } from 'src/cv/cv-parser.service';
 
 @Injectable()
 export class AiService {
@@ -21,12 +22,17 @@ export class AiService {
     private readonly jobService: JobService,
     private readonly userService: UserService,
     private readonly aiMatchedJobsService: AiMatchedJobsService,
+    private readonly cvParserService: CvParserService,
   ) { }
 
-  async summarizeCv(
-    cvFile: Express.Multer.File,
-  ): Promise<CvSummaryDetails | null> {
-const CV_SUMMARY_PROMPT = `
+
+
+async summarizeCv(
+  cvFile: Express.Multer.File,
+  retries = 3,
+  delayMs = 2000,
+): Promise<CvSummaryDetails | null> {
+  const CV_SUMMARY_PROMPT = `
 Analyze the attached CV and extract a structured candidate profile.
 
 ## SENIORITY DETECTION — follow this exact decision tree:
@@ -103,46 +109,101 @@ Return ONLY valid raw JSON, no markdown, no backticks:
 }
 `.trim();
 
-    const { data } = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${this.apiKey}`,
-      {
-        contents: [
-          {
-            parts: [
-              {
-                inline_data: {
-                  mime_type: cvFile.mimetype,
-                  data: cvFile.buffer.toString('base64'),
-                },
-              },
-              { text: CV_SUMMARY_PROMPT },
-            ],
-          },
-        ],
-        generationConfig: { temperature: 0, responseMimeType: 'application/json' },
-      },
-      { headers: { 'Content-Type': 'application/json' }, timeout: 30000 },
-    );
+  let contents: object[];
 
-    const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-    if (!raw) {
-      this.logger.warn('summarizeCv: empty response from Gemini');
+  const isPdf =
+    cvFile.mimetype === 'application/pdf' ||
+    cvFile.originalname?.endsWith('.pdf');
+
+  if (isPdf) {
+    contents = [
+      {
+        parts: [
+          {
+            inline_data: {
+              mime_type: cvFile.mimetype,
+              data: cvFile.buffer.toString('base64'),
+            },
+          },
+          { text: CV_SUMMARY_PROMPT },
+        ],
+      },
+    ];
+  } else {
+    let extractedText: string;
+
+    try {
+      extractedText = await this.cvParserService.parseCV(cvFile);
+    } catch (err) {
+      this.logger.warn('summarizeCv: failed to parse CV file', err.message);
       return null;
     }
 
+    if (!extractedText?.trim()) {
+      this.logger.warn('summarizeCv: extracted empty text from CV');
+      return null;
+    }
+
+    contents = [
+      {
+        parts: [
+          {
+            text: `CV Content:\n\n${extractedText}\n\n${CV_SUMMARY_PROMPT}`,
+          },
+        ],
+      },
+    ];
+  }
+
+  for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      return JSON.parse(raw) as CvSummaryDetails;
-    } catch {
-      const clean = raw.replace(/```json|```/gi, '').trim();
-      try {
-        return JSON.parse(clean) as CvSummaryDetails;
-      } catch {
-        this.logger.warn('summarizeCv: failed to parse response');
+      const { data } = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${this.apiKey}`,
+        {
+          contents,
+          generationConfig: { temperature: 0, responseMimeType: 'application/json' },
+        },
+        { headers: { 'Content-Type': 'application/json' }, timeout: 30000 },
+      );
+
+      const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+      if (!raw) {
+        this.logger.warn('summarizeCv: empty response from Gemini');
         return null;
       }
+
+      try {
+        return JSON.parse(raw) as CvSummaryDetails;
+      } catch {
+        const clean = raw.replace(/```json|```/gi, '').trim();
+        try {
+          return JSON.parse(clean) as CvSummaryDetails;
+        } catch {
+          this.logger.warn('summarizeCv: failed to parse Gemini response', raw);
+          return null;
+        }
+      }
+    } catch (err: any) {
+      const status = err.response?.data?.error?.code;
+      const isRetryable = status === 503 || status === 429;
+
+      this.logger.warn(
+        `summarizeCv: attempt ${attempt}/${retries} failed (${status})`,
+        JSON.stringify(err.response?.data, null, 2),
+      );
+
+      if (!isRetryable || attempt === retries) {
+        throw err;
+      }
+
+      const wait = delayMs * attempt; // 2s, 4s, 6s
+      this.logger.log(`summarizeCv: retrying in ${wait}ms...`);
+      await new Promise((res) => setTimeout(res, wait));
     }
   }
 
+  return null;
+}
 
   async jobsearchWithCv(
   userId: number,
@@ -179,9 +240,12 @@ Return ONLY valid raw JSON, no markdown, no backticks:
       if (summary) {
         await this.cvService.updateSummary(userId, summary);
       }
-    } catch (e) {
-      this.logger.warn(`Could not summarize CV for user ${userId}: ${e.message}`);
-    }
+    } catch (e: any) {
+  this.logger.warn(
+    `Could not summarize CV for user ${userId}: ${e.message}`,
+    JSON.stringify(e.response?.data, null, 2),
+  );
+}
   }
 
   if (!summary) {

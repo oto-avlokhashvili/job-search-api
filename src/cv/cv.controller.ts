@@ -18,6 +18,7 @@ import { CvService } from './cv.service';
 import { Cv } from 'src/Entities/cv.entity';
 import { CvFileValidationPipe } from './cv-file-validation.pipe';
 import { UpdateCvSummaryDto } from './dto/update-cv.dto';
+import { CvParserService } from './cv-parser.service';
 
 
 @ApiTags('CV')
@@ -25,7 +26,7 @@ import { UpdateCvSummaryDto } from './dto/update-cv.dto';
 @Controller('cv')
 @UseGuards(JwtAuthGuard)
 export class CvController {
-  constructor(private readonly cvService: CvService) {}
+  constructor(private readonly cvService: CvService, private readonly cvParserService: CvParserService) {}
   @ApiBearerAuth('bearerAuth')
   @Post('upload')
   @ApiOperation({ summary: 'Upload or replace your CV' })
@@ -79,4 +80,35 @@ updateSummary(
 ) {
   return this.cvService.updateSummary(req.user.id, dto);
 }
+
+  @Post('parse-test')
+  @ApiBearerAuth('bearerAuth')
+  @ApiOperation({ summary: 'Test CV parsing — returns extracted text' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          format: 'binary',
+          description: 'PDF or Word document to test parsing',
+        },
+      },
+    },
+  })
+  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage() }))
+  async parseTest(
+    @UploadedFile(CvFileValidationPipe) file: Express.Multer.File,
+  ) {
+    const text = await this.cvParserService.parseCV(file);
+    return {
+      originalName: file.originalname,
+      mimeType: file.mimetype,
+      size: file.size,
+      characterCount: text.length,
+      text,
+    };
+  }
+
 }

@@ -38,7 +38,15 @@ async createBulk(
     return { inserted: 0, skipped: 0, ids: [] };
   }
 
-  const links = createAiMatchedJobDtos.map((dto) => dto.link);
+  // Deduplicate by link (unique job posting)
+  const seen = new Set<string>();
+  const uniqueDtos = createAiMatchedJobDtos.filter((dto) => {
+    if (seen.has(dto.link)) return false;
+    seen.add(dto.link);
+    return true;
+  });
+
+  const links = uniqueDtos.map((dto) => dto.link);
 
   const existingJobs = await this.topJobRepository
     .createQueryBuilder('job')
@@ -48,7 +56,7 @@ async createBulk(
     .getRawMany();
 
   const existingLinks = new Set(existingJobs.map((j) => j.link));
-  const newDtos = createAiMatchedJobDtos.filter((dto) => !existingLinks.has(dto.link));
+  const newDtos = uniqueDtos.filter((dto) => !existingLinks.has(dto.link));
 
   if (newDtos.length === 0) {
     return { inserted: 0, skipped: createAiMatchedJobDtos.length, ids: [] };
