@@ -144,8 +144,8 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     // Subscription limits configuration
     private readonly SUBSCRIPTION_LIMITS = {
         BASIC: { min: 3, max: 5 },
-        PRO: { limit: 20 },
-        PREMIUM: { limit: Infinity }
+        PRO: { limit: Infinity },
+        //PREMIUM: { limit: Infinity }
     };
 
     private async autoStartForAllUsers() {
@@ -187,9 +187,9 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
                 return Math.floor(Math.random() * (this.SUBSCRIPTION_LIMITS.BASIC.max - this.SUBSCRIPTION_LIMITS.BASIC.min + 1)) + this.SUBSCRIPTION_LIMITS.BASIC.min;
             case 'PRO':
                 return this.SUBSCRIPTION_LIMITS.PRO.limit;
-            case 'PREMIUM':
-            case 'PREMIUN': // Handle typo in enum
-                return this.SUBSCRIPTION_LIMITS.PREMIUM.limit;
+            // case 'PREMIUM':
+            // case 'PREMIUN': // Handle typo in enum
+            //     return this.SUBSCRIPTION_LIMITS.PREMIUM.limit;
             default:
                 return 3; // Default to minimum
         }
@@ -217,7 +217,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
             const subscriptionEmoji = {
                 'BASIC': '🆓',
                 'PRO': '⭐',
-                'PREMIUM': '👑',
+                //'PREMIUM': '👑',
             };
 
             await this.bot?.sendMessage(
@@ -355,7 +355,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
 
     async runDailyAnalysis() {
         const users = await this.userService.findAllWithTelegram();
-        const proUsers = users.filter(u => u.subscription === 'PRO' || u.subscription === 'PREMIUM');
+        const proUsers = users.filter(u => u.subscription === 'PRO');
 
         this.logger.log(`🤖 Running AI analysis for ${proUsers.length} PRO/PREMIUM users...`);
 
