@@ -32,8 +32,8 @@ export class AuthController {
     res.cookie('refreshToken', loginData.refreshToken, {
       httpOnly: true,
       path: '/',
-      secure: true,  // must be true for SameSite=None
-      sameSite: 'none',  // ✅ allows cross-domain on iOS
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
     });
 
     return {
@@ -61,28 +61,29 @@ export class AuthController {
   }
 
 
-  @Public()
-  @ApiExcludeEndpoint()
-  @Get('google/login')
-  @UseGuards(GoogleAuthGuard)
-  googleLogin() { }
+@Public()
+@ApiExcludeEndpoint()
+@Get('google/login')
+@UseGuards(GoogleAuthGuard)
+googleLogin() {}
 
-  @Public()
-  @ApiExcludeEndpoint()
-  @Get('google/callback')
-  @UseGuards(GoogleAuthGuard)
-  async googleCallback(@Req() req, @Res() res: Response) {
-    const loginData = this.authService.login(req.user.id);
+@Public()
+@ApiExcludeEndpoint()
+@Get('google/callback')
+@UseGuards(GoogleAuthGuard)
+async googleCallback(@Req() req, @Res() res: Response) {
+  const loginData = this.authService.login(req.user.id);
 
-    res.cookie('refreshToken', loginData.refreshToken, {
-      httpOnly: true,
-      path: '/',
-      secure: true,  // must be true for SameSite=None
-      sameSite: 'none',  // ✅ allows cross-domain on iOS
-    });
+  // ✅ Set refresh token as httpOnly cookie (same as your local login)
+  res.cookie('refreshToken', loginData.refreshToken, {
+    httpOnly: true,
+    path: '/',
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+  });
 
-    // ✅ Redirect without token in URL — frontend reads it from a follow-up /profile call
-    res.redirect(`${process.env.FRONTEND_URL}?token=${loginData.token}`);
-  }
+  // ✅ Redirect without token in URL — frontend reads it from a follow-up /profile call
+  res.redirect(`${process.env.FRONTEND_URL}?token=${loginData.token}`);
+}
 
 }
