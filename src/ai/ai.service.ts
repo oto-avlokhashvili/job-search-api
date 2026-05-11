@@ -32,7 +32,7 @@ async summarizeCv(
   retries = 3,
   delayMs = 2000,
 ): Promise<CvSummaryDetails | null> {
-  const CV_SUMMARY_PROMPT = `
+const CV_SUMMARY_PROMPT = `
 Analyze the attached CV and extract a structured candidate profile.
 
 ## SENIORITY DETECTION — follow this exact decision tree:
@@ -96,6 +96,27 @@ STEP 4 — Cross-check: if STEP 1 and STEP 2 conflict, trust STEP 2 (years) over
     "frontend" → also add "front-end" (each still needs its Georgian pair)
   - No duplicates
 
+## SALARY ESTIMATES — infer realistic market rates for this candidate:
+
+### Inputs to consider (in order of priority):
+  1. seniorityLevel (already detected above)
+  2. detectedRole and primarySkills (some stacks pay more than others)
+  3. locationPreference — if the candidate is explicitly local, weight the local market more
+  4. Any salary expectations mentioned in the CV (use as a signal, not a hard constraint)
+
+### Markets to always return (all two, every time):
+  - "georgia" — Tbilisi local market, gross monthly in GEL
+  - "remote" — Remote/international roles, gross monthly in GEL
+    (convert from USD using approximate current rate: 1 USD ≈ 2.7 GEL)
+
+### Rules:
+  - Return a formatted string: "MIN-MAX GEL" (e.g. "0000-0000 GEL")
+  - Ranges should reflect the realistic hiring band for this role + seniority,
+    not the absolute floor or ceiling of the market
+  - Round to the nearest 100
+  - If the role is niche or the stack is high-demand, skew the range upward slightly
+  - Do NOT return null or omit any market — estimate even if uncertain
+
 Return ONLY valid raw JSON, no markdown, no backticks:
 {
   "detectedRole": "string",
@@ -105,7 +126,11 @@ Return ONLY valid raw JSON, no markdown, no backticks:
   "domains": ["string"],
   "locationPreference": "string",
   "careerDirection": "string",
-  "searchQueries": ["string"]
+  "searchQueries": ["string"],
+  "salaryEstimates": {
+  "georgia": "string",
+  "remote": "string"
+}
 }
 `.trim();
 
