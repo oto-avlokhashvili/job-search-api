@@ -7,31 +7,38 @@ import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 
 @Controller('sent-jobs')
 export class SentJobsController {
-  constructor(private readonly sentJobsService: SentJobsService) {}
-  @ApiBearerAuth('bearerAuth')  
+  constructor(private readonly sentJobsService: SentJobsService) { }
+  @ApiBearerAuth('bearerAuth')
   @UseGuards(JwtAuthGuard)
   @Post()
   create(@Body() createSentJobDto: CreateSentJobDto) {
     return this.sentJobsService.create(createSentJobDto);
   }
-@UseGuards(JwtAuthGuard)
-@ApiBearerAuth('bearerAuth')
-@Get()
-findOne(
-  @Req() req,
-  @Query('page') page = '1',
-  @Query('limit') limit = '10',
-) {
-  return this.sentJobsService.findByUserId(req.user.id, Number(page), Number(limit));
-}
 
-  @ApiBearerAuth('bearerAuth')  
+  @ApiBearerAuth('bearerAuth')
+  @UseGuards(JwtAuthGuard)
+  @Post('bulk')
+createBulk(@Body() jobs: CreateSentJobDto[]) {
+  return this.sentJobsService.createBulk(jobs);
+}
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('bearerAuth')
+  @Get()
+  findOne(
+    @Req() req,
+    @Query('page') page = '1',
+    @Query('limit') limit = '10',
+  ) {
+    return this.sentJobsService.findByUserId(req.user.id, Number(page), Number(limit));
+  }
+
+  @ApiBearerAuth('bearerAuth')
   @UseGuards(JwtAuthGuard)
   @Patch(':id')
   update(@Param('id') id: string, @Body() updateSentJobDto: UpdateSentJobDto) {
     return this.sentJobsService.update(+id, updateSentJobDto);
   }
-  @ApiBearerAuth('bearerAuth')  
+  @ApiBearerAuth('bearerAuth')
   @UseGuards(JwtAuthGuard)
   @Delete(':id')
   remove(@Param('id') id: string) {

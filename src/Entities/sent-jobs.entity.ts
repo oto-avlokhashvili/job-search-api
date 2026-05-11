@@ -1,8 +1,9 @@
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn, Unique } from 'typeorm';
 import { User } from './user.entity';
 import { JobEntity } from './job.entity';
 
 @Entity()
+@Unique(['userId', 'jobId'])
 export class SentJob {
     @PrimaryGeneratedColumn()
     id: number;

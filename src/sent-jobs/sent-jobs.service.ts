@@ -8,16 +8,26 @@ import { InjectRepository } from '@nestjs/typeorm';
 @Injectable()
 export class SentJobsService {
   constructor(@InjectRepository(SentJob) private sentJobRepo: Repository<SentJob>){}
-  async create(createSentJobDto: CreateSentJobDto) {
+async create(createSentJobDto: CreateSentJobDto) {
+  const existing = await this.sentJobRepo.findOne({
+    where: {
+      userId: createSentJobDto.userId,
+      jobId: createSentJobDto.jobId,
+    },
+  });
 
-    const sentJob = await this.sentJobRepo.save(createSentJobDto);
-    return sentJob;
+  if (existing) {
+    return existing;
   }
 
-  findAll() {
-    return `This action returns all sentJobs`;
-  }
+  return await this.sentJobRepo.save(createSentJobDto);
+}
 
+
+async createBulk(jobs: CreateSentJobDto[]) {
+  await this.sentJobRepo.upsert(jobs, ['userId', 'jobId']);
+  return { success: true, count: jobs.length };
+}
 async findByUserId(id: number, page = 1, limit = 10) {
   const take = limit;
   const skip = (page - 1) * take;
