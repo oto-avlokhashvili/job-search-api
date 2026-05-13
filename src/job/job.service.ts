@@ -6,11 +6,12 @@ import { JobEntity } from 'src/Entities/job.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { title } from 'process';
 import { FilterJobDto } from './dto/filter-job.dto';
-import { ScraperService } from 'src/Schedulers/scrapper.service';
+import { ScraperService } from 'src/Schedulers/jobs-ge.scraper';
+import { HR_GE_ScraperService } from 'src/Schedulers/hr-ge.scraper';
 
 @Injectable()
 export class JobService {
-  constructor(private scraperService: ScraperService, @InjectRepository(JobEntity) private jobRepo: Repository<JobEntity>) {
+  constructor(private scraperService: ScraperService, private hrScraperService: HR_GE_ScraperService, @InjectRepository(JobEntity) private jobRepo: Repository<JobEntity>) {
 
   }
   async create(createJobDto: CreateJobDto) {
@@ -25,6 +26,10 @@ export class JobService {
       descriptionBatchSize: 10,
       maxPages: 17
     });
+  }
+
+  async hr_ge_scrapper() {
+    await this.hrScraperService.scrapeJobs();
   }
   async insertMany(createJobDto: CreateJobDto[]) {
     await this.jobRepo
@@ -48,84 +53,84 @@ export class JobService {
 
     return duplicates; // returns array of { link: '...', count: 2 }
   }
-async findAll(filterDto: FilterJobDto) {
-  const { query, page = 1, limit = 10 } = filterDto;
-  const skip = (page - 1) * limit;
+  async findAll(filterDto: FilterJobDto) {
+    const { query, page = 1, limit = 10 } = filterDto;
+    const skip = (page - 1) * limit;
 
-  const qb = this.jobRepo.createQueryBuilder('job');
+    const qb = this.jobRepo.createQueryBuilder('job');
 
-  let hasFilter = false;
+    let hasFilter = false;
 
-  if (query && query.trim().length > 0) {
-    hasFilter = true;
+    if (query && query.trim().length > 0) {
+      hasFilter = true;
 
-    const terms = query.trim().toLowerCase().split(/\s+/);
+      const terms = query.trim().toLowerCase().split(/\s+/);
 
-    qb.andWhere(
-      new Brackets((qb2) => {
-        terms.forEach((term, i) => {
-          const param = `query${i}`;
-          if (i === 0) {
-            qb2.where(`LOWER(job.vacancy) LIKE :${param}`, { [param]: `%${term}%` });
-          } else {
-            qb2.orWhere(`LOWER(job.vacancy) LIKE :${param}`, { [param]: `%${term}%` });
-          }
-        });
-      })
-    );
+      qb.andWhere(
+        new Brackets((qb2) => {
+          terms.forEach((term, i) => {
+            const param = `query${i}`;
+            if (i === 0) {
+              qb2.where(`LOWER(job.vacancy) LIKE :${param}`, { [param]: `%${term}%` });
+            } else {
+              qb2.orWhere(`LOWER(job.vacancy) LIKE :${param}`, { [param]: `%${term}%` });
+            }
+          });
+        })
+      );
+    }
+
+    const [jobs, filteredRecords] = await qb.take(limit).skip(skip).getManyAndCount();
+    const totalRecords = await this.jobRepo.count();
+
+    return {
+      jobs,
+      counts: {
+        totalRecords,
+        filteredRecords: hasFilter ? filteredRecords : totalRecords,
+      },
+      page,
+      limit,
+    };
   }
 
-  const [jobs, filteredRecords] = await qb.take(limit).skip(skip).getManyAndCount();
-  const totalRecords = await this.jobRepo.count();
+  async findAllByQuery(query: string | string[]) {
+    const queries = (Array.isArray(query) ? query : [query])
+      .filter((q) => typeof q === 'string' && q.trim().length > 0);
 
-  return {
-    jobs,
-    counts: {
-      totalRecords,
-      filteredRecords: hasFilter ? filteredRecords : totalRecords,
-    },
-    page,
-    limit,
-  };
-}
+    if (queries.length === 0) return [];
 
-async findAllByQuery(query: string | string[]) {
-  const queries = (Array.isArray(query) ? query : [query])
-    .filter((q) => typeof q === 'string' && q.trim().length > 0);
+    const georgianTokens = queries.filter(q => /[\u10D0-\u10FF]/.test(q));
+    const englishTokens = queries.filter(q => !/[\u10D0-\u10FF]/.test(q));
 
-  if (queries.length === 0) return [];
+    const qb = this.jobRepo.createQueryBuilder('job');
 
-  const georgianTokens = queries.filter(q => /[\u10D0-\u10FF]/.test(q));
-  const englishTokens  = queries.filter(q => !/[\u10D0-\u10FF]/.test(q));
-
-  const qb = this.jobRepo.createQueryBuilder('job');
-
-  // Title match = 3 points, description match = 1 point
-  const buildClauses = (tokens: string[], prefix: string, titleWeight = 3, descWeight = 1) =>
-    tokens.map((q, i) => {
-      const p = `${prefix}${i}`;
-      qb.setParameter(p, `%${q.toLowerCase()}%`);
-      return `(
+    // Title match = 3 points, description match = 1 point
+    const buildClauses = (tokens: string[], prefix: string, titleWeight = 3, descWeight = 1) =>
+      tokens.map((q, i) => {
+        const p = `${prefix}${i}`;
+        qb.setParameter(p, `%${q.toLowerCase()}%`);
+        return `(
         CASE WHEN LOWER(job.vacancy) LIKE :${p} THEN ${titleWeight} ELSE 0 END +
         CASE WHEN LOWER(job.description) LIKE :${p} THEN ${descWeight} ELSE 0 END
       )`;
-    });
+      });
 
-  const enClauses = buildClauses(englishTokens, 'en');
-  const kaClauses = buildClauses(georgianTokens, 'ka');
+    const enClauses = buildClauses(englishTokens, 'en');
+    const kaClauses = buildClauses(georgianTokens, 'ka');
 
-  const allClauses = [...enClauses, ...kaClauses];
-  const totalScore = allClauses.length > 0
-    ? `(${allClauses.join(' + ')})`
-    : '0';
+    const allClauses = [...enClauses, ...kaClauses];
+    const totalScore = allClauses.length > 0
+      ? `(${allClauses.join(' + ')})`
+      : '0';
 
-  // Minimum score of 3 = at least one title match, filters out weak description-only hits
-  qb.where(`${totalScore} >= 3`)
-    .orderBy(totalScore, 'DESC')
-    .limit(60); // send fewer, better jobs to Gemini
+    // Minimum score of 3 = at least one title match, filters out weak description-only hits
+    qb.where(`${totalScore} >= 3`)
+      .orderBy(totalScore, 'DESC')
+      .limit(60); // send fewer, better jobs to Gemini
 
-  return qb.getMany();
-}
+    return qb.getMany();
+  }
   async findOne(id: number) {
     const job = await this.jobRepo.findOne({ where: { id } });
     if (!job) {

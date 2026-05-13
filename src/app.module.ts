@@ -6,7 +6,7 @@ import { pgConfig } from 'dbConfig';
 import { JobModule } from './job/job.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ScheduleService } from './Schedulers/schedule.service';
-import { ScraperService } from './Schedulers/scrapper.service';
+import { ScraperService } from './Schedulers/jobs-ge.scraper';
 import { UserModule } from './user/user.module';
 import { AuthModule } from './auth/auth.module';
 import { ConfigModule } from '@nestjs/config';
@@ -17,11 +17,11 @@ import { CvModule } from './cv/cv.module';
 import { AiMatchedJobsModule } from './ai-matched-jobs/ai-matched-jobs.module';
 
 @Module({
-  imports: [TypeOrmModule.forRoot(pgConfig), JobModule, ScheduleModule.forRoot(), UserModule, TelegramModule, AuthModule , ConfigModule.forRoot({
-    isGlobal:true
+  imports: [TypeOrmModule.forRoot(pgConfig), JobModule, ScheduleModule.forRoot(), UserModule, TelegramModule, AuthModule, ConfigModule.forRoot({
+    isGlobal: true
   }), SentJobsModule, AiModule, CvModule, AiMatchedJobsModule],
   controllers: [AppController],
   providers: [AppService, ScheduleService],
-  
+
 })
-export class AppModule {}
+export class AppModule { }

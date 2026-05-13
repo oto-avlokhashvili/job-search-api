@@ -15,6 +15,12 @@ export class JobController {
     await this.jobService.scrapper();
     return true;
   }
+
+  @Post('hr_ge_scrapper')
+  async hr_ge_scrapper(): Promise<boolean> {
+    await this.jobService.hr_ge_scrapper();
+    return true;
+  }
   @ApiBearerAuth('bearerAuth')
   @UseGuards(JwtAuthGuard)
   @Post('create')

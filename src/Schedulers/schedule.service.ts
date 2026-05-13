@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression, Interval } from '@nestjs/schedule';
-import { ScraperService } from './scrapper.service';
+import { ScraperService } from './jobs-ge.scraper';
 import { TelegramService } from 'src/telegram/telegram.service';
 import { JobService } from 'src/job/job.service';
 
