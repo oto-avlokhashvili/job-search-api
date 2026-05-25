@@ -1,5 +1,7 @@
+// src/Entities/cv.entity.ts
 import { CvSummaryDetails } from "src/cv/dto/cv-summary.dto";
 import { PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Entity } from "typeorm";
+
 @Entity('cv_files')
 export class Cv {
   @PrimaryGeneratedColumn()
@@ -20,11 +22,8 @@ export class Cv {
   @Column()
   size: number;
 
-  @Column()
-  storagePath: string;
-
-  @Column()
-  publicUrl: string;
+  @Column({ type: 'bytea' })
+  fileData: Buffer;
 
   @Column({ type: 'jsonb', nullable: true, default: null })
   summary: CvSummaryDetails | null;

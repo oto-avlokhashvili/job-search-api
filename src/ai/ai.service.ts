@@ -252,13 +252,14 @@ Return ONLY valid raw JSON, no markdown, no backticks:
 
   if (!summary) {
     try {
-      const buffer = await this.storageService.downloadFile(storedCv.storagePath);
-      const cvFile = {
-        buffer,
-        mimetype: storedCv.mimeType,
-        originalname: storedCv.originalName,
-        size: storedCv.size,
-      } as Express.Multer.File;
+      
+        const { buffer, mimeType, originalName } = await this.cvService.downloadCv(userId);
+  const cvFile = {
+    buffer,
+    mimetype: mimeType,
+    originalname: originalName,
+    size: buffer.length,
+  } as Express.Multer.File;
 
       summary = await this.summarizeCv(cvFile);
 
@@ -473,16 +474,13 @@ async chat(
 
   if (existingSummary) {
     cvContext = JSON.stringify(existingSummary, null, 2);
-  } else if (storedCv?.storagePath) {
+  } else if (storedCv) {
     try {
-      const buffer = await this.storageService.downloadFile(
-        storedCv.storagePath,
-      );
-
+      const { buffer, mimeType, originalName } = await this.cvService.downloadCv(userId);
       const mockFile: Express.Multer.File = {
         buffer,
-        mimetype: storedCv.mimeType,
-        originalname: storedCv.storagePath,
+        mimetype: mimeType,
+        originalname: originalName,
         fieldname: 'cv',
         encoding: '7bit',
         size: buffer.length,
