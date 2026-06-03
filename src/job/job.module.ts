@@ -6,7 +6,6 @@ import { JobEntity } from 'src/Entities/job.entity';
 import { ScheduleService } from 'src/Schedulers/schedule.service';
 import { ScraperService } from 'src/Schedulers/jobs-ge.scraper';
 import { TelegramModule } from 'src/telegram/telegram.module';
-import { HR_GE_ScraperService } from 'src/Schedulers/hr-ge.scraper';
 
 @Module({
   imports: [TypeOrmModule.forFeature([JobEntity])],
@@ -17,10 +16,6 @@ import { HR_GE_ScraperService } from 'src/Schedulers/hr-ge.scraper';
     {
       provide: ScraperService,
       useClass: ScraperService,
-    },
-    {
-      provide: HR_GE_ScraperService,
-      useClass: HR_GE_ScraperService,
     },
   ],
   exports: [JobService, ScraperService],

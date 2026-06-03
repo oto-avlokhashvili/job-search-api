@@ -7,11 +7,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { title } from 'process';
 import { FilterJobDto } from './dto/filter-job.dto';
 import { ScraperService } from 'src/Schedulers/jobs-ge.scraper';
-import { HR_GE_ScraperService } from 'src/Schedulers/hr-ge.scraper';
+
 
 @Injectable()
 export class JobService {
-  constructor(private scraperService: ScraperService, private hrScraperService: HR_GE_ScraperService, @InjectRepository(JobEntity) private jobRepo: Repository<JobEntity>) {
+  constructor(private scraperService: ScraperService, @InjectRepository(JobEntity) private jobRepo: Repository<JobEntity>) {
 
   }
   async create(createJobDto: CreateJobDto) {
@@ -28,9 +28,7 @@ export class JobService {
     });
   }
 
-  async hr_ge_scrapper() {
-    await this.hrScraperService.scrapeJobs();
-  }
+
   async insertMany(createJobDto: CreateJobDto[]) {
     await this.jobRepo
       .createQueryBuilder()

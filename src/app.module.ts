@@ -15,13 +15,15 @@ import { SentJobsModule } from './sent-jobs/sent-jobs.module';
 import { AiModule } from './ai/ai.module';
 import { CvModule } from './cv/cv.module';
 import { AiMatchedJobsModule } from './ai-matched-jobs/ai-matched-jobs.module';
+import { ScrapersModule } from './scrapers/scrapers.module';
+import { HrGeScraperService } from './scrapers/hr-ge-scraper.service';
 
 @Module({
   imports: [TypeOrmModule.forRoot(pgConfig), JobModule, ScheduleModule.forRoot(), UserModule, TelegramModule, AuthModule, ConfigModule.forRoot({
     isGlobal: true
-  }), SentJobsModule, AiModule, CvModule, AiMatchedJobsModule],
+  }), SentJobsModule, AiModule, CvModule, AiMatchedJobsModule, ScrapersModule],
   controllers: [AppController],
-  providers: [AppService, ScheduleService],
+  providers: [AppService, ScheduleService, HrGeScraperService],
 
 })
 export class AppModule { }
