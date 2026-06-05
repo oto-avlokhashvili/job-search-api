@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression, Interval } from '@nestjs/schedule';
-import { ScraperService } from './jobs-ge.scraper';
+import { JobsGeScraperService } from '../scrapers/jobs-ge.scraper';
 import { TelegramService } from 'src/telegram/telegram.service';
 import { JobService } from 'src/job/job.service';
 
@@ -8,7 +8,7 @@ import { JobService } from 'src/job/job.service';
 export class ScheduleService {
   private readonly logger = new Logger(ScheduleService.name);
 
-  constructor(private readonly telegramService: TelegramService, private readonly scraperService: ScraperService, private readonly jobsService: JobService) { }
+  constructor(private readonly telegramService: TelegramService, private readonly scraperService: JobsGeScraperService, private readonly jobsService: JobService) { }
   @Cron('10 06 * * *')
   async scrappper(): Promise<void> {
     await this.jobsService.scrapper();

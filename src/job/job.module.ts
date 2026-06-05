@@ -3,21 +3,15 @@ import { JobService } from './job.service';
 import { JobController } from './job.controller';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { JobEntity } from 'src/Entities/job.entity';
-import { ScheduleService } from 'src/Schedulers/schedule.service';
-import { ScraperService } from 'src/Schedulers/jobs-ge.scraper';
-import { TelegramModule } from 'src/telegram/telegram.module';
+import { ScrapersModule } from '../scrapers/scrapers.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([JobEntity])],
-  controllers: [JobController],
-  providers: [
-    JobService,
-    TelegramModule,
-    {
-      provide: ScraperService,
-      useClass: ScraperService,
-    },
+  imports: [
+    TypeOrmModule.forFeature([JobEntity]),
+    forwardRef(() => ScrapersModule),
   ],
-  exports: [JobService, ScraperService],
+  controllers: [JobController],
+  providers: [JobService],
+  exports: [JobService],
 })
 export class JobModule { }

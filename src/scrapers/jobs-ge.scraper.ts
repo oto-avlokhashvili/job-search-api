@@ -30,13 +30,13 @@ export interface ScraperResult {
 }
 
 @Injectable()
-export class ScraperService {
+export class JobsGeScraperService {
   constructor(
     @Inject(forwardRef(() => JobService))
     private readonly jobService: JobService,
   ) {}
 
-  private readonly logger = new Logger(ScraperService.name);
+  private readonly logger = new Logger(JobsGeScraperService.name);
   private readonly baseUrl = 'https://www.jobs.ge';
 
   private readonly georgianMonths: Record<string, string> = {

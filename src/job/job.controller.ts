@@ -11,7 +11,7 @@ export class JobController {
   constructor(private readonly jobService: JobService) { }
 
   @Post('scrapper')
-  async insertMany(): Promise<boolean> {
+  async scrapper(): Promise<boolean> {
     await this.jobService.scrapper();
     return true;
   }

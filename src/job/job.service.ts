@@ -6,12 +6,12 @@ import { JobEntity } from 'src/Entities/job.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { title } from 'process';
 import { FilterJobDto } from './dto/filter-job.dto';
-import { ScraperService } from 'src/Schedulers/jobs-ge.scraper';
+import { JobsGeScraperService } from '../scrapers/jobs-ge.scraper';
 
 
 @Injectable()
 export class JobService {
-  constructor(private scraperService: ScraperService, @InjectRepository(JobEntity) private jobRepo: Repository<JobEntity>) {
+  constructor(private scraperService: JobsGeScraperService, @InjectRepository(JobEntity) private jobRepo: Repository<JobEntity>) {
 
   }
   async create(createJobDto: CreateJobDto) {
