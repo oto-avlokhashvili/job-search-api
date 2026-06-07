@@ -3,6 +3,7 @@ import { SentJob } from './sent-jobs.entity';
 
 @Entity()
 @Unique(['link'])
+@Unique(['fingerprint'])
 export class JobEntity {
   @PrimaryGeneratedColumn()
   id: number;
@@ -14,6 +15,8 @@ export class JobEntity {
   company:string;
   @Column()
   link:string;
+  @Column()
+  fingerprint: string;
   @Column()
   publishDate:string;
   @Column()

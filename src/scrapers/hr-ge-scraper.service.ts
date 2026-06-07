@@ -7,6 +7,7 @@ export interface HrScraperOptions {
   fetchDescriptions?: boolean;
   descriptionDelay?: number;
   descriptionBatchSize?: number;
+  maxPages?: number;
 }
 
 @Injectable()
@@ -26,46 +27,67 @@ export class HrGeScraperService {
       fetchDescriptions = false,
       descriptionDelay = 1500,
       descriptionBatchSize = 10,
+      maxPages = 9999,
     } = options;
     const domainMap: Record<number, string> = {
       1: 'hr.ge', 2: 'cv.ge', 4: 'doctor.ge', 5: 'chefs.ge'
     };
     const domain = domainMap[tenantId] || 'hr.ge';
     
-    this.logger.log(`!!! Starting FULL Scrape for ${domain} !!!`);
+    this.logger.log(`!!! Starting FULL Scrape for ${domain} using POST search API !!!`);
 
     const allJobs: JobData[] = [];
-    let currentPage = 1;
+    const limit = 100;
+    let startOffset = 0;
     let keepScraping = true;
+    let pageCount = 1;
 
     while (keepScraping) {
-      this.logger.log(`Scraping page ${currentPage}...`);
+      if (pageCount > maxPages) {
+        this.logger.log(`Reached max pages limit of ${maxPages}. Stopping.`);
+        break;
+      }
+      this.logger.log(`Scraping page ${pageCount} (Offset: ${startOffset}, Limit: ${limit})...`);
       
       const cacheBuster = Math.floor(1000000000 + Math.random() * 9000000000);
-      const url = `https://api.p.hr.ge/public-portal/tenant/${tenantId}/api/v3/announcements-main-new?Page=${currentPage}&DeviceType=2&__cb=${cacheBuster}`;
+      const url = `https://api.p.hr.ge/public-portal/tenant/${tenantId}/api/v3/announcement-search?__cb=${cacheBuster}`;
 
       try {
         const response = await fetch(url, {
-          method: 'GET',
+          method: 'POST',
           headers: {
             'Accept': 'application/json, text/plain, */*',
+            'Content-Type': 'application/json',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36',
             'Origin': `https://${domain}`,
             'Referer': `https://${domain}/`
-          }
+          },
+          body: JSON.stringify({
+            CategoryIds: [],
+            WorkExperience: {
+              from: null,
+              to: null
+            },
+            WithoutWorkExperience: false,
+            AnyExperience: false,
+            OnlySelectedSalary: false,
+            Start: startOffset,
+            Limit: limit,
+            IsWorkFromHome: false
+          })
         });
 
         if (!response.ok) {
-          this.logger.error(`API rejected request on page ${currentPage}. Stopping batch execution.`);
+          this.logger.error(`API rejected request at offset ${startOffset} with status ${response.status}. Stopping execution.`);
           break;
         }
 
         const payload = await response.json();
-        const items = payload?.data?.announcementList || [];
+        const items = payload?.data?.announcements?.items || [];
 
-        // Rule 1: Stop immediately if the page returns nothing 
+        // Stop immediately if the page returns nothing 
         if (!Array.isArray(items) || items.length === 0) {
-          this.logger.log(`Reached the end! Page ${currentPage} returned 0 items.`);
+          this.logger.log(`Reached the end! Offset ${startOffset} returned 0 items.`);
           keepScraping = false;
           break;
         }
@@ -73,11 +95,13 @@ export class HrGeScraperService {
         // Process current page items
         items.forEach((item: any) => {
           const vacancy = item.title || item.subject || 'N/A';
-          const location = item.location || item.city || 'თბილისი';
+          const location = Array.isArray(item.locations) && item.locations.length > 0 
+            ? item.locations.join(', ') 
+            : (item.location || item.city || 'თბილისი');
           const company = item.customerName || 'კომპანია';
           const id = item.announcementId;
           const publishDate = item.publishDate || '';
-          const deadline = item.deadline || item.endDate || item.expireDate || '';
+          const deadline = item.deadlineDate || item.deadline || item.endDate || item.expireDate || '';
           const description = item.description || '';
 
           if (id) {
@@ -89,34 +113,39 @@ export class HrGeScraperService {
               link,
               publishDate: publishDate.trim(),
               deadline: deadline.trim(),
-              page: currentPage,
+              page: pageCount,
               description: description.trim(),
             });
           }
         });
 
-        this.logger.log(`Page ${currentPage} processed. Total collected so far: ${allJobs.length}`);
+        this.logger.log(`Page ${pageCount} processed. Total collected so far: ${allJobs.length}`);
 
-        // Safety Rule 2: Check if their API passes a structural limit parameter
-        // For instance, if data has a totalCount, we can double check against it
-        const totalCount = payload?.data?.totalCount;
+        const totalCount = payload?.data?.announcements?.totalCount;
         if (totalCount && allJobs.length >= totalCount) {
           this.logger.log(`Matched total database count of ${totalCount}. Scraping complete.`);
           keepScraping = false;
           break;
         }
 
-        // Optional: Be courteous to their backend infrastructure so they don't block your IP
+        // If we got fewer items than the Limit, we reached the final page
+        if (items.length < limit) {
+          this.logger.log(`Retrieved ${items.length} items (less than limit of ${limit}). Reached the end.`);
+          keepScraping = false;
+          break;
+        }
+
         if (delayBetweenRequests > 0) {
           this.logger.log(`Waiting ${delayBetweenRequests}ms before next page...`);
           await new Promise(resolve => setTimeout(resolve, delayBetweenRequests));
         }
         
-        currentPage++;
+        startOffset += limit;
+        pageCount++;
 
       } catch (error) {
-        this.logger.error(`Error encountered processing page ${currentPage}`, error.stack);
-        keepScraping = false; // Break loop on critical networking crashes
+        this.logger.error(`Error encountered processing offset ${startOffset}`, error.stack);
+        keepScraping = false;
       }
     }
 
@@ -128,7 +157,7 @@ export class HrGeScraperService {
     return allJobs;
   }
 
-  private async fetchDescription(tenantId: number, id: number): Promise<string> {
+  public async fetchDescription(tenantId: number, id: number): Promise<string> {
     const url = `https://api.p.hr.ge/public-portal/tenant/${tenantId}/api/v3/announcement/${id}`;
     try {
       const response = await fetch(url, {

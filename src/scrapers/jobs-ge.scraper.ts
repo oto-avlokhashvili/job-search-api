@@ -1,7 +1,6 @@
-import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
-import { JobService } from 'src/job/job.service';
 
 export interface JobData {
   vacancy: string;
@@ -31,10 +30,7 @@ export interface ScraperResult {
 
 @Injectable()
 export class JobsGeScraperService {
-  constructor(
-    @Inject(forwardRef(() => JobService))
-    private readonly jobService: JobService,
-  ) {}
+  constructor() {}
 
   private readonly logger = new Logger(JobsGeScraperService.name);
   private readonly baseUrl = 'https://www.jobs.ge';
@@ -74,7 +70,7 @@ export class JobsGeScraperService {
     }
   }
 
-  private async fetchDescription(jobLink: string): Promise<string> {
+  public async fetchDescription(jobLink: string): Promise<string> {
     try {
       const response = await axios.get(jobLink, {
         headers: {
@@ -152,6 +148,7 @@ export class JobsGeScraperService {
     } = options;
 
     const allJobs: JobData[] = [];
+    const seenLinks = new Set<string>();
     let currentPage = startPage;
     let consecutiveEmptyPages = 0;
 
@@ -190,6 +187,7 @@ export class JobsGeScraperService {
 
         const $ = cheerio.load(response.data);
         let jobsOnPage = 0;
+        let newJobsOnPage = 0;
 
         const totalRows = $('table tr').length;
         this.logger.debug(
@@ -250,23 +248,34 @@ export class JobsGeScraperService {
             const vacancyLower = vacancy.toLowerCase();
 
             if (!q || vacancyLower.includes(q)) {
-              allJobs.push({
-                vacancy,
-                location,
-                company: company || 'კომპანია',
-                link,
-                publishDate,
-                deadline,
-                page: currentPage,
-                description: '',
-              });
               jobsOnPage++;
+
+              if (!seenLinks.has(link)) {
+                seenLinks.add(link);
+                newJobsOnPage++;
+
+                allJobs.push({
+                  vacancy,
+                  location,
+                  company: company || 'კომპანია',
+                  link,
+                  publishDate,
+                  deadline,
+                  page: currentPage,
+                  description: '',
+                });
+              }
             }
           }
         });
 
-        this.logger.log(`Found ${jobsOnPage} jobs on page ${currentPage}`);
-        this.logger.log(`Total jobs collected: ${allJobs.length}`);
+        this.logger.log(`Found ${jobsOnPage} jobs (${newJobsOnPage} new) on page ${currentPage}`);
+        this.logger.log(`Total unique jobs collected: ${allJobs.length}`);
+
+        if (jobsOnPage > 0 && newJobsOnPage === 0) {
+          this.logger.log(`[Jobs.ge] Page ${currentPage} returned only duplicate jobs. Reached the end of pagination.`);
+          break;
+        }
 
         if (jobsOnPage === 0) {
           consecutiveEmptyPages++;
@@ -280,17 +289,6 @@ export class JobsGeScraperService {
           }
         } else {
           consecutiveEmptyPages = 0;
-        }
-
-        if (
-          allJobs.length > 0 &&
-          allJobs.length < maxJobs &&
-          jobsOnPage === 0
-        ) {
-          this.logger.log(
-            `\nTotal jobs (${allJobs.length}) < ${maxJobs} and no more jobs found - stopping`,
-          );
-          break;
         }
 
         currentPage++;
@@ -325,7 +323,7 @@ export class JobsGeScraperService {
         );
         console.log(JSON.stringify(allJobs, null, 2));
         console.log(allJobs.length);
-        this.jobService.insertMany(allJobs);
+        this.logger.log('Scraping completed. Returning collected jobs to the caller.');
         this.logger.log(
           '============================================================',
         );

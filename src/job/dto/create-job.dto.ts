@@ -5,7 +5,8 @@ import {
   IsNumber, 
   IsDateString,
   MinLength,
-  Min
+  Min,
+  IsOptional
 } from 'class-validator';
 export class CreateJobDto {
   @IsString()
@@ -36,4 +37,11 @@ export class CreateJobDto {
   @IsNumber()
   @Min(1)
   page?: number;
+
+  @IsString()
+  @IsOptional()
+  fingerprint?: string;
+
+  @IsString()
+  description?: string;
 }

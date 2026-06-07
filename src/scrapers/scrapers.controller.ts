@@ -43,7 +43,7 @@ export class ScrapersController {
     @Query('maxPages', new ParseIntPipe({ optional: true })) maxPages?: number,
   ): Promise<ScraperResult> {
     return await this.jobsGeScraperService.scrapeJobs(query || '', startPage || 1, {
-      maxPages: maxPages || 17,
+      maxPages: maxPages || undefined,
       fetchDescriptions: true,
     });
   }

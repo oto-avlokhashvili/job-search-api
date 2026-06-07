@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ParseIntPipe, BadRequestException, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ParseIntPipe, BadRequestException, UseGuards, Logger } from '@nestjs/common';
 import { ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { JobService } from './job.service';
 import { CreateJobDto } from './dto/create-job.dto';
@@ -8,6 +8,8 @@ import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 
 @Controller('job')
 export class JobController {
+  private readonly logger = new Logger(JobController.name);
+
   constructor(private readonly jobService: JobService) { }
 
   @Post('scrapper')
@@ -15,6 +17,12 @@ export class JobController {
     await this.jobService.scrapper();
     return true;
   }
+
+  @Get('scrape-all')
+  async scrapePreview() {
+    return await this.jobService.scrapeAndSaveAll();
+  }
+
 
 
   @ApiBearerAuth('bearerAuth')
