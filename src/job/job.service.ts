@@ -189,21 +189,28 @@ export class JobService {
     return await this.jobRepo.remove(job);
   }
 
-  async removeOutdated(): Promise<void> {
+async removeOutdated(): Promise<void> {
     await this.jobRepo
       .createQueryBuilder()
       .delete()
       .from(JobEntity)
-      .where('deadline IS NOT NULL')
-      .andWhere(`
-      CASE 
-        WHEN deadline ~ '^\\d{2}/\\d{2}/\\d{4}$' 
-        THEN TO_DATE(deadline, 'DD/MM/YYYY') < CURRENT_DATE 
-        ELSE false 
-      END
-    `)
+      .where(`
+        (deadline IS NOT NULL AND TRIM(deadline) != '' AND 
+          CASE 
+            WHEN deadline ~ '^\\d{2}/\\d{2}/\\d{4}$' 
+            THEN TO_DATE(deadline, 'DD/MM/YYYY') < CURRENT_DATE 
+            ELSE false 
+          END
+        )
+        OR 
+        (
+          (deadline IS NULL OR TRIM(deadline) = '') 
+          AND "publishDate" < CURRENT_DATE - INTERVAL '1 month'
+        )
+      `)
       .execute();
   }
+
   hardRemove() {
     return this.jobRepo.clear();
   }

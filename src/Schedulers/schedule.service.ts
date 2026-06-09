@@ -11,7 +11,7 @@ export class ScheduleService {
   constructor(private readonly telegramService: TelegramService, private readonly scraperService: JobsGeScraperService, private readonly jobsService: JobService) { }
   @Cron('10 06 * * *')
   async scrappper(): Promise<void> {
-    await this.jobsService.scrapper();
+    await this.jobsService.scrapeAndSaveAll();
   }
 
 
