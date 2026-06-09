@@ -20,8 +20,8 @@ export class SentJob {
     @Column()
     vacancy: string;
 
-    @Column()
-    location: string;
+    @Column({ type: 'varchar', nullable: true })
+    location: string | null;
 
     @Column()
     company: string;
@@ -29,6 +29,6 @@ export class SentJob {
     @Column()
     match: number;
 
-    @Column()
-    salaryRange: string;
+    @Column({ type: 'varchar', nullable: true })
+    salaryRange: string | null;
 }

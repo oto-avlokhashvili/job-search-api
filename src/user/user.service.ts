@@ -1,20 +1,77 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { InjectRepository } from '@nestjs/typeorm';
-import { create } from 'domain';
-import { remove } from 'node_modules/cheerio/dist/commonjs/api/manipulation';
-import { JobEntity } from 'src/Entities/job.entity';
 import { IsNull, Not, Repository } from 'typeorm';
 import { User } from 'src/Entities/user.entity';
+import { EmailService } from '../email/email.service';
 
 @Injectable()
 export class UserService {
-  constructor(@InjectRepository(User) private userRepo: Repository<User>) { }
+  constructor(
+    @InjectRepository(User) private userRepo: Repository<User>,
+    @Inject(forwardRef(() => EmailService))
+    private readonly emailService: EmailService,
+  ) { }
 
-  async create(createUserDto: CreateUserDto) {
-    const user = await this.userRepo.create(createUserDto)
-    return await this.userRepo.save(user);
+  async create(createUserDto: CreateUserDto, isEmailVerified = false) {
+    const user = await this.userRepo.create(createUserDto);
+    user.isEmailVerified = isEmailVerified;
+
+    if (!isEmailVerified) {
+      // Generate 6-digit verification code
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      user.emailVerificationToken = code;
+    }
+
+    const savedUser = await this.userRepo.save(user);
+
+    if (!isEmailVerified) {
+      try {
+        await this.emailService.sendVerificationEmail(
+          savedUser.email,
+          savedUser.firstName,
+          savedUser.emailVerificationToken!,
+        );
+      } catch (err) {
+        console.error(`[UserService] Failed to send verification email to ${savedUser.email}:`, err);
+      }
+    }
+
+    return savedUser;
+  }
+
+  async verifyEmail(email: string, code: string): Promise<boolean> {
+    const user = await this.userRepo.findOne({ where: { email } });
+    if (!user || user.emailVerificationToken !== code) {
+      return false;
+    }
+    user.isEmailVerified = true;
+    user.emailVerificationToken = null;
+    await this.userRepo.save(user);
+    return true;
+  }
+
+  async resendVerification(email: string): Promise<{ success: boolean; message: string }> {
+    const user = await this.userRepo.findOne({ where: { email } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    if (user.isEmailVerified) {
+      return { success: true, message: 'Email is already verified' };
+    }
+
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    user.emailVerificationToken = code;
+    await this.userRepo.save(user);
+
+    try {
+      await this.emailService.sendVerificationEmail(user.email, user.firstName, code);
+      return { success: true, message: 'Verification code resent successfully' };
+    } catch (err: any) {
+      console.error(`[UserService] Failed to resend verification email:`, err);
+      return { success: false, message: `Failed to send email: ${err.message}` };
+    }
   }
 
   async findAll() {
@@ -27,7 +84,7 @@ export class UserService {
       where: {
         id,
       },
-      select: ['id', 'firstName', 'lastName', 'email', 'createdAt', 'subscription','telegramChatId']
+      select: ['id', 'firstName', 'lastName', 'email', 'createdAt', 'subscription','telegramChatId', 'isEmailVerified']
     })
   }
 

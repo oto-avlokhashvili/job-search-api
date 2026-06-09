@@ -1,4 +1,4 @@
-import { HttpException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { HttpException, Injectable, Logger, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import axios from 'axios';
 import { AiChatDto, AnalyzeJobDto, ChatDto } from './dto/analyze-job.dto';
 import { CvService } from 'src/cv/cv.service';
@@ -20,6 +20,7 @@ export class AiService {
     private readonly cvService: CvService,
     private readonly storageService: SupabaseStorageService,
     private readonly jobService: JobService,
+    @Inject(forwardRef(() => UserService))
     private readonly userService: UserService,
     private readonly aiMatchedJobsService: AiMatchedJobsService,
     private readonly cvParserService: CvParserService,

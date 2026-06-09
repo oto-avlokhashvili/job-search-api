@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
-import { UserService } from 'src/user/user.service';
+import { UserModule } from '../user/user.module';
 import { LocalStrategy } from './strategies/local.strategy';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from 'src/Entities/user.entity';
@@ -19,9 +19,10 @@ import { GoogleStrategy } from './strategies/google.strategy';
     JwtModule.registerAsync(jwtConfig.asProvider()), 
     ConfigModule.forFeature(jwtConfig),
     ConfigModule.forFeature(refreshJwtConfig),
-    ConfigModule.forFeature(googleOauthConfig)
+    ConfigModule.forFeature(googleOauthConfig),
+    UserModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, UserService, LocalStrategy, JwtStrategy, RefreshJwtStrategy, GoogleStrategy],
+  providers: [AuthService, LocalStrategy, JwtStrategy, RefreshJwtStrategy, GoogleStrategy],
 })
 export class AuthModule { }

@@ -1,8 +1,7 @@
-import { BeforeInsert, Column, CreateDateColumn, Entity, OneToMany, PrimaryGeneratedColumn } from "typeorm";
-import { JobEntity } from "./job.entity";
-import * as bcrypt from 'bcrypt'
+import { BeforeInsert, Column, CreateDateColumn, Entity, PrimaryGeneratedColumn } from "typeorm";
+import * as bcrypt from 'bcrypt';
 import { Subscription } from "src/enums/subscriptions.enum";
-import { SentJob } from "./sent-jobs.entity";
+
 @Entity()
 export class User {
     @PrimaryGeneratedColumn()
@@ -36,6 +35,12 @@ export class User {
 
     @Column({ nullable: true })
     telegramToken?: string;
+
+    @Column({ default: false })
+    isEmailVerified: boolean;
+
+    @Column({ type: 'varchar', nullable: true })
+    emailVerificationToken?: string | null;
     
     @BeforeInsert()
     async hashOassword(){

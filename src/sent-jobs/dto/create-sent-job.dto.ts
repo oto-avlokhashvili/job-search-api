@@ -1,4 +1,4 @@
-import { IsInt, IsNumber, IsPositive, IsString } from "class-validator";
+import { IsInt, IsNumber, IsOptional, IsPositive, IsString } from "class-validator";
 
 export class CreateSentJobDto {
     @IsInt()
@@ -13,7 +13,8 @@ export class CreateSentJobDto {
     vacancy: string;
 
     @IsString()
-    location: string;
+    @IsOptional()
+    location?: string | null;
 
     @IsString()
     company: string;
@@ -22,5 +23,6 @@ export class CreateSentJobDto {
     match: number;
 
     @IsString()
-    salaryRange: string;
+    @IsOptional()
+    salaryRange?: string | null;
 }

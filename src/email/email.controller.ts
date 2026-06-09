@@ -14,4 +14,11 @@ export class EmailController {
     const response = await this.emailService.sendEmail(dto.to, dto.subject, dto.html, dto.senderEmail, dto.senderName);
     return { success: true, message: 'Email sent successfully', data: response };
   }
+
+  @Post('send-daily-alerts')
+  @ApiOperation({ summary: 'Manually trigger sending daily email alerts to all users' })
+  async triggerDailyEmailAlerts() {
+    await this.emailService.sendDailyEmailAlerts();
+    return { success: true, message: 'Daily email alerts triggered successfully' };
+  }
 }

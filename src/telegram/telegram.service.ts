@@ -82,7 +82,11 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
             console.log(linkedUser);
 
             if (linkedUser) {
-                this.bot?.sendMessage(chatId, `✅ ტელეგრამ ბოტი წარმატებულად ჩაირთო, ${linkedUser.firstName}!`);
+                if (linkedUser.subscription !== 'PRO') {
+                    this.bot?.sendMessage(chatId, `⚠️ გამარჯობა, ${linkedUser.firstName}! ტელეგრამ ბოტი აქტიურია მხოლოდ PRO მომხმარებლებისთვის. გთხოვთ გაააქტიუროთ PRO გამოწერა.`);
+                } else {
+                    this.bot?.sendMessage(chatId, `✅ ტელეგრამ ბოტი წარმატებულად ჩაირთო, ${linkedUser.firstName}!`);
+                }
             } else {
                 const token = match?.[1];
                 if (!token) {
@@ -96,7 +100,11 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
                     return;
                 }
 
-                this.bot?.sendMessage(chatId, `✅ ტელეგრამი წარმატებით დაუკავშირდა თქვენს ანგარიშს, ${user.firstName}! ვაკანსიებს მიიღებთ ყოველ დღე 14:00 საათიდან.`);
+                if (user.subscription !== 'PRO') {
+                    this.bot?.sendMessage(chatId, `✅ ტელეგრამი წარმატებით დაუკავშირდა თქვენს ანგარიშს, ${user.firstName}!\n⚠️ გაითვალისწინეთ, რომ ბოტიდან ვაკანსიების მისაღებად საჭიროა PRO გამოწერა.`);
+                } else {
+                    this.bot?.sendMessage(chatId, `✅ ტელეგრამი წარმატებით დაუკავშირდა თქვენს ანგარიშს, ${user.firstName}! ვაკანსიებს მიიღებთ ყოველ დღე 14:00 საათიდან.`);
+                }
             }
         });
     }
@@ -141,17 +149,11 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         }
     }
 
-    // Subscription limits configuration
-    private readonly SUBSCRIPTION_LIMITS = {
-        BASIC: { min: 3, max: 5 },
-        PRO: { limit: Infinity },
-        //PREMIUM: { limit: Infinity }
-    };
-
     private async autoStartForAllUsers() {
         try {
-            const users = await this.userService.findAllWithTelegram();
-            this.logger.log(`🚀 Starting queue for ${users.length} users...`);
+            const allUsers = await this.userService.findAllWithTelegram();
+            const users = allUsers.filter(u => u.subscription === 'PRO');
+            this.logger.log(`🚀 Starting queue for ${users.length} PRO users...`);
 
             let successCount = 0;
             let failCount = 0;
@@ -180,23 +182,9 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         }
     }
 
-    private getJobLimitForUser(subscription: string): number {
-        switch (subscription) {
-            case 'BASIC':
-                // Random number between 3-5 for BASIC users
-                return Math.floor(Math.random() * (this.SUBSCRIPTION_LIMITS.BASIC.max - this.SUBSCRIPTION_LIMITS.BASIC.min + 1)) + this.SUBSCRIPTION_LIMITS.BASIC.min;
-            case 'PRO':
-                return this.SUBSCRIPTION_LIMITS.PRO.limit;
-            // case 'PREMIUM':
-            // case 'PREMIUN': // Handle typo in enum
-            //     return this.SUBSCRIPTION_LIMITS.PREMIUM.limit;
-            default:
-                return 3; // Default to minimum
-        }
-    }
-
     private async processUserStart(user: any): Promise<void> {
         if (!user.telegramChatId) return;
+        if (user.subscription !== 'PRO') return;
 
         try {
             // Fetch matched jobs and sent jobs in parallel
@@ -210,21 +198,12 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
             // Filter new jobs that haven't been sent
             const newJobs = matchedJobs.filter(job => !sentJobIds.has(job.id));
 
-            // Get job limit based on subscription
-            const jobLimit = this.getJobLimitForUser(user.subscription);
-
-            // Send welcome message with subscription info
-            const subscriptionEmoji = {
-                'BASIC': '🆓',
-                'PRO': '⭐',
-                //'PREMIUM': '👑',
-            };
-
+            // Send welcome message
             await this.bot?.sendMessage(
                 user.telegramChatId,
                 `✅ გამარჯობა, ${user.firstName}! ბოტი აქტიურია და ეძებს ვაკანსიებს.\n` +
-                `${subscriptionEmoji[user.subscription] || '🆓'} თქვენი გამოწერა: ${user.subscription}\n` +
-                `📊 დღეს მიიღებთ: ${jobLimit === Infinity ? 'შეუზღუდავ' : jobLimit} ვაკანსიას`
+                `⭐ თქვენი გამოწერა: PRO\n` +
+                `📊 დღეს მიიღებთ: შეუზღუდავ ვაკანსიას`
             );
 
             if (newJobs.length === 0) {
@@ -235,13 +214,10 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
                 return;
             }
 
-            // Limit jobs based on subscription
-            const jobsToSend = newJobs.slice(0, jobLimit === Infinity ? newJobs.length : jobLimit);
-
-            this.logger.log(`📨 Sending ${jobsToSend.length} jobs to user ${user.telegramChatId} (${user.subscription})`);
+            this.logger.log(`📨 Sending ${newJobs.length} jobs to user ${user.telegramChatId} (PRO)`);
 
             // Send jobs with delay between each
-            for (const job of jobsToSend) {
+            for (const job of newJobs) {
                 try {
                     await this.sentJobsService.create({ userId: user.id, jobId: job.id, vacancy: job.vacancy, location: job.location, company: job.company, match: job.match, salaryRange: job.salaryRange });
 
@@ -276,22 +252,9 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
                 }
             }
 
-            // Notify remaining jobs count
-            const remainingJobs = newJobs.length - jobsToSend.length;
-            let upgradeMessage = '';
-            if (remainingJobs > 0) {
-                if (user.subscription === 'BASIC') {
-                    upgradeMessage = '\n\n⭐ PRO გამოწერით მიიღებთ 20 ვაკანსიას დღეში!\n👑 PREMIUM-ით - შეუზღუდავად!';
-                } else if (user.subscription === 'PRO') {
-                    upgradeMessage = '\n\n👑 PREMIUM გამოწერით მიიღებთ შეუზღუდავ ვაკანსიებს!';
-                }
-            }
-
             await this.bot?.sendMessage(
                 user.telegramChatId,
-                remainingJobs > 0
-                    ? `ℹ️ კიდევ ${remainingJobs} ვაკანსია არსებობს, მაგრამ თქვენი დღიური ლიმიტი ამოიწურა.${upgradeMessage}`
-                    : `✅ ყველა ვაკანსია გამოიგზავნა. დარჩენილია: 0.`
+                `✅ ყველა ვაკანსია გამოიგზავნა. დარჩენილია: 0.`
             );
 
         } catch (error) {
@@ -306,7 +269,8 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
 
     private async autoStopForAllUsers() {
         try {
-            const users = await this.userService.findAllWithTelegram();
+            const allUsers = await this.userService.findAllWithTelegram();
+            const users = allUsers.filter(u => u.subscription === 'PRO');
 
             // Process in parallel batches
             const BATCH_SIZE = 20; // Can be higher for stop messages
@@ -327,7 +291,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
             // Clear all sessions
             this.userSessions.clear();
 
-            this.logger.log(`🛑 Stopped sessions for ${users.length} users`);
+            this.logger.log(`🛑 Stopped sessions for ${users.length} PRO users`);
         } catch (error) {
             this.logger.error('Failed to auto-stop for users:', error);
         }
