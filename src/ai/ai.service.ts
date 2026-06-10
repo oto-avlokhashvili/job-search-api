@@ -284,9 +284,24 @@ Return ONLY valid raw JSON, no markdown, no backticks:
 
   // ── 3. Use searchQueries from summary to find jobs ───────────────────────
   const searchTerms: string[] = summary.searchQueries ?? [];
-  const jobs = await this.jobService.findAllByQuery(searchTerms);
+  let jobs = await this.jobService.findAllByQuery(searchTerms);
   this.logger.log(`Search terms: ${JSON.stringify(searchTerms)}`);
-  this.logger.log(`Jobs found: ${jobs.length}`);
+  this.logger.log(`Jobs found initially: ${jobs.length}`);
+
+  // Fetch already matched jobs to exclude them
+  const matchedJobs = await this.aiMatchedJobsService.findAllMatched(userId);
+  const matchedJobLinks = new Set(matchedJobs.map((mj) => mj.link));
+  const matchedJobIds = new Set(matchedJobs.map((mj) => mj.id));
+
+  // Exclude jobs already in AI matched jobs
+  jobs = jobs.filter((job) => !matchedJobLinks.has(job.link) && !matchedJobIds.has(job.id));
+  this.logger.log(`Jobs after excluding already matched: ${jobs.length}`);
+
+  // Limit to at most 50 jobs
+  if (jobs.length > 20) {
+    jobs = jobs.slice(0, 20);
+  }
+  this.logger.log(`Jobs to send to AI: ${jobs.length}`);
 
   // ── 4. Rank & filter jobs via Gemini ─────────────────────────────────────
 const prompt = `
