@@ -31,9 +31,9 @@ export class AiController {
     },
   })
   async chat(
-    @Body() body: { prompt: string },
+    @Body() body: { prompt: string; history?: { role: 'user' | 'model'; text: string }[] },
     @Req() req,
   ) {
-    return this.aiService.chat(req.user.id, body.prompt);
+    return this.aiService.chat(req.user.id, body.prompt, body.history);
   }
 }

@@ -14,7 +14,7 @@ import { CvParserService } from 'src/cv/cv-parser.service';
 
 @Injectable()
 export class AiService {
-  private readonly apiKey = process.env.GEMINI_API_KEY;
+  private readonly apiKey = process.env.GEMINI_API_KEY2;
   private readonly logger = new Logger(AiService.name);
   constructor(private readonly configService: ConfigService,
     private readonly cvService: CvService,
@@ -472,11 +472,11 @@ async chat(
   userId: number,
   prompt: string,
   history: { role: 'user' | 'model'; text: string }[] = [],
-): Promise<{ response: string }> {
+): Promise<{ response: string; jobs?: any[]; searchTriggered?: boolean; isError?: boolean }> {
   this.logger.log(`chat called with userId=${userId}`);
 
   if (!prompt?.trim()) {
-    return { response: 'Please provide a message.' };
+    return { response: 'Please provide a message.', jobs: [] };
   }
 
   const storedCv = await this.cvService.getCvByUser(userId).catch(() => null);
@@ -544,24 +544,23 @@ When the user asks career-related questions:
 ${cvContext ? `- Use the user's CV context below when relevant` : ''}
 
 ## Job listing / job search questions — IMPORTANT
-If the user asks something like:
-- "What jobs do you have?"
-- "Show me job openings"
-- "Are there any vacancies for [role]?"
-- "Find me a job in [field/city]"
-- or any similar request to browse, list, or find specific job postings
+If the user asks to browse, list, search, or find specific job vacancies or roles (e.g. "find me a React developer job", "show vacancies in Tbilisi", "look up DevOps jobs"):
+  1. Set the JSON field "searchTriggered" to true.
+  2. Extract 1 to 5 relevant query terms. For each query term, ALWAYS include both its English term and its Georgian translation/transliteration as separate elements in the "searchQueries" array (e.g., if the search is for Angular, return ["angular", "ანგულარ"]; if for React, return ["react", "რეაქტ"]; if for developer, return ["developer", "დეველოპერი"]).
+  3. Keep the response text conversational (e.g., "I have searched our database for React Developer vacancies. Here is what I found:") and place it in the "response" field.
 
-Then do NOT attempt to list jobs yourself. Instead, guide them clearly:
-  1. Explain that live job listings are available in the Job Search section of the platform
-  2. Tell them to switch to "Job Search" mode (or navigate to the Jobs tab)
-  3. Suggest useful search tips: what keywords, filters, or location to use based on their question
-  4. If their CV context is available, optionally mention roles that seem like a good fit and suggest searching for those
-  5. Do not suggest to improve linkedin profile.
+For general questions, career advice, CV review, or other messages where job search is NOT required:
+  1. Set the JSON field "searchTriggered" to false.
+  2. Set "searchQueries" to an empty array [].
+  3. Answer the user's question conversationally in the "response" field.
 
 ## Response format
-Always respond ONLY as valid JSON:
+Always respond ONLY as valid JSON matching this exact structure:
 {
-  "response": "your response here"
+  "response": "your conversational response text here (used when jobs are found, e.g. 'Sure, here are the jobs I found:')",
+  "noJobsResponse": "your fallback conversational response text in the EXACT same language (used ONLY if no jobs are found in the database, e.g. 'Sorry, no vacancies were found matching your criteria. Please try again with different keywords.')",
+  "searchTriggered": true | false,
+  "searchQueries": ["query1", "query2"]
 }
 
 ${cvContext ? `## User CV context\n${cvContext}` : ''}
@@ -604,7 +603,7 @@ ${cvContext ? `## User CV context\n${cvContext}` : ''}
 
     if (!raw) {
       this.logger.warn('Empty Gemini response');
-      return { response: 'Sorry, I could not generate a response.' };
+      return { response: 'Sorry, I could not generate a response.', jobs: [] };
     }
 
     const cleaned = raw
@@ -615,17 +614,45 @@ ${cvContext ? `## User CV context\n${cvContext}` : ''}
     try {
       const parsed = JSON.parse(cleaned);
 
-      if (parsed?.response) {
-        return { response: parsed.response };
+      if (parsed && typeof parsed === 'object') {
+        let jobs: any[] = [];
+        if (
+          parsed.searchTriggered &&
+          Array.isArray(parsed.searchQueries) &&
+          parsed.searchQueries.length > 0
+        ) {
+          try {
+            jobs = await this.jobService.findAllByQuery(parsed.searchQueries);
+            if (jobs.length > 6) {
+              jobs = jobs.slice(0, 6);
+            }
+          } catch (dbErr) {
+            this.logger.warn(
+              `Failed to find jobs for query ${parsed.searchQueries}: ${dbErr.message}`,
+            );
+          }
+        }
+        let responseText = parsed.response || cleaned;
+        if (parsed.searchTriggered && jobs.length === 0) {
+          responseText = parsed.noJobsResponse || responseText;
+        }
+
+        return {
+          response: responseText,
+          jobs,
+          searchTriggered: !!parsed.searchTriggered,
+        };
       }
 
-      return { response: cleaned };
+      return { response: cleaned, jobs: [] };
     } catch {
       this.logger.warn('Invalid JSON response from Gemini');
-      return { response: cleaned };
+      return { response: cleaned, jobs: [] };
     }
   } catch (error) {
     console.error('Gemini full error:', error?.response?.data || error);
+
+    const isRateLimit = error?.response?.status === 429 || error?.status === 429;
 
     this.logger.error(
       `Gemini API error: ${JSON.stringify(
@@ -635,7 +662,20 @@ ${cvContext ? `## User CV context\n${cvContext}` : ''}
       )}`,
     );
 
-    return { response: 'Sorry, something went wrong while generating a response.' };
+    const isGeorgian = /[\u10D0-\u10FF]/.test(prompt);
+    const responseText = isRateLimit
+      ? (isGeorgian
+          ? 'მოთხოვნების ლიმიტი ამოიწურა. გთხოვთ, მოიცადოთ რამდენიმე წამი და სცადოთ თავიდან.'
+          : 'Rate limit exceeded. Please wait a few seconds and try again.')
+      : (isGeorgian
+          ? 'სამწუხაროდ, პასუხის გენერირებისას დაფიქსირდა შეცდომა. გთხოვთ სცადოთ მოგვიანებით.'
+          : 'Sorry, something went wrong while generating a response. Please try again later.');
+
+    return {
+      response: responseText,
+      jobs: [],
+      isError: true,
+    };
   }
 }
 }
