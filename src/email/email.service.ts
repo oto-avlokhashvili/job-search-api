@@ -37,7 +37,7 @@ export class EmailService {
     if (fromEmail === 'noreply@jobsearch.ge') {
       fromEmail = 'oto.aldagi10@gmail.com';
     }
-    const fromName = senderName || this.configService.get<string>('BREVO_SENDER_NAME') || 'Job Search';
+    const fromName = senderName || this.configService.get<string>('BREVO_SENDER_NAME') || 'Job Scout';
     try {
       const response = await this.client.transactionalEmails.sendTransacEmail({
         sender: {
@@ -76,10 +76,17 @@ export class EmailService {
 
       try {
         // Run AI analysis with CV first, matching the Telegram daily flow
+        let aiSuccess = true;
         try {
           await this.aiService.jobsearchWithCv(user.id);
         } catch (aiError) {
           console.error(`[EmailService] Failed AI analysis for user ${user.id}:`, aiError);
+          aiSuccess = false;
+        }
+
+        if (!aiSuccess) {
+          console.warn(`[EmailService] Skipping email alert for user ${user.id} due to failed AI analysis.`);
+          continue;
         }
 
         const [matchedJobs, sentJobIdsArr] = await Promise.all([
@@ -208,7 +215,7 @@ export class EmailService {
           <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
             <!-- Header -->
             <div style="background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); border-radius: 8px 8px 0 0; padding: 30px; text-align: center; color: #ffffff;">
-              <h1 style="margin: 0; font-size: 24px; font-weight: bold; letter-spacing: 0.5px;">🔔 Job Search</h1>
+              <h1 style="margin: 0; font-size: 24px; font-weight: bold; letter-spacing: 0.5px;">🔔 Job Scout</h1>
               <p style="margin: 5px 0 0 0; font-size: 16px; opacity: 0.9;">ყოველდღიური ვაკანსიების დაიჯესტი</p>
             </div>
             
@@ -228,8 +235,8 @@ export class EmailService {
             
             <!-- Footer Info -->
             <div style="text-align: center; margin-top: 25px; color: #9ca3af; font-size: 12px; line-height: 1.5;">
-              <p style="margin: 0 0 5px 0;">თვენ მიიღეთ ეს მეილი, რადგან დარეგისტრირებული ხართ Job Search პლატფორმაზე.</p>
-              <p style="margin: 0;">&copy; 2026 Job Search. All rights reserved.</p>
+              <p style="margin: 0 0 5px 0;">თვენ მიიღეთ ეს მეილი, რადგან დარეგისტრირებული ხართ Job Scout პლატფორმაზე.</p>
+              <p style="margin: 0;">&copy; 2026 Job Scout. All rights reserved.</p>
             </div>
           </div>
         </body>
@@ -238,10 +245,10 @@ export class EmailService {
   }
 
   async sendVerificationEmail(to: string, firstName: string, code: string) {
-    const subject = '🔑 [Job Search] გთხოვთ დაადასტუროთ თქვენი ელ-ფოსტა';
+    const subject = '🔑 [Job Scout] გთხოვთ დაადასტუროთ თქვენი ელ-ფოსტა';
     const html = `
       <div style="max-width: 600px; margin: 0 auto; font-family: sans-serif; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px;">
-        <h2 style="color: #1e3a8a; text-align: center;">კეთილი იყოს თქვენი მობრძანება Job Search-ზე!</h2>
+        <h2 style="color: #1e3a8a; text-align: center;">კეთილი იყოს თქვენი მობრძანება Job Scout-ზე!</h2>
         <p>გამარჯობა ${firstName},</p>
         <p>რეგისტრაციის დასასრულებლად და ყოველდღიური ვაკანსიების მეილით მისაღებად, გთხოვთ დაადასტუროთ თქვენი ელ-ფოსტა.</p>
         <div style="background-color: #f3f4f6; padding: 15px; text-align: center; border-radius: 6px; margin: 20px 0;">
@@ -251,6 +258,20 @@ export class EmailService {
       </div>
     `;
     await this.sendEmail(to, subject, html);
+  }
+
+  async sendContactEmail(email: string, comment: string) {
+    const adminEmail = this.configService.get<string>('BREVO_SENDER_EMAIL') || 'oto.aldagi10@gmail.com';
+    const subject = `📬 New Contact Form Submission from ${email}`;
+    const html = `
+      <div style="font-family: sans-serif; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #1e3a8a; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px; margin-top: 0;">New Contact Form Submission</h2>
+        <p style="font-size: 15px; line-height: 1.5; margin: 15px 0;"><strong>User Email:</strong> <a href="mailto:${email}" style="color: #3b82f6; text-decoration: none;">${email}</a></p>
+        <p style="font-size: 15px; line-height: 1.5; margin-bottom: 5px;"><strong>Comment/Message:</strong></p>
+        <div style="background-color: #f9fafb; padding: 15px; border-radius: 6px; border: 1px solid #f3f4f6; white-space: pre-wrap; font-size: 14px; color: #374151; line-height: 1.6;">${comment}</div>
+      </div>
+    `;
+    return await this.sendEmail(adminEmail, subject, html);
   }
 }
 
