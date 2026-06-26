@@ -15,7 +15,7 @@ export class JobEntity {
   company:string;
   @Column()
   link:string;
-  @Column()
+  @Column({ nullable: true })
   fingerprint: string;
   @Column()
   publishDate:string;
