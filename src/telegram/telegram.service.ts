@@ -318,8 +318,10 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
 
 
     async runDailyAnalysis() {
-        const users = await this.userService.findAllWithTelegram();
-        const proUsers = users.filter(u => u.subscription === 'PRO');
+        const users = await this.userService.findAll();
+        const proUsers = users.filter(
+            (u) => u.subscription === 'PRO' && (u.telegramChatId || (u.email && u.isEmailVerified)),
+        );
 
         this.logger.log(`🤖 Running AI analysis for ${proUsers.length} PRO/PREMIUM users...`);
 

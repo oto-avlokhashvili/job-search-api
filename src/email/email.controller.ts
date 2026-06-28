@@ -26,7 +26,9 @@ export class EmailController {
   @Post('send-daily-alerts')
   @ApiOperation({ summary: 'Manually trigger sending daily email alerts to all users' })
   async triggerDailyEmailAlerts() {
-    await this.emailService.sendDailyEmailAlerts();
-    return { success: true, message: 'Daily email alerts triggered successfully' };
+    this.emailService.sendDailyEmailAlerts().catch((err) => {
+      console.error('[EmailController] Error sending daily email alerts in background:', err);
+    });
+    return { success: true, message: 'Daily email alerts triggered successfully (running in background)' };
   }
 }

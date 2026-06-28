@@ -14,7 +14,7 @@ import { CvParserService } from 'src/cv/cv-parser.service';
 
 @Injectable()
 export class AiService {
-  private readonly apiKey = process.env.GEMINI_API_KEY2;
+  private readonly apiKey = process.env.GEMINI_API_KEY;
   private readonly logger = new Logger(AiService.name);
   constructor(private readonly configService: ConfigService,
     private readonly cvService: CvService,
@@ -234,212 +234,242 @@ Return ONLY valid raw JSON, no markdown, no backticks:
   async jobsearchWithCv(
   userId: number,
 ): Promise<{ response: any; comment: string }> {
-
-  // ── 1. Fetch stored CV ────────────────────────────────────────────────────
-  const storedCv = await this.cvService.getCvByUser(userId).catch(() => null);
-
-  if (!storedCv) {
-    return {
-      response: { candidateProfile: null, summary: null, strengths: [], skillGaps: [], topJobs: [] },
-      comment: 'CV არ არის ატვირთული',
-    };
-  }
-
-  // ── 2. Summarize if not yet summarized ───────────────────────────────────
-  let summary: CvSummaryDetails | null =
-    storedCv.summary && Object.keys(storedCv.summary).length > 0
-      ? (storedCv.summary as CvSummaryDetails)
-      : null;
-
-  if (!summary) {
     try {
-      
-        const { buffer, mimeType, originalName } = await this.cvService.downloadCv(userId);
-  const cvFile = {
-    buffer,
-    mimetype: mimeType,
-    originalname: originalName,
-    size: buffer.length,
-  } as Express.Multer.File;
+      // ── 1. Fetch stored CV ────────────────────────────────────────────────────
+      const storedCv = await this.cvService.getCvByUser(userId).catch(() => null);
 
-      summary = await this.summarizeCv(cvFile);
-
-      if (summary) {
-        await this.cvService.updateSummary(userId, summary);
+      if (!storedCv) {
+        return {
+          response: { candidateProfile: null, summary: null, strengths: [], skillGaps: [], topJobs: [] },
+          comment: 'CV არ არის ატვირთული',
+        };
       }
-    } catch (e: any) {
-  this.logger.warn(
-    `Could not summarize CV for user ${userId}: ${e.message}`,
-    JSON.stringify(e.response?.data, null, 2),
-  );
-}
-  }
 
-  if (!summary) {
-    return {
-      response: { candidateProfile: null, summary: null, strengths: [], skillGaps: [], topJobs: [] },
-      comment: 'CV-ს დამუშავება ვერ მოხერხდა',
-    };
-  }
+      // ── 2. Summarize if not yet summarized ───────────────────────────────────
+      let summary: CvSummaryDetails | null =
+        storedCv.summary && Object.keys(storedCv.summary).length > 0
+          ? (storedCv.summary as CvSummaryDetails)
+          : null;
 
-  // ── 3. Use searchQueries from summary to find jobs ───────────────────────
-  const searchTerms: string[] = summary.searchQueries ?? [];
-  let jobs = await this.jobService.findAllByQuery(searchTerms);
-  this.logger.log(`Search terms: ${JSON.stringify(searchTerms)}`);
-  this.logger.log(`Jobs found initially: ${jobs.length}`);
+      if (!summary) {
+        try {
+          
+            const { buffer, mimeType, originalName } = await this.cvService.downloadCv(userId);
+      const cvFile = {
+        buffer,
+        mimetype: mimeType,
+        originalname: originalName,
+        size: buffer.length,
+      } as Express.Multer.File;
 
-  // Fetch already matched jobs to exclude them
-  const matchedJobs = await this.aiMatchedJobsService.findAllMatched(userId);
-  const matchedJobLinks = new Set(matchedJobs.map((mj) => mj.link));
-  const matchedJobIds = new Set(matchedJobs.map((mj) => mj.id));
+          summary = await this.summarizeCv(cvFile);
 
-  // Exclude jobs already in AI matched jobs
-  jobs = jobs.filter((job) => !matchedJobLinks.has(job.link) && !matchedJobIds.has(job.id));
-  this.logger.log(`Jobs after excluding already matched: ${jobs.length}`);
+          if (summary) {
+            await this.cvService.updateSummary(userId, summary);
+          }
+        } catch (e: any) {
+      this.logger.warn(
+        `Could not summarize CV for user ${userId}: ${e.message}`,
+        JSON.stringify(e.response?.data, null, 2),
+      );
+    }
+      }
 
-  // Limit to at most 50 jobs
-  if (jobs.length > 20) {
-    jobs = jobs.slice(0, 20);
-  }
-  this.logger.log(`Jobs to send to AI: ${jobs.length}`);
+      if (!summary) {
+        return {
+          response: { candidateProfile: null, summary: null, strengths: [], skillGaps: [], topJobs: [] },
+          comment: 'CV-ს დამუშავება ვერ მოხერხდა',
+        };
+      }
 
-  // ── 4. Rank & filter jobs via Gemini ─────────────────────────────────────
-const prompt = `
-You are an expert Technical Recruiter and Career Matching AI.
+      // ── 3. Use searchQueries from summary to find jobs ───────────────────────
+      const searchTerms: string[] = summary.searchQueries ?? [];
+      let jobs = await this.jobService.findAllByQuery(searchTerms);
+      this.logger.log(`Search terms: ${JSON.stringify(searchTerms)}`);
+      this.logger.log(`Jobs found initially: ${jobs.length}`);
 
-## YOUR TASK
-Evaluate job vacancies against the candidate profile and return ONLY relevant matches.
+      // Fetch already matched jobs to exclude them
+      const matchedJobs = await this.aiMatchedJobsService.findAllMatched(userId);
+      const matchedJobLinks = new Set(matchedJobs.map((mj) => mj.link));
+      const matchedJobIds = new Set(matchedJobs.map((mj) => mj.id));
 
----
+      // Exclude jobs already in AI matched jobs
+      jobs = jobs.filter((job) => !matchedJobLinks.has(job.link) && !matchedJobIds.has(job.id));
+      this.logger.log(`Jobs after excluding already matched: ${jobs.length}`);
 
-## CRITICAL RULE — ROLE RELEVANCE FILTER
-**Before scoring, apply a hard filter:**
-- The candidate's detected role is: "${summary.detectedRole}" in "${summary.careerDirection}"
-- EXCLUDE any vacancy that is NOT in ${summary.domains}
-- EXCLUDE any vacancy that is NOT in secondarySkills or primary skills ${summary.secondarySkills}
+      // Limit to at most 50 jobs
+      if (jobs.length > 20) {
+        jobs = jobs.slice(0, 20);
+      }
+      this.logger.log(`Jobs to send to AI: ${jobs.length}`);
 
----
+      // ── 4. Rank & filter jobs via Gemini ─────────────────────────────────────
+    const prompt = `
+    You are an expert Technical Recruiter and Career Matching AI.
 
-## STEP 1 — SCORE EACH REMAINING VACANCY (0–100)
+    ## YOUR TASK
+    Evaluate job vacancies against the candidate profile and return ONLY relevant matches.
 
-### Primary role match (0–60 points)
-- **+60** if vacancy matches detectedRole exactly: "${summary.detectedRole}"
-- **+40–50** if vacancy is in the same domain: "${summary.careerDirection}" (e.g. frontend, web dev)
-- **+20–35** if vacancy is adjacent (full-stack, closely related tech)
-- **+10–20** if vacancy is in a different dev domain (backend, mobile) but candidate has secondary skills
+    ---
 
-### Seniority alignment (0–20 points)
-- Candidate seniority: "${summary.seniorityLevel}"
-- **+20** exact match (Junior→Junior)
-- **+10** one level apart (Junior→Mid)
-- **+0** two+ levels apart (Junior→Senior) — do not exclude, but penalize heavily
+    ## CRITICAL RULE — ROLE RELEVANCE FILTER
+    **Before scoring, apply a hard filter:**
+    - The candidate's detected role is: "${summary.detectedRole}" in "${summary.careerDirection}"
+    - EXCLUDE any vacancy that is NOT in ${summary.domains}
+    - EXCLUDE any vacancy that is NOT in secondarySkills or primary skills ${summary.secondarySkills}
 
-### Tech stack overlap (0–15 points)
-- Count how many required technologies match primarySkills: ${JSON.stringify(summary.primarySkills)}
-- Count secondary matches from: ${JSON.stringify(summary.secondarySkills)}
-- Award proportionally
+    ---
 
-### Location (0–5 points)
-- **+5** matches "${summary.locationPreference}" or remote
-- **+0** different city
+    ## STEP 1 — SCORE EACH REMAINING VACANCY (0–100)
 
----
+    ### Primary role match (0–60 points)
+    - **+60** if vacancy matches detectedRole exactly: "${summary.detectedRole}"
+    - **+40–50** if vacancy is in the same domain: "${summary.careerDirection}" (e.g. frontend, web dev)
+    - **+20–35** if vacancy is adjacent (full-stack, closely related tech)
+    - **+10–20** if vacancy is in a different dev domain (backend, mobile) but candidate has secondary skills
 
-## STEP 2 — FILTER & RANK
-- MINIMUM score to include: **50**
-- If fewer than 3 vacancies reach 50, include top 3 dev-relevant ones only
-- Sort descending by score
-- **No marketing, no retail, no non-IT roles — ever**
+    ### Seniority alignment (0–20 points)
+    - Candidate seniority: "${summary.seniorityLevel}"
+    - **+20** exact match (Junior→Junior)
+    - **+10** one level apart (Junior→Mid)
+    - **+0** two+ levels apart (Junior→Senior) — do not exclude, but penalize heavily
 
----
+    ### Tech stack overlap (0–15 points)
+    - Count how many required technologies match primarySkills: ${JSON.stringify(summary.primarySkills)}
+    - Count secondary matches from: ${JSON.stringify(summary.secondarySkills)}
+    - Award proportionally
 
-## SALARY ESTIMATION (if not provided)
-- Intern → "₾500 – ₾1,000/mo (est.)"
-- Junior → "₾1,000 – ₾2,000/mo (est.)"
-- Mid → "₾2,500 – ₾4,000/mo (est.)"
-- Senior → "₾4,000 – ₾7,000/mo (est.)"
-- Lead/Principal → "₾7,000 – ₾12,000/mo (est.)"
-- Use ₾ for Georgian roles, $ for international/remote
+    ### Location (0–5 points)
+    - **+5** matches "${summary.locationPreference}" or remote
+    - **+0** different city
 
----
+    ---
 
-## OUTPUT — STRICT JSON ONLY
-Return ONLY this JSON structure. No markdown, no explanation, no extra text.
+    ## STEP 2 — FILTER & RANK
+    - MINIMUM score to include: **50**
+    - If fewer than 3 vacancies reach 50, include top 3 dev-relevant ones only
+    - Sort descending by score
+    - **No marketing, no retail, no non-IT roles — ever**
 
-{
-  "candidateProfile": {
-    "detectedRole": "string",
-    "seniorityLevel": "string",
-    "primarySkills": ["string"],
-    "secondarySkills": ["string"],
-    "domains": ["string"],
-    "locationPreference": "string",
-    "careerDirection": "string"
-  },
-  "summary": "string",
-  "strengths": ["string"],
-  "searchQueries": ${summary.searchQueries},
-  "topJobs": [
+    ---
+
+    ## SALARY ESTIMATION (if not provided)
+    - Intern → "₾500 – ₾1,000/mo (est.)"
+    - Junior → "₾1,000 – ₾2,000/mo (est.)"
+    - Mid → "₾2,500 – ₾4,000/mo (est.)"
+    - Senior → "₾4,000 – ₾7,000/mo (est.)"
+    - Lead/Principal → "₾7,000 – ₾12,000/mo (est.)"
+    - Use ₾ for Georgian roles, $ for international/remote
+
+    ---
+
+    ## OUTPUT — STRICT JSON ONLY
+    Return ONLY this JSON structure. No markdown, no explanation, no extra text.
+
     {
-      "id": number,
-      "vacancy": "string",
-      "location": "string",
-      "company": "string",
-      "link": "string",
-      "publishDate": "string",
-      "deadline": "string",
-      "page": number,
-      "archived": boolean,
-      "salaryRange": "string",
-      "match": number,
-      "queryMatch": boolean,
-      "matchReason": "string",
-      "matchGaps": ["string"]
-    }
-  ]
-}
-
----
-
-CANDIDATE PROFILE:
-${JSON.stringify(summary)}
-
-JOB VACANCIES:
-${JSON.stringify(jobs)}
-`.trim();
-
-  try {
-    const { data } = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${this.apiKey}`,
-      {
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
+      "candidateProfile": {
+        "detectedRole": "string",
+        "seniorityLevel": "string",
+        "primarySkills": ["string"],
+        "secondarySkills": ["string"],
+        "domains": ["string"],
+        "locationPreference": "string",
+        "careerDirection": "string"
       },
-      { headers: { 'Content-Type': 'application/json' }, timeout: 120000 },
-    );
-
-    const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-    const responseText = typeof raw === 'string' ? raw : JSON.stringify(raw);
-
-    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      this.logger.warn('No JSON found in Gemini response');
-      return { response: responseText, comment: 'შეცდომა' };
+      "summary": "string",
+      "strengths": ["string"],
+      "searchQueries": ${summary.searchQueries},
+      "topJobs": [
+        {
+          "id": number,
+          "vacancy": "string",
+          "location": "string",
+          "company": "string",
+          "link": "string",
+          "publishDate": "string",
+          "deadline": "string",
+          "page": number,
+          "archived": boolean,
+          "salaryRange": "string",
+          "match": number,
+          "queryMatch": boolean,
+          "matchReason": "string",
+          "matchGaps": ["string"]
+        }
+      ]
     }
 
-    const repaired = jsonrepair(jsonMatch[0]);
-    const parsedResponse = JSON.parse(repaired);
-    await this.aiMatchedJobsService.createBulk(userId, parsedResponse.topJobs)
-    return {
-      response: parsedResponse,
-      comment: `ნაპოვნია ${parsedResponse.topJobs?.length ?? 0} ვაკანსია`,
-    };
+    ---
 
-  } catch (err: any) {
-    this.logger.error('Gemini call failed', err?.response?.data ?? err.message);
+    CANDIDATE PROFILE:
+    ${JSON.stringify(summary)}
 
-    if (err?.response?.status === 429) {
-      this.logger.warn('Gemini rate-limited (429) — returning unranked jobs');
+    JOB VACANCIES:
+    ${JSON.stringify(jobs)}
+    `.trim();
+
+      const retries = 3;
+      const delayMs = 2000;
+      let attemptError: any = null;
+      let successData: any = null;
+
+      for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+          const { data } = await axios.post(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${this.apiKey}`,
+            {
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
+            },
+            { headers: { 'Content-Type': 'application/json' }, timeout: 120000 },
+          );
+          successData = data;
+          break;
+        } catch (err: any) {
+          attemptError = err;
+          const status = err.response?.status || err.response?.data?.error?.code;
+          const isRetryable = status === 503 || status === 429;
+
+          this.logger.warn(
+            `jobsearchWithCv: attempt ${attempt}/${retries} failed (${status})`,
+            JSON.stringify(err.response?.data || err.message, null, 2),
+          );
+
+          if (!isRetryable || attempt === retries) {
+            break;
+          }
+
+          const wait = status === 503 ? 60000 : delayMs * attempt;
+          this.logger.log(`jobsearchWithCv: retrying in ${wait}ms...`);
+          await new Promise((res) => setTimeout(res, wait));
+        }
+      }
+
+      if (successData) {
+        try {
+          const raw = successData?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+          const responseText = typeof raw === 'string' ? raw : JSON.stringify(raw);
+
+          const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+          if (!jsonMatch) {
+            this.logger.warn('No JSON found in Gemini response');
+            return { response: responseText, comment: 'შეცდომა' };
+          }
+
+          const repaired = jsonrepair(jsonMatch[0]);
+          const parsedResponse = JSON.parse(repaired);
+          await this.aiMatchedJobsService.createBulk(userId, parsedResponse.topJobs || []);
+          return {
+            response: parsedResponse,
+            comment: `ნაპოვნია ${parsedResponse.topJobs?.length ?? 0} ვაკანსია`,
+          };
+        } catch (parseErr: any) {
+          this.logger.error('Failed to parse Gemini response or create matched jobs', parseErr);
+          attemptError = parseErr;
+        }
+      }
+
+      this.logger.warn('jobsearchWithCv: falling back to raw unranked jobs due to error:', attemptError?.message || attemptError);
       const rawJobs = jobs.map((job: any) => ({
         ...job,
         salaryRange: null,
@@ -458,14 +488,14 @@ ${JSON.stringify(jobs)}
         },
         comment: `ნაპოვნია ${rawJobs.length} ვაკანსია (AI ანალიზის გარეშე)`,
       };
+    } catch (globalError: any) {
+      this.logger.error(`[jobsearchWithCv] Critical unexpected error for user ${userId}:`, globalError);
+      return {
+        response: { candidateProfile: null, summary: null, strengths: [], skillGaps: [], topJobs: [] },
+        comment: `შეცდომა: ${globalError.message || globalError}`,
+      };
     }
-
-    throw new HttpException(
-      err?.response?.data ?? 'Gemini error',
-      err?.response?.status ?? 500,
-    );
   }
-}
 
 
 async chat(

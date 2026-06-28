@@ -4,7 +4,6 @@ import { ConfigService } from '@nestjs/config';
 import { UserService } from '../user/user.service';
 import { AiMatchedJobsService } from '../ai-matched-jobs/ai-matched-jobs.service';
 import { SentJobsService } from '../sent-jobs/sent-jobs.service';
-import { AiService } from '../ai/ai.service';
 
 @Injectable()
 export class EmailService {
@@ -16,8 +15,6 @@ export class EmailService {
     private readonly userService: UserService,
     private readonly aiMatchedJobsService: AiMatchedJobsService,
     private readonly sentJobsService: SentJobsService,
-    @Inject(forwardRef(() => AiService))
-    private readonly aiService: AiService,
   ) {
     const apiKey = this.configService.get<string>('BREVO_API_KEY') || process.env.BREVO_API_KEY || '';
     const maskedKey = apiKey ? `${apiKey.substring(0, 6)}... (length: ${apiKey.length})` : 'MISSING';
@@ -75,47 +72,36 @@ export class EmailService {
       }
 
       try {
-        // Run AI analysis with CV first, matching the Telegram daily flow
-        let aiSuccess = true;
-        try {
-          await this.aiService.jobsearchWithCv(user.id);
-        } catch (aiError) {
-          console.error(`[EmailService] Failed AI analysis for user ${user.id}:`, aiError);
-          aiSuccess = false;
-        }
-
-        if (!aiSuccess) {
-          console.warn(`[EmailService] Skipping email alert for user ${user.id} due to failed AI analysis.`);
-          continue;
-        }
-
+        // Fetch matched jobs and sent jobs in parallel, matching Telegram bot daily flow
         const [matchedJobs, sentJobIdsArr] = await Promise.all([
           this.aiMatchedJobsService.findAllMatched(user.id),
           this.sentJobsService.findAllJobIdsByUserId(user.id),
         ]);
 
         const sentJobIds = new Set<number>(sentJobIdsArr);
-        const newJobs = matchedJobs.filter((job) => !sentJobIds.has(job.id));
+
+        // Filter new jobs that haven't been sent
+        const newJobs = matchedJobs.filter((job: any) => !sentJobIds.has(job.id));
 
         if (newJobs.length === 0) {
+          console.log(`[EmailService] No new jobs found for user ${user.email} (all were already sent). Skipping email alert.`);
           continue;
         }
 
         const jobsToSend = newJobs; // Send everything to PRO users
         console.log(`[EmailService] Sending ${jobsToSend.length} jobs to user ${user.email} (PRO)`);
 
-        // Mark them as sent in database
-        for (const job of jobsToSend) {
-          await this.sentJobsService.create({
-            userId: user.id,
-            jobId: job.id,
-            vacancy: job.vacancy,
-            location: job.location,
-            company: job.company,
-            match: job.match,
-            salaryRange: job.salaryRange,
-          });
-        }
+        // Mark them as sent in database using bulk upsert
+        const sentJobDtos = jobsToSend.map((job) => ({
+          userId: user.id,
+          jobId: job.id,
+          vacancy: job.vacancy,
+          location: job.location,
+          company: job.company,
+          match: job.match,
+          salaryRange: job.salaryRange,
+        }));
+        await this.sentJobsService.createBulk(sentJobDtos);
 
         // Build HTML
         const htmlBody = this.buildJobsEmailHtml(
@@ -152,8 +138,9 @@ export class EmailService {
         const salaryText = job.salaryRange
           ? `<p style="margin: 4px 0; font-size: 14px; color: #10b981; font-weight: bold;">💰 ${job.salaryRange}</p>`
           : '';
-        const matchColor = job.match >= 80 ? '#10b981' : job.match >= 60 ? '#f59e0b' : '#ef4444';
-        const matchBarFilled = '🟩'.repeat(Math.round(job.match / 10)) + '⬜'.repeat(10 - Math.round(job.match / 10));
+        const matchScore = Math.max(0, Math.min(100, typeof job.match === 'number' ? job.match : 0));
+        const matchColor = matchScore >= 80 ? '#10b981' : matchScore >= 60 ? '#f59e0b' : '#ef4444';
+        const matchBarFilled = '🟩'.repeat(Math.round(matchScore / 10)) + '⬜'.repeat(10 - Math.round(matchScore / 10));
 
         const gapsHtml = job.matchGaps && job.matchGaps.length > 0
           ? `<div style="margin-top: 10px; padding: 8px 12px; background-color: #fef3c7; border-left: 4px solid #f59e0b; border-radius: 4px; font-size: 13px; color: #92400e;">

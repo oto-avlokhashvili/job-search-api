@@ -15,23 +15,29 @@ export class ScheduleService {
     private readonly jobsService: JobService,
     private readonly emailService: EmailService,
   ) { }
-  @Cron('10 06 * * *')
+  @Cron('10 23 * * *')
   async scrappper(): Promise<void> {
     await this.jobsService.scrapeAndSaveAll();
   }
 
 
-  @Cron('10 07 * * *')
+  @Cron('40 06 * * *')
   async removeOutdated(): Promise<void> {
+    this.logger.log('🚀 Removing Outdated started');
     await this.jobsService.removeOutdated();
   }
 
-  @Cron('00 10 * * *')
+  @Cron('00 07 * * *')
   async analyzeJobs() {
     await this.telegramService.runDailyAnalysis();
   }
 
-  @Cron('10 10 * * *')
+  /* @Cron('00 08 * * *')
+  async analyzeJobsSecondRun() {
+    await this.telegramService.runDailyAnalysis();
+  } */
+  
+  @Cron('00 10 * * *')
   async startTelegramBot() {
     this.logger.log('🚀 Starting Telegram bot via cron...');
     await this.telegramService.startBot();
@@ -43,7 +49,7 @@ export class ScheduleService {
     await this.telegramService.stopBot();
   }
 
-  @Cron('00 11 * * *')
+  @Cron('00 09 * * *')
   async sendDailyEmails() {
     this.logger.log('✉️ Starting daily job alerts email dispatch...');
     await this.emailService.sendDailyEmailAlerts();
