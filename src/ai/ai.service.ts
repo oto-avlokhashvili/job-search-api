@@ -184,7 +184,7 @@ Return ONLY valid raw JSON, no markdown, no backticks:
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const { data } = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${this.apiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${this.apiKey}`,
         {
           contents,
           generationConfig: { temperature: 0, responseMimeType: 'application/json' },
@@ -416,7 +416,7 @@ Return ONLY valid raw JSON, no markdown, no backticks:
       for (let attempt = 1; attempt <= retries; attempt++) {
         try {
           const { data } = await axios.post(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${this.apiKey}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${this.apiKey}`,
             {
               contents: [{ parts: [{ text: prompt }] }],
               generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
@@ -612,7 +612,7 @@ ${cvContext ? `## User CV context\n${cvContext}` : ''}
 
   try {
     const { data } = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${this.apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${this.apiKey}`,
       {
         systemInstruction,
         contents,
