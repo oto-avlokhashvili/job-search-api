@@ -298,8 +298,8 @@ Return ONLY valid raw JSON, no markdown, no backticks:
       this.logger.log(`Jobs after excluding already matched: ${jobs.length}`);
 
       // Limit to at most 50 jobs
-      if (jobs.length > 20) {
-        jobs = jobs.slice(0, 20);
+      if (jobs.length > 50) {
+        jobs = jobs.slice(0, 50);
       }
       this.logger.log(`Jobs to send to AI: ${jobs.length}`);
 
@@ -347,7 +347,8 @@ Return ONLY valid raw JSON, no markdown, no backticks:
 
     ## STEP 2 — FILTER & RANK
     - MINIMUM score to include: **50**
-    - If fewer than 3 vacancies reach 50, include top 3 dev-relevant ones only
+    - Return at least 5 and up to 10 of the top-ranked vacancies.
+    - If fewer than 5 vacancies reach 50, include the top 5 dev-relevant ones anyway to ensure you return at least 5 vacancies (and up to 10 if available).
     - Sort descending by score
     - **No marketing, no retail, no non-IT roles — ever**
 
@@ -653,8 +654,8 @@ ${cvContext ? `## User CV context\n${cvContext}` : ''}
         ) {
           try {
             jobs = await this.jobService.findAllByQuery(parsed.searchQueries);
-            if (jobs.length > 6) {
-              jobs = jobs.slice(0, 6);
+            if (jobs.length > 10) {
+              jobs = jobs.slice(0, 10);
             }
           } catch (dbErr) {
             this.logger.warn(
