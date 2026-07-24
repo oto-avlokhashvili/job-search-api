@@ -217,18 +217,16 @@ export class JobsGeScraperService {
           if (cells.length < 6) return;
 
           const jobTitleEl = $(cells[1]).find('a.vip').first();
-          const jobLocationEl =
-            $(cells[1])
-              .find('i')
-              .first()
-              .text()
-              .replace(/^-?\s*/, '') || 'თბილისი';
+          const jobLocationRaw = $(cells[1]).find('i').first().text();
           const companyEl = $(cells[3]).find('a').first();
           const publishEl = $(cells[4]);
           const deadlineEl = $(cells[5]);
 
           const vacancy = jobTitleEl.text().trim();
-          const location = jobLocationEl.trim();
+          let location = jobLocationRaw.replace(/^[\s\-\–\—\•\.\,\/]+/g, '').trim();
+          if (!location) {
+            location = 'თბილისი';
+          }
           const jobLink = jobTitleEl.attr('href');
           const company = companyEl.text().trim();
           const publishDateRaw = publishEl.text().trim();

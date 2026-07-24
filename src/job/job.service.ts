@@ -86,7 +86,7 @@ export class JobService {
     return duplicates; // returns array of { link: '...', count: 2 }
   }
   async findAll(filterDto: FilterJobDto) {
-    const { query, page = 1, limit = 10 } = filterDto;
+    const { query, page = 1, limit = 10, source, company, location, publishDate } = filterDto;
     const skip = (page - 1) * limit;
 
     const qb = this.jobRepo.createQueryBuilder('job');
@@ -112,14 +112,63 @@ export class JobService {
       );
     }
 
+    if (source && source.trim().length > 0) {
+      hasFilter = true;
+      const lowerSource = source.trim().toLowerCase();
+      if (lowerSource === 'hr.ge') {
+        qb.andWhere(
+          new Brackets((qbSource) => {
+            qbSource.where('job.link LIKE :hrGe', { hrGe: '%hr.ge%' })
+                    .orWhere('job.link LIKE :cvGe', { cvGe: '%cv.ge%' })
+                    .orWhere('job.link LIKE :doctorGe', { doctorGe: '%doctor.ge%' })
+                    .orWhere('job.link LIKE :chefsGe', { chefsGe: '%chefs.ge%' });
+          })
+        );
+      } else {
+        qb.andWhere('job.link LIKE :sourcePattern', { sourcePattern: `%${lowerSource}%` });
+      }
+    }
+
+    if (company && company.trim().length > 0) {
+      hasFilter = true;
+      qb.andWhere('LOWER(job.company) LIKE :company', { company: `%${company.trim().toLowerCase()}%` });
+    }
+
+    if (location && location.trim().length > 0) {
+      hasFilter = true;
+      qb.andWhere('LOWER(job.location) LIKE :location', { location: `%${location.trim().toLowerCase()}%` });
+    }
+
+    if (publishDate && publishDate.trim().length > 0) {
+      hasFilter = true;
+      qb.andWhere('job.publishDate LIKE :publishDate', { publishDate: `%${publishDate.trim()}%` });
+    }
+
     const [jobs, filteredRecords] = await qb.take(limit).skip(skip).getManyAndCount();
     const totalRecords = await this.jobRepo.count();
+
+    const totalJobsGe = await this.jobRepo.count({
+      where: {
+        link: Like('%jobs.ge%'),
+      },
+    });
+
+    const totalHrGe = await this.jobRepo.count({
+      where: [
+        { link: Like('%hr.ge%') },
+        { link: Like('%cv.ge%') },
+        { link: Like('%doctor.ge%') },
+        { link: Like('%chefs.ge%') },
+      ],
+    });
 
     return {
       jobs,
       counts: {
         totalRecords,
         filteredRecords: hasFilter ? filteredRecords : totalRecords,
+        jobsGe: totalJobsGe,
+        hrGe: totalHrGe,
       },
       page,
       limit,
@@ -199,6 +248,8 @@ export class JobService {
           CASE 
             WHEN deadline ~ '^\\d{2}/\\d{2}/\\d{4}$' 
             THEN TO_DATE(deadline, 'DD/MM/YYYY') < CURRENT_DATE 
+            WHEN deadline ~ '^\\d{4}-\\d{2}-\\d{2}'
+            THEN TO_DATE(SUBSTRING(deadline FROM 1 FOR 10), 'YYYY-MM-DD') < CURRENT_DATE
             ELSE false 
           END
         )
@@ -210,6 +261,8 @@ export class JobService {
             CASE 
               WHEN "publishDate" ~ '^\\d{2}/\\d{2}/\\d{4}$' 
               THEN TO_DATE("publishDate", 'DD/MM/YYYY') < CURRENT_DATE - INTERVAL '1 month'
+              WHEN "publishDate" ~ '^\\d{4}-\\d{2}-\\d{2}'
+              THEN TO_DATE(SUBSTRING("publishDate" FROM 1 FOR 10), 'YYYY-MM-DD') < CURRENT_DATE - INTERVAL '1 month'
               ELSE false 
             END
           )

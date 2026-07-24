@@ -95,14 +95,33 @@ export class HrGeScraperService {
         // Process current page items
         items.forEach((item: any) => {
           const vacancy = item.title || item.subject || 'N/A';
-          const location = Array.isArray(item.locations) && item.locations.length > 0 
+          const rawLocation = Array.isArray(item.locations) && item.locations.length > 0 
             ? item.locations.join(', ') 
             : (item.location || item.city || 'თბილისი');
+          let location = rawLocation.replace(/^[\s\-\–\—\•\.\,\/]+/g, '').trim();
+          if (!location) {
+            location = 'თბილისი';
+          }
           const company = item.customerName || 'კომპანია';
           const id = item.announcementId;
-          const publishDate = item.publishDate || '';
-          const deadline = item.deadlineDate || item.deadline || item.endDate || item.expireDate || '';
+          const rawPublishDate = item.publishDate || '';
+          const rawDeadline = item.deadlineDate || item.deadline || item.endDate || item.expireDate || '';
           const description = item.description || '';
+
+          const publishDate = this.formatDate(rawPublishDate);
+          let deadline = this.formatDate(rawDeadline);
+
+          // Fallback: if deadline is missing or invalid, define it as publish date plus 1 month
+          if (!deadline || deadline.trim() === '') {
+            if (rawPublishDate) {
+              const pubDate = new Date(rawPublishDate);
+              if (!isNaN(pubDate.getTime())) {
+                const deadlineDateObj = new Date(pubDate);
+                deadlineDateObj.setMonth(deadlineDateObj.getMonth() + 1);
+                deadline = this.formatDate(deadlineDateObj.toISOString());
+              }
+            }
+          }
 
           if (id) {
             const link = `https://${domain}/announcement/${id}`;
@@ -155,6 +174,22 @@ export class HrGeScraperService {
 
     this.logger.log(`Finished full scrape pipeline. Gathered ${allJobs.length} total active vacancies.`);
     return allJobs;
+  }
+
+  private formatDate(dateStr: string): string {
+    if (!dateStr || dateStr.trim() === '') return '';
+    try {
+      const date = new Date(dateStr);
+      if (isNaN(date.getTime())) return dateStr;
+      
+      const day = String(date.getDate()).padStart(2, '0');
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const year = date.getFullYear();
+      
+      return `${day}/${month}/${year}`;
+    } catch {
+      return dateStr;
+    }
   }
 
   public async fetchDescription(tenantId: number, id: number): Promise<string> {
