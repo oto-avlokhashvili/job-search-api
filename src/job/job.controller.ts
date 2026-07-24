@@ -62,6 +62,22 @@ export class JobController {
   }
   @ApiBearerAuth('bearerAuth')
   @UseGuards(JwtAuthGuard)
+  @Get('outdated')
+  async getOutdated() {
+    const outdated = await this.jobService.findOutdated();
+    return {
+      totalOutdated: outdated.length,
+      outdated,
+    };
+  }
+  @ApiBearerAuth('bearerAuth')
+  @UseGuards(JwtAuthGuard)
+  @Delete('outdated')
+  async removeOutdated() {
+    return await this.jobService.removeOutdated();
+  }
+  @ApiBearerAuth('bearerAuth')
+  @UseGuards(JwtAuthGuard)
   @Get(':id')
   async findOne(@Param('id', ParseIntPipe) id: number) {
     return await this.jobService.findOne(id);

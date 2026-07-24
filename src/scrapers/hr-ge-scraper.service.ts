@@ -179,8 +179,21 @@ export class HrGeScraperService {
   private formatDate(dateStr: string): string {
     if (!dateStr || dateStr.trim() === '') return '';
     try {
-      const date = new Date(dateStr);
-      if (isNaN(date.getTime())) return dateStr;
+      const cleaned = dateStr.trim();
+      
+      // If it's already in DD/MM/YYYY format, return it as-is
+      if (/^\d{2}\/\d{2}\/\d{4}$/.test(cleaned)) {
+        return cleaned;
+      }
+      
+      // If it is in YYYY-MM-DD format (optionally followed by time/T), parse directly to avoid timezone shift
+      const matchIso = cleaned.match(/^(\d{4})-(\d{2})-(\d{2})(?:T|\s|$)/);
+      if (matchIso) {
+        return `${matchIso[3]}/${matchIso[2]}/${matchIso[1]}`;
+      }
+
+      const date = new Date(cleaned);
+      if (isNaN(date.getTime())) return cleaned;
       
       const day = String(date.getDate()).padStart(2, '0');
       const month = String(date.getMonth() + 1).padStart(2, '0');

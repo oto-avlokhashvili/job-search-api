@@ -24,7 +24,8 @@ export class ScheduleService {
   @Cron('40 06 * * *')
   async removeOutdated(): Promise<void> {
     this.logger.log('🚀 Removing Outdated started');
-    await this.jobsService.removeOutdated();
+    const result = await this.jobsService.removeOutdated();
+    this.logger.log(`🚀 Removed ${result.deletedCount} outdated jobs`);
   }
 
   @Cron('00 07 * * *')

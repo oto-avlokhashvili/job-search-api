@@ -96,7 +96,8 @@ export class JobService {
     if (query && query.trim().length > 0) {
       hasFilter = true;
 
-      const terms = query.trim().toLowerCase().split(/\s+/);
+      const trimmedQuery = query.trim().toLowerCase();
+      const terms = trimmedQuery.split(/\s+/);
 
       qb.andWhere(
         new Brackets((qb2) => {
@@ -110,6 +111,29 @@ export class JobService {
           });
         })
       );
+
+      const scoreClauses: string[] = [];
+
+      // Whole phrase match (only if terms.length > 1)
+      if (terms.length > 1) {
+        const wholePhraseWeight = Math.pow(10, terms.length);
+        qb.setParameter('wholePhrase', `%${trimmedQuery}%`);
+        scoreClauses.push(
+          `CASE WHEN LOWER(job.vacancy) LIKE :wholePhrase THEN ${wholePhraseWeight} ELSE 0 END`
+        );
+      }
+
+      // Individual term matches
+      terms.forEach((term, i) => {
+        const termWeight = Math.pow(10, terms.length - 1 - i);
+        scoreClauses.push(
+          `CASE WHEN LOWER(job.vacancy) LIKE :query${i} THEN ${termWeight} ELSE 0 END`
+        );
+      });
+
+      const orderScoreSql = `(${scoreClauses.join(' + ')})`;
+      qb.orderBy(orderScoreSql, 'DESC');
+      qb.addOrderBy('job.id', 'DESC');
     }
 
     if (source && source.trim().length > 0) {
@@ -238,18 +262,16 @@ export class JobService {
     return await this.jobRepo.remove(job);
   }
 
-  async removeOutdated(): Promise<void> {
-    await this.jobRepo
-      .createQueryBuilder()
-      .delete()
-      .from(JobEntity)
+  async findOutdated(): Promise<JobEntity[]> {
+    return await this.jobRepo
+      .createQueryBuilder('job')
       .where(`
         (deadline IS NOT NULL AND TRIM(deadline) != '' AND 
           CASE 
-            WHEN deadline ~ '^\\d{2}/\\d{2}/\\d{4}$' 
-            THEN TO_DATE(deadline, 'DD/MM/YYYY') < CURRENT_DATE 
-            WHEN deadline ~ '^\\d{4}-\\d{2}-\\d{2}'
-            THEN TO_DATE(SUBSTRING(deadline FROM 1 FOR 10), 'YYYY-MM-DD') < CURRENT_DATE
+            WHEN TRIM(deadline) ~ '^\\d{2}/\\d{2}/\\d{4}$' 
+            THEN TO_DATE(TRIM(deadline), 'DD/MM/YYYY') < CURRENT_DATE 
+            WHEN TRIM(deadline) ~ '^\\d{4}-\\d{2}-\\d{2}'
+            THEN TO_DATE(SUBSTRING(TRIM(deadline) FROM 1 FOR 10), 'YYYY-MM-DD') < CURRENT_DATE
             ELSE false 
           END
         )
@@ -259,16 +281,51 @@ export class JobService {
           AND (
             "publishDate" IS NOT NULL AND TRIM("publishDate") != '' AND
             CASE 
-              WHEN "publishDate" ~ '^\\d{2}/\\d{2}/\\d{4}$' 
-              THEN TO_DATE("publishDate", 'DD/MM/YYYY') < CURRENT_DATE - INTERVAL '1 month'
-              WHEN "publishDate" ~ '^\\d{4}-\\d{2}-\\d{2}'
-              THEN TO_DATE(SUBSTRING("publishDate" FROM 1 FOR 10), 'YYYY-MM-DD') < CURRENT_DATE - INTERVAL '1 month'
+              WHEN TRIM("publishDate") ~ '^\\d{2}/\\d{2}/\\d{4}$' 
+              THEN TO_DATE(TRIM("publishDate"), 'DD/MM/YYYY') < CURRENT_DATE - INTERVAL '1 month'
+              WHEN TRIM("publishDate") ~ '^\\d{4}-\\d{2}-\\d{2}'
+              THEN TO_DATE(SUBSTRING(TRIM("publishDate") FROM 1 FOR 10), 'YYYY-MM-DD') < CURRENT_DATE - INTERVAL '1 month'
+              ELSE false 
+            END
+          )
+        )
+      `)
+      .getMany();
+  }
+
+  async removeOutdated(): Promise<{ deletedCount: number }> {
+    const result = await this.jobRepo
+      .createQueryBuilder()
+      .delete()
+      .from(JobEntity)
+      .where(`
+        (deadline IS NOT NULL AND TRIM(deadline) != '' AND 
+          CASE 
+            WHEN TRIM(deadline) ~ '^\\d{2}/\\d{2}/\\d{4}$' 
+            THEN TO_DATE(TRIM(deadline), 'DD/MM/YYYY') < CURRENT_DATE 
+            WHEN TRIM(deadline) ~ '^\\d{4}-\\d{2}-\\d{2}'
+            THEN TO_DATE(SUBSTRING(TRIM(deadline) FROM 1 FOR 10), 'YYYY-MM-DD') < CURRENT_DATE
+            ELSE false 
+          END
+        )
+        OR 
+        (
+          (deadline IS NULL OR TRIM(deadline) = '') 
+          AND (
+            "publishDate" IS NOT NULL AND TRIM("publishDate") != '' AND
+            CASE 
+              WHEN TRIM("publishDate") ~ '^\\d{2}/\\d{2}/\\d{4}$' 
+              THEN TO_DATE(TRIM("publishDate"), 'DD/MM/YYYY') < CURRENT_DATE - INTERVAL '1 month'
+              WHEN TRIM("publishDate") ~ '^\\d{4}-\\d{2}-\\d{2}'
+              THEN TO_DATE(SUBSTRING(TRIM("publishDate") FROM 1 FOR 10), 'YYYY-MM-DD') < CURRENT_DATE - INTERVAL '1 month'
               ELSE false 
             END
           )
         )
       `)
       .execute();
+
+    return { deletedCount: result.affected || 0 };
   }
 
   hardRemove() {
