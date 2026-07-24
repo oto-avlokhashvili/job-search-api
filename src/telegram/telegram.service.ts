@@ -152,7 +152,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     private async autoStartForAllUsers() {
         try {
             const allUsers = await this.userService.findAllWithTelegram();
-            const users = allUsers.filter(u => u.subscription === 'PRO');
+            const users = allUsers.filter(u => u.subscription === 'PRO' && u.receiveMessages !== false);
             this.logger.log(`🚀 Starting queue for ${users.length} PRO users...`);
 
             let successCount = 0;
@@ -185,6 +185,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     private async processUserStart(user: any): Promise<void> {
         if (!user.telegramChatId) return;
         if (user.subscription !== 'PRO') return;
+        if (user.receiveMessages === false) return;
 
         try {
             // Fetch matched jobs and sent jobs in parallel
@@ -270,7 +271,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     private async autoStopForAllUsers() {
         try {
             const allUsers = await this.userService.findAllWithTelegram();
-            const users = allUsers.filter(u => u.subscription === 'PRO');
+            const users = allUsers.filter(u => u.subscription === 'PRO' && u.receiveMessages !== false);
 
             // Process in parallel batches
             const BATCH_SIZE = 20; // Can be higher for stop messages
@@ -320,7 +321,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     async runDailyAnalysis() {
         const users = await this.userService.findAll();
         const proUsers = users.filter(
-            (u) => u.subscription === 'PRO' && (u.telegramChatId || (u.email && u.isEmailVerified)),
+            (u) => u.subscription === 'PRO' && u.receiveMessages !== false && (u.telegramChatId || (u.email && u.isEmailVerified)),
         );
 
         this.logger.log(`🤖 Running AI analysis for ${proUsers.length} PRO/PREMIUM users...`);

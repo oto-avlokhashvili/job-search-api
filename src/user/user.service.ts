@@ -84,7 +84,7 @@ export class UserService {
       where: {
         id,
       },
-      select: ['id', 'firstName', 'lastName', 'email', 'createdAt', 'subscription','telegramChatId', 'isEmailVerified']
+      select: ['id', 'firstName', 'lastName', 'email', 'createdAt', 'subscription','telegramChatId', 'isEmailVerified', 'receiveMessages']
     })
   }
 

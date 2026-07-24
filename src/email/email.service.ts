@@ -64,7 +64,7 @@ export class EmailService {
     let sentEmailsCount = 0;
 
     for (const user of users) {
-      if (!user.email || !user.isEmailVerified || user.subscription !== 'PRO') continue;
+      if (!user.email || !user.isEmailVerified || user.subscription !== 'PRO' || user.receiveMessages === false) continue;
 
       if (sentEmailsCount >= SAFETY_DAILY_LIMIT) {
         console.warn(`[EmailService] Daily safety limit of ${SAFETY_DAILY_LIMIT} emails reached. Stopping alerts dispatch.`);

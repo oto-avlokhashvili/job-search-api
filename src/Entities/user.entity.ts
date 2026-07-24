@@ -39,6 +39,9 @@ export class User {
     @Column({ default: false })
     isEmailVerified: boolean;
 
+    @Column({ default: true })
+    receiveMessages: boolean;
+
     @Column({ type: 'varchar', nullable: true })
     emailVerificationToken?: string | null;
     
