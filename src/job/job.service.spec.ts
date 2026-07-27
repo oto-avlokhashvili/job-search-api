@@ -12,6 +12,9 @@ describe('JobService', () => {
 
   beforeEach(async () => {
     queryBuilderMock = {
+      select: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
+      groupBy: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
       andWhere: jest.fn().mockReturnThis(),
       setParameter: jest.fn().mockReturnThis(),
@@ -21,6 +24,7 @@ describe('JobService', () => {
       skip: jest.fn().mockReturnThis(),
       getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
       getMany: jest.fn().mockResolvedValue([]),
+      getRawMany: jest.fn().mockResolvedValue([]),
       delete: jest.fn().mockReturnThis(),
       from: jest.fn().mockReturnThis(),
       execute: jest.fn().mockResolvedValue({ affected: 0 }),
@@ -122,6 +126,45 @@ describe('JobService', () => {
       expect(queryBuilderMock.where).toHaveBeenCalledWith(expect.any(String));
       expect(queryBuilderMock.execute).toHaveBeenCalled();
       expect(result).toEqual({ deletedCount: 5 });
+    });
+  });
+
+  describe('getJobsCountByLocation', () => {
+    it('should query job repo for location and correctly map and group them in SQL', async () => {
+      const mockRawStats = [
+        { location: 'თბილისი', count: '2' },
+        { location: 'ბათუმი', count: '2' },
+        { location: 'ქუთაისი', count: '1' },
+      ];
+      queryBuilderMock.getRawMany.mockResolvedValue(mockRawStats);
+
+      const result = await service.getJobsCountByLocation();
+
+      expect(jobRepoMock.createQueryBuilder).toHaveBeenCalledWith('job');
+      expect(queryBuilderMock.select).toHaveBeenCalledWith(expect.any(String), 'location');
+      expect(queryBuilderMock.addSelect).toHaveBeenCalledWith('COUNT(job.id)', 'count');
+      expect(queryBuilderMock.where).toHaveBeenCalledWith(expect.any(String));
+      expect(queryBuilderMock.groupBy).toHaveBeenCalledWith(expect.any(String));
+      expect(queryBuilderMock.orderBy).toHaveBeenCalledWith('count', 'DESC');
+      expect(result).toEqual([
+        { location: 'თბილისი', count: 2 },
+        { location: 'ბათუმი', count: 2 },
+        { location: 'ქუთაისი', count: 1 },
+      ]);
+    });
+
+    it('should apply search parameter in memory from the cached values', async () => {
+      const mockRawStats = [
+        { location: 'თბილისი', count: '2' },
+        { location: 'ბათუმი', count: '1' },
+      ];
+      queryBuilderMock.getRawMany.mockResolvedValue(mockRawStats);
+
+      const result = await service.getJobsCountByLocation('ბათუმი');
+
+      expect(result).toEqual([
+        { location: 'ბათუმი', count: 1 },
+      ]);
     });
   });
 });

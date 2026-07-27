@@ -43,6 +43,13 @@ export class JobController {
   async findAll(@Query() filterDto: FilterJobDto) {
     return await this.jobService.findAll(filterDto);
   }
+
+  @ApiQuery({ name: 'search', required: false, type: String })
+  @Get('cities')
+  async getJobsCountByLocation(@Query('search') search?: string) {
+    return await this.jobService.getJobsCountByLocation(search);
+  }
+
   @ApiBearerAuth('bearerAuth')
   @UseGuards(JwtAuthGuard)
   @Get('search')

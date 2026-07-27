@@ -10,10 +10,36 @@ import { JobsGeScraperService, JobData } from '../scrapers/jobs-ge.scraper';
 import { HrGeScraperService } from '../scrapers/hr-ge-scraper.service';
 import * as crypto from 'crypto';
 
+export const CITY_MAPPING: { [city: string]: string[] } = {
+  'თბილისი': [
+    'თბილისი', 'tbilisi', 'საბურთალო', 'დიღომი', 'ვარკეთილი', 'გლდანი', 'ისანი', 'სამგორი',
+    'ვაკე', 'ვერა', 'მთაწმინდა', 'ლილო', 'ორხევი', 'ავჭალა', 'სანზონა', 'თემქა', 'დიდუბე',
+    'ნუცუბიძე', 'წერეთელი', 'ერისთავი', 'პეკინი', 'დადიანი', 'მარჯანიშვილი', 'მელიქიშვილი',
+    'ვაჟა-ფშაველა', 'ასათიანი', 'დელისი', 'ჯიქია', 'ბაგები', 'წავკისი', 'კიკეთი', 'ოქროყანა',
+    'ორთაჭალა', 'ნავთლუღი', 'ზაჰესი', 'წყნეთი', 'სითი მოლი', 'გალერია', 'ისთ ფოინთი',
+    'თბილისი მოლი', 'აეროპორტი', 'ეროვნული სტადიონი', 'გლდანულა', 'ვარკეთილის', 'ცინცაძე',
+    'ქარვასლა', 'outlet village', 'აუთლეთ ვილიჯი', 'მეტრომშენი', 'სავაჭრო ცენტრი',
+    'უნივერსიტეტის ქუჩა', 'ვაზისუბანი', 'აღმაშენებლის ექსპატ სერვისცენტრი', 'წერეთლის ს/ც 3',
+    'ცხვარიჭამია', 'დიღმის მასივი', 'დიღმის ს/ც 2', 'დიდი დიღმის ს/ც 1', 'ორთაჭალის ს/ც 1',
+    'ფულ & ბეარ'
+  ],
+  'ბათუმი': ['ბათუმი', 'batumi'],
+  'ქუთაისი': ['ქუთაისი', 'kutaisi'],
+  'რუსთავი': ['რუსთავი', 'rustavi'],
+  'გორი': ['გორი', 'gori'],
+  'ზუგდიდი': ['ზუგდიდი', 'zugdidi'],
+  'ფოთი': ['ფოთი', 'poti'],
+  'თელავი': ['თელავი', 'telavi'],
+  'ახალციხე': ['ახალციხე', 'akhaltsikhe'],
+  'ოზურგეთი': ['ოზურგეთი', 'ozurgeti'],
+  'მცხეთა': ['მცხეთა', 'mtskheta'],
+  'სიღნაღი': ['სიღნაღი', 'sighnaghi']
+};
 
 @Injectable()
 export class JobService {
   private readonly logger = new Logger(JobService.name);
+  private citiesCache: { location: string; count: number }[] | null = null;
 
   constructor(
     private readonly scraperService: JobsGeScraperService,
@@ -32,6 +58,7 @@ export class JobService {
       createJobDto.fingerprint = crypto.createHash('md5').update(sig).digest('hex');
     }
     const job = await this.jobRepo.save(createJobDto);
+    this.citiesCache = null; // Invalidate cache
     return job;
   }
 
@@ -71,6 +98,7 @@ export class JobService {
         .orIgnore() // skips duplicates based on unique link/fingerprint constraints
         .execute();
     }
+    this.citiesCache = null; // Invalidate cache
   }
 
   async findDuplicates() {
@@ -160,7 +188,29 @@ export class JobService {
 
     if (location && location.trim().length > 0) {
       hasFilter = true;
-      qb.andWhere('LOWER(job.location) LIKE :location', { location: `%${location.trim().toLowerCase()}%` });
+      const trimmedLoc = location.trim();
+      const searchKey = trimmedLoc.toLowerCase();
+      const mappingKey = Object.keys(CITY_MAPPING).find(
+        key => key.toLowerCase() === searchKey || CITY_MAPPING[key].some(kw => kw.toLowerCase() === searchKey)
+      );
+      const mappedKeywords = mappingKey ? CITY_MAPPING[mappingKey] : null;
+
+      if (mappedKeywords && mappedKeywords.length > 0) {
+        qb.andWhere(
+          new Brackets((qbLoc) => {
+            mappedKeywords.forEach((kw, idx) => {
+              const paramName = `locKw${idx}`;
+              if (idx === 0) {
+                qbLoc.where(`LOWER(job.location) LIKE :${paramName}`, { [paramName]: `%${kw.toLowerCase()}%` });
+              } else {
+                qbLoc.orWhere(`LOWER(job.location) LIKE :${paramName}`, { [paramName]: `%${kw.toLowerCase()}%` });
+              }
+            });
+          })
+        );
+      } else {
+        qb.andWhere('LOWER(job.location) LIKE :location', { location: `%${searchKey}%` });
+      }
     }
 
     if (publishDate && publishDate.trim().length > 0) {
@@ -236,6 +286,54 @@ export class JobService {
 
     return qb.getMany();
   }
+
+  async getJobsCountByLocation(search?: string): Promise<{ location: string; count: number }[]> {
+    if (!this.citiesCache) {
+      const caseClauses: string[] = [];
+
+      for (const [city, keywords] of Object.entries(CITY_MAPPING)) {
+        const conditions = keywords
+          .map(kw => `LOWER(job.location) LIKE '%${kw.replace(/'/g, "''").toLowerCase()}%'`)
+          .join(' OR ');
+        caseClauses.push(`WHEN ${conditions} THEN '${city}'`);
+      }
+
+      const caseExpression = `(CASE 
+        ${caseClauses.join('\n        ')}
+        ELSE NULL
+      END)`;
+
+      const rawStats = await this.jobRepo
+        .createQueryBuilder('job')
+        .select(caseExpression, 'location')
+        .addSelect('COUNT(job.id)', 'count')
+        .where(`${caseExpression} IS NOT NULL`)
+        .groupBy(caseExpression)
+        .orderBy('count', 'DESC')
+        .getRawMany();
+
+      this.citiesCache = rawStats.map(stat => ({
+        location: stat.location,
+        count: parseInt(stat.count, 10),
+      }));
+    }
+
+    let result = [...this.citiesCache];
+
+    if (search && search.trim().length > 0) {
+      const query = search.trim().toLowerCase();
+      result = result.filter(item => {
+        const keywords = CITY_MAPPING[item.location] || [];
+        return (
+          item.location.toLowerCase().includes(query) ||
+          keywords.some(kw => kw.toLowerCase().includes(query))
+        );
+      });
+    }
+
+    return result;
+  }
+
   async findOne(id: number) {
     const job = await this.jobRepo.findOne({ where: { id } });
     if (!job) {
@@ -251,6 +349,7 @@ export class JobService {
     }
     const updated = Object.assign(job, updateJobDto)
     await this.jobRepo.save(updated)
+    this.citiesCache = null; // Invalidate cache
     return updated;
   }
 
@@ -259,7 +358,9 @@ export class JobService {
     if (!job) {
       throw new NotFoundException(`Job with ID ${id} not found`);
     }
-    return await this.jobRepo.remove(job);
+    const result = await this.jobRepo.remove(job);
+    this.citiesCache = null; // Invalidate cache
+    return result;
   }
 
   async findOutdated(): Promise<JobEntity[]> {
@@ -325,11 +426,14 @@ export class JobService {
       `)
       .execute();
 
+    this.citiesCache = null; // Invalidate cache
     return { deletedCount: result.affected || 0 };
   }
 
-  hardRemove() {
-    return this.jobRepo.clear();
+  async hardRemove() {
+    const res = await this.jobRepo.clear();
+    this.citiesCache = null; // Invalidate cache
+    return res;
   }
 
   async manualScrapper() {
