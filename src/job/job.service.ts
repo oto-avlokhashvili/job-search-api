@@ -215,7 +215,16 @@ export class JobService {
 
     if (publishDate && publishDate.trim().length > 0) {
       hasFilter = true;
-      qb.andWhere('job.publishDate LIKE :publishDate', { publishDate: `%${publishDate.trim()}%` });
+      qb.andWhere(
+        `CASE 
+          WHEN TRIM(job.publishDate) ~ '^\\d{2}/\\d{2}/\\d{4}$' 
+          THEN TO_DATE(TRIM(job.publishDate), 'DD/MM/YYYY') 
+          WHEN TRIM(job.publishDate) ~ '^\\d{4}-\\d{2}-\\d{2}'
+          THEN TO_DATE(SUBSTRING(TRIM(job.publishDate) FROM 1 FOR 10), 'YYYY-MM-DD')
+          ELSE NULL 
+        END >= :publishDate::date`,
+        { publishDate: publishDate.trim() }
+      );
     }
 
     const [jobs, filteredRecords] = await qb.take(limit).skip(skip).getManyAndCount();

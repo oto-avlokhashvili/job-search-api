@@ -15,6 +15,7 @@ import { CvParserService } from 'src/cv/cv-parser.service';
 @Injectable()
 export class AiService {
   private readonly apiKey = process.env.GEMINI_API_KEY;
+  private readonly openrouterKey = process.env.OPENROUTER_KEY;
   private readonly logger = new Logger(AiService.name);
   constructor(private readonly configService: ConfigService,
     private readonly cvService: CvService,
@@ -26,11 +27,126 @@ export class AiService {
     private readonly cvParserService: CvParserService,
   ) { }
 
+  private async callOpenRouter(
+    messages: { role: string; content: string }[],
+    jsonMode = false,
+    temperature = 0.1,
+  ): Promise<string> {
+    if (!this.openrouterKey) {
+      this.logger.error('OPENROUTER_KEY is not defined in environment variables');
+      throw new Error('OPENROUTER_KEY is not configured');
+    }
+
+    const messagesToSend = [...messages];
+    if (jsonMode) {
+      messagesToSend.unshift({
+        role: 'system',
+        content: 'You are a JSON-only response assistant. You must output ONLY valid raw JSON. Never output any introductory text, markdown formatting, backticks, explanation, or conversational filler. Start your response directly with \'{\' and end it with \'}\'.'
+      });
+    }
+
+    // Attempt 1: Call Google Gemma 4 (highly capable, structured) with server-side fallbacks
+    try {
+      const payload: any = {
+        model: 'google/gemma-4-31b-it:free',
+        models: [
+          'google/gemma-4-31b-it:free',
+          'google/gemma-4-26b-a4b-it:free',
+          'qwen/qwen-2.5-coder-32b-instruct:free',
+          'cohere/north-mini-code:free',
+          'openai/gpt-oss-20b:free',
+          'openrouter/free',
+        ],
+        messages: messagesToSend,
+        temperature,
+      };
+
+      if (jsonMode) {
+        payload.response_format = { type: 'json_object' };
+      }
+
+      const { data } = await axios.post(
+        'https://openrouter.ai/api/v1/chat/completions',
+        payload,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${this.openrouterKey}`,
+            'HTTP-Referer': 'https://github.com/otonika10/job-search-api',
+            'X-Title': 'Job Search API',
+          },
+          timeout: 45000, // 45 seconds for primary attempt
+        },
+      );
+
+      const text = data?.choices?.[0]?.message?.content;
+      if (text) {
+        const modelUsed = data?.model;
+        this.logger.log(`OpenRouter fallback successfully generated content using model: ${modelUsed}`);
+        return text;
+      }
+    } catch (err: any) {
+      this.logger.warn(`OpenRouter primary model call failed (Error: ${err.message}). Trying automatic client-side rotation to openrouter/free...`);
+    }
+
+    // Attempt 2: Direct Client-Side Fallback to general openrouter/free router
+    try {
+      const payload: any = {
+        model: 'openrouter/free',
+        messages: messagesToSend,
+        temperature,
+      };
+
+      if (jsonMode) {
+        payload.response_format = { type: 'json_object' };
+      }
+
+      const { data } = await axios.post(
+        'https://openrouter.ai/api/v1/chat/completions',
+        payload,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${this.openrouterKey}`,
+            'HTTP-Referer': 'https://github.com/otonika10/job-search-api',
+            'X-Title': 'Job Search API',
+          },
+          timeout: 45000,
+        },
+      );
+
+      const text = data?.choices?.[0]?.message?.content;
+      if (!text) {
+        throw new Error('Empty response from openrouter/free');
+      }
+
+      const modelUsed = data?.model;
+      this.logger.log(`OpenRouter client-side fallback successfully generated content using model: ${modelUsed}`);
+      return text;
+    } catch (fallbackErr: any) {
+      this.logger.error(`OpenRouter client-side fallback also failed: ${fallbackErr.response?.data || fallbackErr.message}`);
+      throw fallbackErr;
+    }
+  }
+
+  private extractJson(text: string): string {
+    const markdownMatch = text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/i);
+    if (markdownMatch) {
+      return markdownMatch[1].trim();
+    }
+    const braceMatch = text.match(/(\{[\s\S]*\})/);
+    if (braceMatch) {
+      return braceMatch[1].trim();
+    }
+    return text.trim();
+  }
+
+
 
 
 async summarizeCv(
   cvFile: Express.Multer.File,
-  retries = 3,
+  retries = 1,
   delayMs = 2000,
 ): Promise<CvSummaryDetails | null> {
 const CV_SUMMARY_PROMPT = `
@@ -136,6 +252,7 @@ Return ONLY valid raw JSON, no markdown, no backticks:
 `.trim();
 
   let contents: object[];
+  let extractedText: string | null = null;
 
   const isPdf =
     cvFile.mimetype === 'application/pdf' ||
@@ -156,8 +273,6 @@ Return ONLY valid raw JSON, no markdown, no backticks:
       },
     ];
   } else {
-    let extractedText: string;
-
     try {
       extractedText = await this.cvParserService.parseCV(cvFile);
     } catch (err) {
@@ -181,54 +296,92 @@ Return ONLY valid raw JSON, no markdown, no backticks:
     ];
   }
 
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      const { data } = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${this.apiKey}`,
-        {
-          contents,
-          generationConfig: { temperature: 0, responseMimeType: 'application/json' },
-        },
-        { headers: { 'Content-Type': 'application/json' }, timeout: 30000 },
-      );
+  try {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const { data } = await axios.post(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${this.apiKey}`,
+          {
+            contents,
+            generationConfig: { temperature: 0, responseMimeType: 'application/json' },
+          },
+          { headers: { 'Content-Type': 'application/json' }, timeout: 500 },
+        );
 
-      const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-      if (!raw) {
-        this.logger.warn('summarizeCv: empty response from Gemini');
-        return null;
+        const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+        if (!raw) {
+          this.logger.warn('summarizeCv: empty response from Gemini');
+          return null;
+        }
+
+        try {
+          return JSON.parse(raw) as CvSummaryDetails;
+        } catch {
+          const clean = raw.replace(/```json|```/gi, '').trim();
+          try {
+            return JSON.parse(clean) as CvSummaryDetails;
+          } catch {
+            this.logger.warn('summarizeCv: failed to parse Gemini response', raw);
+            return null;
+          }
+        }
+      } catch (err: any) {
+        const status = err.response?.data?.error?.code;
+        const isRetryable = status === 503 || status === 429;
+
+        this.logger.warn(
+          `summarizeCv: attempt ${attempt}/${retries} failed (${status})`,
+          JSON.stringify(err.response?.data, null, 2),
+        );
+
+        if (!isRetryable || attempt === retries) {
+          throw err;
+        }
+
+        const wait = delayMs * attempt; // 2s, 4s, 6s
+        this.logger.log(`summarizeCv: retrying in ${wait}ms...`);
+        await new Promise((res) => setTimeout(res, wait));
+      }
+    }
+  } catch (geminiError: any) {
+    this.logger.warn(
+      `summarizeCv: Gemini failed, falling back to OpenRouter. Error: ${geminiError.message || geminiError}`,
+    );
+    try {
+      if (isPdf && !extractedText) {
+        try {
+          extractedText = await this.cvParserService.parseCV(cvFile);
+        } catch (err) {
+          this.logger.warn('summarizeCv fallback: failed to parse PDF CV', err.message);
+        }
       }
 
+      const promptText = `CV Content:\n\n${extractedText || ''}\n\n${CV_SUMMARY_PROMPT}`;
+      const messages = [{ role: 'user', content: promptText }];
+      
+      const raw = await this.callOpenRouter(messages, true, 0);
+
+      const clean = this.extractJson(raw);
       try {
-        return JSON.parse(raw) as CvSummaryDetails;
+        return JSON.parse(clean) as CvSummaryDetails;
       } catch {
-        const clean = raw.replace(/```json|```/gi, '').trim();
         try {
-          return JSON.parse(clean) as CvSummaryDetails;
+          return JSON.parse(jsonrepair(clean)) as CvSummaryDetails;
         } catch {
-          this.logger.warn('summarizeCv: failed to parse Gemini response', raw);
+          this.logger.warn('summarizeCv (OpenRouter fallback): failed to parse response', raw);
           return null;
         }
       }
-    } catch (err: any) {
-      const status = err.response?.data?.error?.code;
-      const isRetryable = status === 503 || status === 429;
-
-      this.logger.warn(
-        `summarizeCv: attempt ${attempt}/${retries} failed (${status})`,
-        JSON.stringify(err.response?.data, null, 2),
+    } catch (orError: any) {
+      this.logger.error(
+        `summarizeCv: OpenRouter fallback also failed: ${orError.response?.data || orError.message || orError}`,
       );
-
-      if (!isRetryable || attempt === retries) {
-        throw err;
-      }
-
-      const wait = delayMs * attempt; // 2s, 4s, 6s
-      this.logger.log(`summarizeCv: retrying in ${wait}ms...`);
-      await new Promise((res) => setTimeout(res, wait));
+      throw geminiError;
     }
   }
 
   return null;
+
 }
 
   async jobsearchWithCv(
@@ -409,7 +562,7 @@ Return ONLY valid raw JSON, no markdown, no backticks:
     ${JSON.stringify(jobs)}
     `.trim();
 
-      const retries = 3;
+      const retries = 1;
       const delayMs = 2000;
       let attemptError: any = null;
       let successData: any = null;
@@ -422,7 +575,7 @@ Return ONLY valid raw JSON, no markdown, no backticks:
               contents: [{ parts: [{ text: prompt }] }],
               generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
             },
-            { headers: { 'Content-Type': 'application/json' }, timeout: 120000 },
+            { headers: { 'Content-Type': 'application/json' }, timeout: 500 },
           );
           successData = data;
           break;
@@ -446,18 +599,33 @@ Return ONLY valid raw JSON, no markdown, no backticks:
         }
       }
 
+      if (!successData) {
+        this.logger.warn('jobsearchWithCv: Gemini failed, trying OpenRouter fallback...');
+        try {
+          const messages = [{ role: 'user', content: prompt }];
+          const raw = await this.callOpenRouter(messages, true, 0.1);
+          
+          successData = {
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: raw }]
+                }
+              }
+            ]
+          };
+        } catch (orError: any) {
+          this.logger.error(`jobsearchWithCv: OpenRouter fallback also failed: ${orError.response?.data || orError.message || orError}`);
+        }
+      }
+
       if (successData) {
         try {
           const raw = successData?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
           const responseText = typeof raw === 'string' ? raw : JSON.stringify(raw);
 
-          const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-          if (!jsonMatch) {
-            this.logger.warn('No JSON found in Gemini response');
-            return { response: responseText, comment: 'შეცდომა' };
-          }
-
-          const repaired = jsonrepair(jsonMatch[0]);
+          const cleanJson = this.extractJson(responseText);
+          const repaired = jsonrepair(cleanJson);
           const parsedResponse = JSON.parse(repaired);
           await this.aiMatchedJobsService.createBulk(userId, parsedResponse.topJobs || []);
           return {
@@ -465,7 +633,7 @@ Return ONLY valid raw JSON, no markdown, no backticks:
             comment: `ნაპოვნია ${parsedResponse.topJobs?.length ?? 0} ვაკანსია`,
           };
         } catch (parseErr: any) {
-          this.logger.error('Failed to parse Gemini response or create matched jobs', parseErr);
+          this.logger.error('Failed to parse Gemini/OpenRouter response or create matched jobs', parseErr);
           attemptError = parseErr;
         }
       }
@@ -474,7 +642,7 @@ Return ONLY valid raw JSON, no markdown, no backticks:
       const rawJobs = jobs.map((job: any) => ({
         ...job,
         salaryRange: null,
-        match: null,
+        match: 0,
         queryMatch: null,
         matchReason: null,
         matchGaps: [],
@@ -626,7 +794,7 @@ ${cvContext ? `## User CV context\n${cvContext}` : ''}
         headers: {
           'Content-Type': 'application/json',
         },
-        timeout: 60000,
+        timeout: 500,
       },
     );
 
@@ -681,32 +849,93 @@ ${cvContext ? `## User CV context\n${cvContext}` : ''}
       return { response: cleaned, jobs: [] };
     }
   } catch (error) {
-    console.error('Gemini full error:', error?.response?.data || error);
+    this.logger.warn(`chat: Gemini failed, trying OpenRouter fallback. Error: ${error.message}`);
+    try {
+      const systemInstructionText = systemInstruction.parts[0].text;
+      const messages = [
+        { role: 'system', content: systemInstructionText },
+        ...history.slice(-6).map((msg) => ({
+          role: msg.role === 'model' ? 'assistant' : msg.role,
+          content: msg.text,
+        })),
+        { role: 'user', content: prompt }
+      ];
 
-    const isRateLimit = error?.response?.status === 429 || error?.status === 429;
+      const raw = await this.callOpenRouter(messages, true, 0.4);
 
-    this.logger.error(
-      `Gemini API error: ${JSON.stringify(
-        error?.response?.data || error.message,
-        null,
-        2,
-      )}`,
-    );
+      const cleaned = raw
+        .trim()
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/, '');
 
-    const isGeorgian = /[\u10D0-\u10FF]/.test(prompt);
-    const responseText = isRateLimit
-      ? (isGeorgian
-          ? 'მოთხოვნების ლიმიტი ამოიწურა. გთხოვთ, მოიცადოთ რამდენიმე წამი და სცადოთ თავიდან.'
-          : 'Rate limit exceeded. Please wait a few seconds and try again.')
-      : (isGeorgian
-          ? 'სამწუხაროდ, პასუხის გენერირებისას დაფიქსირდა შეცდომა. გთხოვთ სცადოთ მოგვიანებით.'
-          : 'Sorry, something went wrong while generating a response. Please try again later.');
+      try {
+        const parsed = JSON.parse(cleaned);
 
-    return {
-      response: responseText,
-      jobs: [],
-      isError: true,
-    };
+        if (parsed && typeof parsed === 'object') {
+          let jobs: any[] = [];
+          if (
+            parsed.searchTriggered &&
+            Array.isArray(parsed.searchQueries) &&
+            parsed.searchQueries.length > 0
+          ) {
+            try {
+              jobs = await this.jobService.findAllByQuery(parsed.searchQueries);
+              if (jobs.length > 10) {
+                jobs = jobs.slice(0, 10);
+              }
+            } catch (dbErr) {
+              this.logger.warn(
+                `Failed to find jobs for query ${parsed.searchQueries}: ${dbErr.message}`,
+              );
+            }
+          }
+          let responseText = parsed.response || cleaned;
+          if (parsed.searchTriggered && jobs.length === 0) {
+            responseText = parsed.noJobsResponse || responseText;
+          }
+
+          return {
+            response: responseText,
+            jobs,
+            searchTriggered: !!parsed.searchTriggered,
+          };
+        }
+
+        return { response: cleaned, jobs: [] };
+      } catch {
+        this.logger.warn('Invalid JSON response from OpenRouter fallback');
+        return { response: cleaned, jobs: [] };
+      }
+    } catch (orError: any) {
+      this.logger.error(`chat: OpenRouter fallback also failed: ${orError.response?.data || orError.message || orError}`);
+
+      console.error('Gemini full error:', error?.response?.data || error);
+
+      const isRateLimit = error?.response?.status === 429 || error?.status === 429;
+
+      this.logger.error(
+        `Gemini API error: ${JSON.stringify(
+          error?.response?.data || error.message,
+          null,
+          2,
+        )}`,
+      );
+
+      const isGeorgian = /[\u10D0-\u10FF]/.test(prompt);
+      const responseText = isRateLimit
+        ? (isGeorgian
+            ? 'მოთხოვნების ლიმიტი ამოიწურა. გთხოვთ, მოიცადოთ რამდენიმე წამი და სცადოთ თავიდან.'
+            : 'Rate limit exceeded. Please wait a few seconds and try again.')
+        : (isGeorgian
+            ? 'სამწუხაროდ, პასუხის გენერირებისას დაფიქსირდა შეცდომა. გთხოვთ სცადოთ მოგვიანებით.'
+            : 'Sorry, something went wrong while generating a response. Please try again later.');
+
+      return {
+        response: responseText,
+        jobs: [],
+        isError: true,
+      };
+    }
   }
 }
 }
