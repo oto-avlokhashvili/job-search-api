@@ -45,15 +45,15 @@ export class AiService {
       });
     }
 
-    // Attempt 1: Call Google Gemma 4 (highly capable, structured) with server-side fallbacks
+    // Attempt 1: Call DeepSeek R1 (highly requested) with server-side fallbacks
     try {
       const payload: any = {
-        model: 'google/gemma-4-31b-it:free',
+        model: 'deepseek/deepseek-r1:free',
         models: [
+          'deepseek/deepseek-r1:free',
           'google/gemma-4-31b-it:free',
           'google/gemma-4-26b-a4b-it:free',
           'qwen/qwen-2.5-coder-32b-instruct:free',
-          'cohere/north-mini-code:free',
           'openai/gpt-oss-20b:free',
           'openrouter/free',
         ],
@@ -75,7 +75,7 @@ export class AiService {
             'HTTP-Referer': 'https://github.com/otonika10/job-search-api',
             'X-Title': 'Job Search API',
           },
-          timeout: 45000, // 45 seconds for primary attempt
+          timeout: 25000, // 25 seconds for primary attempt
         },
       );
 
@@ -111,7 +111,7 @@ export class AiService {
             'HTTP-Referer': 'https://github.com/otonika10/job-search-api',
             'X-Title': 'Job Search API',
           },
-          timeout: 45000,
+          timeout: 25000, // 25 seconds for secondary attempt
         },
       );
 
@@ -305,7 +305,7 @@ Return ONLY valid raw JSON, no markdown, no backticks:
             contents,
             generationConfig: { temperature: 0, responseMimeType: 'application/json' },
           },
-          { headers: { 'Content-Type': 'application/json' }, timeout: 500 },
+          { headers: { 'Content-Type': 'application/json' }, timeout: 120000 },
         );
 
         const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
@@ -450,9 +450,9 @@ Return ONLY valid raw JSON, no markdown, no backticks:
       jobs = jobs.filter((job) => !matchedJobLinks.has(job.link) && !matchedJobIds.has(job.id));
       this.logger.log(`Jobs after excluding already matched: ${jobs.length}`);
 
-      // Limit to at most 50 jobs
-      if (jobs.length > 50) {
-        jobs = jobs.slice(0, 50);
+      // Limit to at most 20 jobs
+      if (jobs.length > 20) {
+        jobs = jobs.slice(0, 20);
       }
       this.logger.log(`Jobs to send to AI: ${jobs.length}`);
 
@@ -575,7 +575,7 @@ Return ONLY valid raw JSON, no markdown, no backticks:
               contents: [{ parts: [{ text: prompt }] }],
               generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
             },
-            { headers: { 'Content-Type': 'application/json' }, timeout: 500 },
+            { headers: { 'Content-Type': 'application/json' }, timeout: 120000 },
           );
           successData = data;
           break;
@@ -794,7 +794,7 @@ ${cvContext ? `## User CV context\n${cvContext}` : ''}
         headers: {
           'Content-Type': 'application/json',
         },
-        timeout: 500,
+        timeout: 120000,
       },
     );
 
