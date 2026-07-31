@@ -45,51 +45,6 @@ export class AiService {
       });
     }
 
-    // Attempt 1: Call DeepSeek R1 (highly requested) with server-side fallbacks
-    try {
-      const payload: any = {
-        model: 'deepseek/deepseek-r1:free',
-        models: [
-          'deepseek/deepseek-r1:free',
-          'google/gemma-4-31b-it:free',
-          'google/gemma-4-26b-a4b-it:free',
-          'qwen/qwen-2.5-coder-32b-instruct:free',
-          'openai/gpt-oss-20b:free',
-          'openrouter/free',
-        ],
-        messages: messagesToSend,
-        temperature,
-      };
-
-      if (jsonMode) {
-        payload.response_format = { type: 'json_object' };
-      }
-
-      const { data } = await axios.post(
-        'https://openrouter.ai/api/v1/chat/completions',
-        payload,
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${this.openrouterKey}`,
-            'HTTP-Referer': 'https://github.com/otonika10/job-search-api',
-            'X-Title': 'Job Search API',
-          },
-          timeout: 25000, // 25 seconds for primary attempt
-        },
-      );
-
-      const text = data?.choices?.[0]?.message?.content;
-      if (text) {
-        const modelUsed = data?.model;
-        this.logger.log(`OpenRouter fallback successfully generated content using model: ${modelUsed}`);
-        return text;
-      }
-    } catch (err: any) {
-      this.logger.warn(`OpenRouter primary model call failed (Error: ${err.message}). Trying automatic client-side rotation to openrouter/free...`);
-    }
-
-    // Attempt 2: Direct Client-Side Fallback to general openrouter/free router
     try {
       const payload: any = {
         model: 'openrouter/free',
@@ -111,21 +66,21 @@ export class AiService {
             'HTTP-Referer': 'https://github.com/otonika10/job-search-api',
             'X-Title': 'Job Search API',
           },
-          timeout: 25000, // 25 seconds for secondary attempt
+          timeout: 25000, // 25 seconds timeout
         },
       );
 
       const text = data?.choices?.[0]?.message?.content;
       if (!text) {
-        throw new Error('Empty response from openrouter/free');
+        throw new Error('Empty response from OpenRouter');
       }
 
       const modelUsed = data?.model;
-      this.logger.log(`OpenRouter client-side fallback successfully generated content using model: ${modelUsed}`);
+      this.logger.log(`OpenRouter call successfully generated content using model: ${modelUsed}`);
       return text;
-    } catch (fallbackErr: any) {
-      this.logger.error(`OpenRouter client-side fallback also failed: ${fallbackErr.response?.data || fallbackErr.message}`);
-      throw fallbackErr;
+    } catch (err: any) {
+      this.logger.error(`OpenRouter model call failed: ${err.response?.data || err.message}`);
+      throw err;
     }
   }
 

@@ -83,8 +83,7 @@ export class JobController {
   async removeOutdated() {
     return await this.jobService.removeOutdated();
   }
-  @ApiBearerAuth('bearerAuth')
-  @UseGuards(JwtAuthGuard)
+  
   @Get(':id')
   async findOne(@Param('id', ParseIntPipe) id: number) {
     return await this.jobService.findOne(id);
