@@ -3,6 +3,7 @@ import { ApiQuery, ApiTags } from '@nestjs/swagger';
 import { HrGeScraperService } from './hr-ge-scraper.service';
 import { JobsGeScraperService, ScraperResult, JobData } from './jobs-ge.scraper';
 import { AworkGeScraperService, AworkScraperResult } from './awork-ge.scraper';
+import { MyjobsGeScraperService, MyjobsScraperResult } from './myjobs-ge.scraper';
 
 @ApiTags('scraper')
 @Controller('scraper')
@@ -11,6 +12,7 @@ export class ScrapersController {
     private readonly scraperService: HrGeScraperService,
     private readonly jobsGeScraperService: JobsGeScraperService,
     private readonly aworkGeScraperService: AworkGeScraperService,
+    private readonly myjobsGeScraperService: MyjobsGeScraperService,
   ) {}
 
   @Get('sync-all')
@@ -65,4 +67,20 @@ export class ScrapersController {
       pageSize: pageSize ?? 50,
     });
   }
-}
+
+  @Get('sync-myjobs')
+  @ApiQuery({ name: 'delayBetweenRequests', required: false, type: Number })
+  @ApiQuery({ name: 'maxPages', required: false, type: Number })
+  @ApiQuery({ name: 'pageSize', required: false, type: Number })
+  async syncMyjobsGe(
+    @Query('delayBetweenRequests', new ParseIntPipe({ optional: true })) delayBetweenRequests?: number,
+    @Query('maxPages', new ParseIntPipe({ optional: true })) maxPages?: number,
+    @Query('pageSize', new ParseIntPipe({ optional: true })) pageSize?: number,
+  ): Promise<MyjobsScraperResult> {
+    return await this.myjobsGeScraperService.scrapeAllJobs({
+      delayBetweenRequests: delayBetweenRequests ?? 250,
+      maxPages: maxPages || undefined,
+      pageSize: pageSize ?? 50,
+    });
+  }
+}
