@@ -17,7 +17,11 @@ export class ScheduleService {
   ) { }
   @Cron('10 23 * * *')
   async scrappper(): Promise<void> {
-    await this.jobsService.scrapeAndSaveAll();
+    this.logger.log('🚀 Starting scheduled full scrape (jobs.ge + hr.ge + awork.ge) with deduplication...');
+    const result = await this.jobsService.scrapeAndSaveAll();
+    this.logger.log(
+      `✅ Scheduled scrape completed: ${result.uniqueCount} total unique jobs saved (awork duplicates removed: ${result.aworkGeDuplicatesRemoved})`,
+    );
   }
 
 

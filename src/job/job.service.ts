@@ -8,6 +8,7 @@ import { title } from 'process';
 import { FilterJobDto } from './dto/filter-job.dto';
 import { JobsGeScraperService, JobData } from '../scrapers/jobs-ge.scraper';
 import { HrGeScraperService } from '../scrapers/hr-ge-scraper.service';
+import { AworkGeScraperService } from '../scrapers/awork-ge.scraper';
 import * as crypto from 'crypto';
 
 export const CITY_MAPPING: { [city: string]: string[] } = {
@@ -44,6 +45,7 @@ export class JobService {
   constructor(
     private readonly scraperService: JobsGeScraperService,
     private readonly hrGeScraperService: HrGeScraperService,
+    private readonly aworkGeScraperService: AworkGeScraperService,
     @InjectRepository(JobEntity) 
     private readonly jobRepo: Repository<JobEntity>
   ) {
@@ -167,7 +169,7 @@ export class JobService {
     if (source && source.trim().length > 0) {
       hasFilter = true;
       const lowerSource = source.trim().toLowerCase();
-      if (lowerSource === 'hr.ge') {
+      if (lowerSource === 'hr.ge' || lowerSource === 'hrge') {
         qb.andWhere(
           new Brackets((qbSource) => {
             qbSource.where('job.link LIKE :hrGe', { hrGe: '%hr.ge%' })
@@ -176,6 +178,10 @@ export class JobService {
                     .orWhere('job.link LIKE :chefsGe', { chefsGe: '%chefs.ge%' });
           })
         );
+      } else if (lowerSource === 'awork' || lowerSource === 'awork.ge' || lowerSource === 'aworkge') {
+        qb.andWhere('job.link LIKE :sourcePattern', { sourcePattern: '%awork%' });
+      } else if (lowerSource === 'jobs.ge' || lowerSource === 'jobsge') {
+        qb.andWhere('job.link LIKE :sourcePattern', { sourcePattern: '%jobs.ge%' });
       } else {
         qb.andWhere('job.link LIKE :sourcePattern', { sourcePattern: `%${lowerSource}%` });
       }
@@ -245,6 +251,13 @@ export class JobService {
       ],
     });
 
+    const totalAworkGe = await this.jobRepo.count({
+      where: [
+        { link: Like('%awork.ge%') },
+        { link: Like('%awork%') },
+      ],
+    });
+
     return {
       jobs,
       counts: {
@@ -252,6 +265,7 @@ export class JobService {
         filteredRecords: hasFilter ? filteredRecords : totalRecords,
         jobsGe: totalJobsGe,
         hrGe: totalHrGe,
+        aworkGe: totalAworkGe,
       },
       page,
       limit,
@@ -477,8 +491,34 @@ export class JobService {
       fetchDescriptions: false,
     });
 
+    // 3. Scrape awork.ge fully
+    this.logger.log('Step 3: Scraping awork.ge fully...');
+    const aworkRes = await this.aworkGeScraperService.scrapeAllJobs();
+    const aworkJobs = aworkRes.jobs || [];
+
     const jobsGeJobs = jobsGeResult?.jobs || [];
-    const combined = [...jobsGeJobs, ...hrGeJobs];
+    
+    // Build set of signatures from jobs.ge and hr.ge to deduplicate awork.ge against them
+    const otherSourceSignatures = new Set<string>();
+    [...jobsGeJobs, ...hrGeJobs].forEach(job => {
+      const v = this.normalizeText(job.vacancy);
+      const c = this.normalizeText(job.company);
+      if (v && c) {
+        otherSourceSignatures.add(`${v}|${c}`);
+      }
+    });
+
+    // Filter out awork.ge jobs that already exist on jobs.ge or hr.ge
+    let aworkDuplicatesCount = 0;
+    const filteredAworkJobs = aworkJobs.filter(job => {
+      const v = this.normalizeText(job.vacancy);
+      const c = this.normalizeText(job.company);
+      const isDuplicate = otherSourceSignatures.has(`${v}|${c}`);
+      if (isDuplicate) aworkDuplicatesCount++;
+      return !isDuplicate;
+    });
+
+    const combined = [...jobsGeJobs, ...hrGeJobs, ...filteredAworkJobs];
 
     const uniqueMap = new Map<string, JobData>();
 
@@ -506,6 +546,10 @@ export class JobService {
     return {
       jobsGeCount: jobsGeJobs.length,
       hrGeCount: hrGeJobs.length,
+      aworkGeOriginalCount: aworkJobs.length,
+      aworkGeDuplicatesRemoved: aworkDuplicatesCount,
+      aworkGeFilteredCount: filteredAworkJobs.length,
+      aworkGeTotalAvailable: aworkRes.totalAvailable,
       totalCombined: combined.length,
       uniqueCount: uniqueJobs.length,
       jobs: uniqueJobs,
@@ -528,8 +572,53 @@ export class JobService {
       fetchDescriptions: false,
     });
 
+    // 3. Scrape awork.ge fully
+    this.logger.log('Step 3: Scraping awork.ge fully...');
+    const aworkRes = await this.aworkGeScraperService.scrapeAllJobs({
+      delayBetweenRequests: 250,
+    });
+    const aworkJobs = aworkRes.jobs || [];
+
     const jobsGeJobs = jobsGeResult?.jobs || [];
-    const combined = [...jobsGeJobs, ...hrGeJobs];
+
+    // Fetch existing DB records so DB listings are also checked for cross-source duplicates
+    const existingDbJobs = await this.jobRepo.find({
+      select: ['vacancy', 'company'],
+    });
+
+    // Deduplicate awork.ge jobs against jobs.ge, hr.ge, and existing DB listings
+    const existingSignatures = new Set<string>();
+
+    existingDbJobs.forEach(job => {
+      const v = this.normalizeText(job.vacancy);
+      const c = this.normalizeText(job.company);
+      if (v && c) {
+        existingSignatures.add(`${v}|${c}`);
+      }
+    });
+
+    [...jobsGeJobs, ...hrGeJobs].forEach(job => {
+      const v = this.normalizeText(job.vacancy);
+      const c = this.normalizeText(job.company);
+      if (v && c) {
+        existingSignatures.add(`${v}|${c}`);
+      }
+    });
+
+    let aworkDuplicatesRemoved = 0;
+    const uniqueAworkJobs = aworkJobs.filter(job => {
+      const v = this.normalizeText(job.vacancy);
+      const c = this.normalizeText(job.company);
+      const isDuplicate = existingSignatures.has(`${v}|${c}`);
+      if (isDuplicate) aworkDuplicatesRemoved++;
+      return !isDuplicate;
+    });
+
+    this.logger.log(
+      `Awork deduplication: out of ${aworkJobs.length} awork jobs, ${aworkDuplicatesRemoved} were present on jobs.ge/hr.ge/DB and removed. ${uniqueAworkJobs.length} unique awork jobs remain.`,
+    );
+
+    const combined = [...jobsGeJobs, ...hrGeJobs, ...uniqueAworkJobs];
 
     const uniqueMap = new Map<string, any>();
 
@@ -572,9 +661,60 @@ export class JobService {
     return {
       jobsGeCount: jobsGeJobs.length,
       hrGeCount: hrGeJobs.length,
+      aworkGeOriginalCount: aworkJobs.length,
+      aworkGeDuplicatesRemoved: aworkDuplicatesRemoved,
+      aworkGeUniqueCount: uniqueAworkJobs.length,
       totalCombined: combined.length,
       uniqueCount: uniqueJobs.length,
       message: 'Successfully scraped, deduplicated, and inserted unique jobs. Description enrichment is running in the background.',
+    };
+  }
+
+  /**
+   * Scrapes awork.ge and checks each vacancy against existing database jobs / jobs.ge / hr.ge,
+   * identifying and returning any duplicate postings found.
+   */
+  async checkAworkDuplicatesAgainstOtherSources() {
+    this.logger.log('Checking awork.ge vacancies against jobs.ge and hr.ge...');
+
+    const aworkRes = await this.aworkGeScraperService.scrapeAllJobs();
+    const aworkJobs = aworkRes.jobs || [];
+
+    // Fetch existing jobs from DB or scrape jobs.ge/hr.ge
+    const existingDbJobs = await this.jobRepo.find({
+      select: ['vacancy', 'company', 'location', 'link'],
+    });
+
+    const dbSignatures = new Set<string>();
+    existingDbJobs.forEach(job => {
+      const v = this.normalizeText(job.vacancy);
+      const c = this.normalizeText(job.company);
+      if (v && c) {
+        dbSignatures.add(`${v}|${c}`);
+      }
+    });
+
+    const duplicates: { aworkJob: JobData; matchedSignature: string }[] = [];
+    const uniqueAworkJobs: JobData[] = [];
+
+    aworkJobs.forEach(job => {
+      const v = this.normalizeText(job.vacancy);
+      const c = this.normalizeText(job.company);
+      const sig = `${v}|${c}`;
+
+      if (dbSignatures.has(sig)) {
+        duplicates.push({ aworkJob: job, matchedSignature: sig });
+      } else {
+        uniqueAworkJobs.push(job);
+      }
+    });
+
+    return {
+      totalAworkJobsScraped: aworkJobs.length,
+      duplicateCountFoundOnOtherSources: duplicates.length,
+      uniqueAworkJobsRemainingCount: uniqueAworkJobs.length,
+      duplicates,
+      uniqueAworkJobs,
     };
   }
 

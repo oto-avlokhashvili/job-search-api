@@ -2,6 +2,7 @@ import { Controller, Get, Query, ParseIntPipe } from '@nestjs/common';
 import { ApiQuery, ApiTags } from '@nestjs/swagger';
 import { HrGeScraperService } from './hr-ge-scraper.service';
 import { JobsGeScraperService, ScraperResult, JobData } from './jobs-ge.scraper';
+import { AworkGeScraperService, AworkScraperResult } from './awork-ge.scraper';
 
 @ApiTags('scraper')
 @Controller('scraper')
@@ -9,6 +10,7 @@ export class ScrapersController {
   constructor(
     private readonly scraperService: HrGeScraperService,
     private readonly jobsGeScraperService: JobsGeScraperService,
+    private readonly aworkGeScraperService: AworkGeScraperService,
   ) {}
 
   @Get('sync-all')
@@ -45,6 +47,22 @@ export class ScrapersController {
     return await this.jobsGeScraperService.scrapeJobs(query || '', startPage || 1, {
       maxPages: maxPages || undefined,
       fetchDescriptions: true,
+    });
+  }
+
+  @Get('sync-awork')
+  @ApiQuery({ name: 'delayBetweenRequests', required: false, type: Number })
+  @ApiQuery({ name: 'maxPages', required: false, type: Number })
+  @ApiQuery({ name: 'pageSize', required: false, type: Number })
+  async syncAworkGe(
+    @Query('delayBetweenRequests', new ParseIntPipe({ optional: true })) delayBetweenRequests?: number,
+    @Query('maxPages', new ParseIntPipe({ optional: true })) maxPages?: number,
+    @Query('pageSize', new ParseIntPipe({ optional: true })) pageSize?: number,
+  ): Promise<AworkScraperResult> {
+    return await this.aworkGeScraperService.scrapeAllJobs({
+      delayBetweenRequests: delayBetweenRequests ?? 250,
+      maxPages: maxPages || undefined,
+      pageSize: pageSize ?? 50,
     });
   }
 }

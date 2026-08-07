@@ -34,7 +34,7 @@ export class EmailService {
     if (fromEmail === 'noreply@jobsearch.ge') {
       fromEmail = 'oto.aldagi10@gmail.com';
     }
-    const fromName = senderName || this.configService.get<string>('BREVO_SENDER_NAME') || 'Job Scout';
+    const fromName = senderName || this.configService.get<string>('BREVO_SENDER_NAME') || 'Job Up';
     try {
       const response = await this.client.transactionalEmails.sendTransacEmail({
         sender: {
@@ -112,7 +112,7 @@ export class EmailService {
         );
 
         // Send Email
-        const subject = `🔔 Job Scout ${jobsToSend.length} ახალი ვაკანსია თქვენთვის!`;
+        const subject = `🔔 Job Up ${jobsToSend.length} ახალი ვაკანსია თქვენთვის!`;
         await this.sendEmail(user.email, subject, htmlBody);
         
         sentEmailsCount++;
@@ -202,7 +202,7 @@ export class EmailService {
           <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
             <!-- Header -->
             <div style="background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); border-radius: 8px 8px 0 0; padding: 30px; text-align: center; color: #ffffff;">
-              <h1 style="margin: 0; font-size: 24px; font-weight: bold; letter-spacing: 0.5px;">🔔 Job Scout</h1>
+              <h1 style="margin: 0; font-size: 24px; font-weight: bold; letter-spacing: 0.5px;">🔔 Job Up</h1>
               <p style="margin: 5px 0 0 0; font-size: 16px; opacity: 0.9;">ყოველდღიური ვაკანსიების დაიჯესტი</p>
             </div>
             
@@ -222,8 +222,8 @@ export class EmailService {
             
             <!-- Footer Info -->
             <div style="text-align: center; margin-top: 25px; color: #9ca3af; font-size: 12px; line-height: 1.5;">
-              <p style="margin: 0 0 5px 0;">თვენ მიიღეთ ეს მეილი, რადგან დარეგისტრირებული ხართ Job Scout პლატფორმაზე.</p>
-              <p style="margin: 0;">&copy; 2026 Job Scout. All rights reserved.</p>
+              <p style="margin: 0 0 5px 0;">თვენ მიიღეთ ეს მეილი, რადგან დარეგისტრირებული ხართ Job Up პლატფორმაზე.</p>
+              <p style="margin: 0;">&copy; 2026 Job Up. All rights reserved.</p>
             </div>
           </div>
         </body>
@@ -232,10 +232,10 @@ export class EmailService {
   }
 
   async sendVerificationEmail(to: string, firstName: string, code: string) {
-    const subject = '🔑 [Job Scout] გთხოვთ დაადასტუროთ თქვენი ელ-ფოსტა';
+    const subject = '🔑 [Job Up] გთხოვთ დაადასტუროთ თქვენი ელ-ფოსტა';
     const html = `
       <div style="max-width: 600px; margin: 0 auto; font-family: sans-serif; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px;">
-        <h2 style="color: #1e3a8a; text-align: center;">კეთილი იყოს თქვენი მობრძანება Job Scout-ზე!</h2>
+        <h2 style="color: #1e3a8a; text-align: center;">კეთილი იყოს თქვენი მობრძანება Job Up-ზე!</h2>
         <p>გამარჯობა ${firstName},</p>
         <p>რეგისტრაციის დასასრულებლად და ყოველდღიური ვაკანსიების მეილით მისაღებად, გთხოვთ დაადასტუროთ თქვენი ელ-ფოსტა.</p>
         <div style="background-color: #f3f4f6; padding: 15px; text-align: center; border-radius: 6px; margin: 20px 0;">
