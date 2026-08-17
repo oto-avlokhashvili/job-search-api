@@ -143,30 +143,52 @@ STEP 4 — Cross-check: if STEP 1 and STEP 2 conflict, trust STEP 2 (years) over
 - locationPreference: extract city if mentioned, otherwise "Not specified"
 - careerDirection: infer the direction they are heading, not just current role
 
-## SEARCH QUERIES — 8–14 tokens total used to match this candidate to job vacancies:
+## SEARCH QUERIES — highly specific technology matches only (NO seniority prefixes, NO generic domain names):
 
-### What QUALIFIES as a search query token (pick from these categories only):
-  1. Role nouns — the job titles a recruiter would search for
-     (e.g. "developer", "engineer", "analyst", "designer", "architect")
-  2. Primary technology / framework / platform the candidate is strongly identified with
-     (e.g. "angular", "react", "django", — only the 2–3 most defining ones, not every skill)
-  3. Domain words — the industry or product area they work in
-     (e.g. "frontend", "backend", "mobile", "devops", "data")
+Generate precise search queries combining only the primary core technology and the role.
 
-### What does NOT qualify:
-  - Generic tools everyone uses: git, agile, scrum, jira, docker, rest, api, sql, html, css
-  - Acronyms and patterns (spa, mvc, oop, ci/cd)
-  - Any skill already in primarySkills or secondarySkills (no duplication)
-  - Seniority words: junior, mid, senior, lead
-  - City names, company names, certification names
+### STRICT RULES:
+- NEVER include seniority levels (e.g., Do NOT use "Senior", "Mid", "Junior", "Lead", "უფროსი", "უმცროსი").
+- Do NOT output generic domains or domain-roles (e.g., avoid "Frontend", "Backend", "Full Stack", "Frontend Developer", "ბექენდ დეველოპერი").
+- Include both standalone core tech terms and compound [Tech] + [Role] phrases.
+- Provide both English terms and their standard Georgian job portal equivalents.
+- Do NOT output standalone generic role nouns (e.g., avoid isolated "developer", "ინჟინერი", "დეველოპერი").
+- Keep technology names in English when combined with Georgian nouns (e.g., "Angular დეველოპერი", not "ანგულარ დეველოპერი").
 
-### Formatting rules:
-  - 1 word per token (no spaces, no multi-word phrases)
-  - Every token must appear TWICE: once in English, once in Georgian translation
-    (e.g. "developer" AND "დეველოპერი" as two separate entries)
-  - For tokens with a hyphenated variant, include BOTH forms as separate tokens:
-    "frontend" → also add "front-end" (each still needs its Georgian pair)
-  - No duplicates
+---
+
+### QUERY EXAMPLES BY SPECIALIZATION:
+
+#### Example 1: Angular Specialist
+[
+  "Angular",
+  "Angular Developer",
+  "Angular დეველოპერი",
+  "Front-end",
+  "Frontend"
+]
+
+#### Example 2: Python / Django Specialist
+[
+  "Python",
+  "Python Developer",
+  "Python დეველოპერი",
+  "Django",
+  "Back-end",
+  "Backend"
+]
+
+
+#### Example 3: QA / Automation Engineer
+[
+  "QA",
+  "QA Engineer",
+  "QA ინჟინერი",
+  "Automation QA",
+  "Cypress",
+  "Cypress QA",
+  "Selenium"
+]
 
 ## SALARY ESTIMATES — infer realistic market rates for this candidate:
 
@@ -182,9 +204,8 @@ STEP 4 — Cross-check: if STEP 1 and STEP 2 conflict, trust STEP 2 (years) over
     (convert from USD using approximate current rate: 1 USD ≈ 2.7 GEL)
 
 ### Rules:
-  - Return a formatted string: "MIN-MAX GEL" (e.g. "0000-0000 GEL")
-  - Ranges should reflect the realistic hiring band for this role + seniority,
-    not the absolute floor or ceiling of the market
+  - Return a formatted string: "MIN-MAX GEL" (e.g. "3500-5000 GEL")
+  - Ranges should reflect the realistic hiring band for this role + seniority, not the absolute floor or ceiling of the market
   - Round to the nearest 100
   - If the role is niche or the stack is high-demand, skew the range upward slightly
   - Do NOT return null or omit any market — estimate even if uncertain
@@ -200,9 +221,9 @@ Return ONLY valid raw JSON, no markdown, no backticks:
   "careerDirection": "string",
   "searchQueries": ["string"],
   "salaryEstimates": {
-  "georgia": "string",
-  "remote": "string"
-}
+    "georgia": "string",
+    "remote": "string"
+  }
 }
 `.trim();
 

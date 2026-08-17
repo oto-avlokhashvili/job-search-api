@@ -4,7 +4,6 @@ import { UpdateJobDto } from './dto/update-job.dto';
 import { Brackets, ILike, In, LessThan, Like, Repository } from 'typeorm';
 import { JobEntity } from 'src/Entities/job.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { title } from 'process';
 import { FilterJobDto } from './dto/filter-job.dto';
 import { JobsGeScraperService, JobData } from '../scrapers/jobs-ge.scraper';
 import { HrGeScraperService } from '../scrapers/hr-ge-scraper.service';
@@ -127,16 +126,21 @@ export class JobService {
       hasFilter = true;
 
       const trimmedQuery = query.trim().toLowerCase();
-      const terms = trimmedQuery.split(/\s+/);
+      const terms = trimmedQuery.split(/\s+/).filter((t) => t.length > 0);
 
       qb.andWhere(
         new Brackets((qb2) => {
           terms.forEach((term, i) => {
-            const param = `query${i}`;
+            const param = `searchTerm${i}`;
+            qb.setParameter(param, `%${term}%`);
             if (i === 0) {
-              qb2.where(`LOWER(job.vacancy) LIKE :${param}`, { [param]: `%${term}%` });
+              qb2.where(
+                `(LOWER(job.vacancy) LIKE :${param} OR LOWER(job.description) LIKE :${param})`
+              );
             } else {
-              qb2.orWhere(`LOWER(job.vacancy) LIKE :${param}`, { [param]: `%${term}%` });
+              qb2.orWhere(
+                `(LOWER(job.vacancy) LIKE :${param} OR LOWER(job.description) LIKE :${param})`
+              );
             }
           });
         })
@@ -144,20 +148,21 @@ export class JobService {
 
       const scoreClauses: string[] = [];
 
-      // Whole phrase match (only if terms.length > 1)
+      // Whole phrase matches (give huge boost for exact title phrase, moderate boost for exact description phrase)
       if (terms.length > 1) {
-        const wholePhraseWeight = Math.pow(10, terms.length);
         qb.setParameter('wholePhrase', `%${trimmedQuery}%`);
         scoreClauses.push(
-          `CASE WHEN LOWER(job.vacancy) LIKE :wholePhrase THEN ${wholePhraseWeight} ELSE 0 END`
+          `CASE WHEN LOWER(job.vacancy) LIKE :wholePhrase THEN 50 ELSE 0 END`,
+          `CASE WHEN LOWER(job.description) LIKE :wholePhrase THEN 10 ELSE 0 END`
         );
       }
 
-      // Individual term matches
+      // Individual term matches: Title match = 10 pts, Description match = 1 pt
       terms.forEach((term, i) => {
-        const termWeight = Math.pow(10, terms.length - 1 - i);
+        const param = `searchTerm${i}`;
         scoreClauses.push(
-          `CASE WHEN LOWER(job.vacancy) LIKE :query${i} THEN ${termWeight} ELSE 0 END`
+          `(CASE WHEN LOWER(job.vacancy) LIKE :${param} THEN 10 ELSE 0 END +
+            CASE WHEN LOWER(job.description) LIKE :${param} THEN 1 ELSE 0 END)`
         );
       });
 
@@ -283,8 +288,8 @@ export class JobService {
 
     const qb = this.jobRepo.createQueryBuilder('job');
 
-    // Title match = 3 points, description match = 1 point
-    const buildClauses = (tokens: string[], prefix: string, titleWeight = 3, descWeight = 1) =>
+    // Title match = 10 points, description match = 1 point
+    const buildClauses = (tokens: string[], prefix: string, titleWeight = 10, descWeight = 1) =>
       tokens.map((q, i) => {
         const p = `${prefix}${i}`;
         qb.setParameter(p, `%${q.toLowerCase()}%`);
@@ -302,10 +307,9 @@ export class JobService {
       ? `(${allClauses.join(' + ')})`
       : '0';
 
-    // Minimum score of 3 = at least one title match, filters out weak description-only hits
-    qb.where(`${totalScore} >= 3`)
+    qb.where(`${totalScore} >= 1`)
       .orderBy(totalScore, 'DESC')
-      .limit(60); // send fewer, better jobs to Gemini
+      .limit(60); // send top matches
 
     return qb.getMany();
   }
