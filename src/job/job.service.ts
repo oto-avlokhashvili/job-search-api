@@ -8,6 +8,7 @@ import { FilterJobDto } from './dto/filter-job.dto';
 import { JobsGeScraperService, JobData } from '../scrapers/jobs-ge.scraper';
 import { HrGeScraperService } from '../scrapers/hr-ge-scraper.service';
 import { AworkGeScraperService } from '../scrapers/awork-ge.scraper';
+import { MyjobsGeScraperService } from '../scrapers/myjobs-ge.scraper';
 import * as crypto from 'crypto';
 
 export const CITY_MAPPING: { [city: string]: string[] } = {
@@ -45,6 +46,7 @@ export class JobService {
     private readonly scraperService: JobsGeScraperService,
     private readonly hrGeScraperService: HrGeScraperService,
     private readonly aworkGeScraperService: AworkGeScraperService,
+    private readonly myjobsGeScraperService: MyjobsGeScraperService,
     @InjectRepository(JobEntity) 
     private readonly jobRepo: Repository<JobEntity>
   ) {
@@ -187,6 +189,8 @@ export class JobService {
         qb.andWhere('job.link LIKE :sourcePattern', { sourcePattern: '%awork%' });
       } else if (lowerSource === 'jobs.ge' || lowerSource === 'jobsge') {
         qb.andWhere('job.link LIKE :sourcePattern', { sourcePattern: '%jobs.ge%' });
+      } else if (lowerSource === 'myjobs' || lowerSource === 'myjobs.ge' || lowerSource === 'myjobsge') {
+        qb.andWhere('job.link LIKE :sourcePattern', { sourcePattern: '%myjobs%' });
       } else {
         qb.andWhere('job.link LIKE :sourcePattern', { sourcePattern: `%${lowerSource}%` });
       }
@@ -263,6 +267,13 @@ export class JobService {
       ],
     });
 
+    const totalMyjobsGe = await this.jobRepo.count({
+      where: [
+        { link: Like('%myjobs.ge%') },
+        { link: Like('%myjobs%') },
+      ],
+    });
+
     return {
       jobs,
       counts: {
@@ -271,6 +282,7 @@ export class JobService {
         jobsGe: totalJobsGe,
         hrGe: totalHrGe,
         aworkGe: totalAworkGe,
+        myjobsGe: totalMyjobsGe,
       },
       page,
       limit,
@@ -561,7 +573,7 @@ export class JobService {
   }
 
   async scrapeAndSaveAll() {
-    this.logger.log('Starting fast sequential scraping without descriptions and database save...');
+    this.logger.log('Starting full multi-source scraping (jobs.ge + hr.ge + awork.ge + myjobs.ge) and database save...');
 
     // 1. Scrape HR.ge fully (no descriptions)
     this.logger.log('Step 1: Scraping HR.ge fully...');
@@ -575,6 +587,7 @@ export class JobService {
     const jobsGeResult = await this.scraperService.scrapeJobs('', 1, {
       fetchDescriptions: false,
     });
+    const jobsGeJobs = jobsGeResult?.jobs || [];
 
     // 3. Scrape awork.ge fully
     this.logger.log('Step 3: Scraping awork.ge fully...');
@@ -583,14 +596,19 @@ export class JobService {
     });
     const aworkJobs = aworkRes.jobs || [];
 
-    const jobsGeJobs = jobsGeResult?.jobs || [];
+    // 4. Scrape myjobs.ge fully
+    this.logger.log('Step 4: Scraping myjobs.ge fully...');
+    const myjobsRes = await this.myjobsGeScraperService.scrapeAllJobs({
+      delayBetweenRequests: 250,
+    });
+    const myjobsJobs = myjobsRes.jobs || [];
 
     // Fetch existing DB records so DB listings are also checked for cross-source duplicates
     const existingDbJobs = await this.jobRepo.find({
       select: ['vacancy', 'company'],
     });
 
-    // Deduplicate awork.ge jobs against jobs.ge, hr.ge, and existing DB listings
+    // Deduplicate awork.ge and myjobs.ge jobs against jobs.ge, hr.ge, and existing DB listings
     const existingSignatures = new Set<string>();
 
     existingDbJobs.forEach(job => {
@@ -618,11 +636,33 @@ export class JobService {
       return !isDuplicate;
     });
 
+    // Add unique awork signatures into set before filtering myjobs
+    uniqueAworkJobs.forEach(job => {
+      const v = this.normalizeText(job.vacancy);
+      const c = this.normalizeText(job.company);
+      if (v && c) {
+        existingSignatures.add(`${v}|${c}`);
+      }
+    });
+
+    let myjobsDuplicatesRemoved = 0;
+    const uniqueMyjobsJobs = myjobsJobs.filter(job => {
+      const v = this.normalizeText(job.vacancy);
+      const c = this.normalizeText(job.company);
+      const isDuplicate = existingSignatures.has(`${v}|${c}`);
+      if (isDuplicate) myjobsDuplicatesRemoved++;
+      return !isDuplicate;
+    });
+
     this.logger.log(
-      `Awork deduplication: out of ${aworkJobs.length} awork jobs, ${aworkDuplicatesRemoved} were present on jobs.ge/hr.ge/DB and removed. ${uniqueAworkJobs.length} unique awork jobs remain.`,
+      `Multi-source deduplication:
+      - Jobs.ge: ${jobsGeJobs.length}
+      - HR.ge: ${hrGeJobs.length}
+      - Awork: ${aworkJobs.length} scraped (${aworkDuplicatesRemoved} duplicates removed, ${uniqueAworkJobs.length} unique)
+      - MyJobs: ${myjobsJobs.length} scraped (${myjobsDuplicatesRemoved} duplicates removed, ${uniqueMyjobsJobs.length} unique)`,
     );
 
-    const combined = [...jobsGeJobs, ...hrGeJobs, ...uniqueAworkJobs];
+    const combined = [...jobsGeJobs, ...hrGeJobs, ...uniqueAworkJobs, ...uniqueMyjobsJobs];
 
     const uniqueMap = new Map<string, any>();
 
@@ -668,9 +708,14 @@ export class JobService {
       aworkGeOriginalCount: aworkJobs.length,
       aworkGeDuplicatesRemoved: aworkDuplicatesRemoved,
       aworkGeUniqueCount: uniqueAworkJobs.length,
+      myjobsGeOriginalCount: myjobsJobs.length,
+      myjobsGeDuplicatesRemoved: myjobsDuplicatesRemoved,
+      myjobsGeUniqueCount: uniqueMyjobsJobs.length,
       totalCombined: combined.length,
       uniqueCount: uniqueJobs.length,
-      message: 'Successfully scraped, deduplicated, and inserted unique jobs. Description enrichment is running in the background.',
+      uniqueInsertedCount: uniqueJobs.length,
+      message: 'Successfully scraped from all 4 sources (jobs.ge, hr.ge, awork.ge, myjobs.ge), deduplicated, and inserted unique jobs into database. Description enrichment is running in the background.',
+      jobs: uniqueJobs,
     };
   }
 
@@ -725,10 +770,14 @@ export class JobService {
   async enrichMissingDescriptionsInBackground() {
     this.logger.log('Starting background description enrichment...');
     
-    // Find all jobs with empty/null descriptions
+    // Find all jobs with empty/null descriptions or placeholder links
     const jobsToEnrich = await this.jobRepo
       .createQueryBuilder('job')
-      .where('job.description IS NULL OR job.description = :empty', { empty: '' })
+      .where('job.description IS NULL OR job.description = :empty OR job.description LIKE :shortDesc OR job.description LIKE :srLink', { 
+        empty: '',
+        shortDesc: '%დეტალური ინფორმაციისთვის გადადით ბმულზე%',
+        srLink: '%smartrecruiters.com%'
+      })
       .getMany();
     
     this.logger.log(`Found ${jobsToEnrich.length} jobs requiring description enrichment.`);
@@ -756,9 +805,17 @@ export class JobService {
             }
           } else if (job.link.includes('jobs.ge')) {
             desc = await this.scraperService.fetchDescription(job.link);
+          } else if (job.link.includes('myjobs.ge')) {
+            const parts = job.link.split('/');
+            const id = parseInt(parts[parts.length - 1], 10);
+            if (!isNaN(id)) {
+              desc = await this.myjobsGeScraperService.fetchDescription(id);
+            }
+          } else if (job.description && job.description.includes('smartrecruiters.com')) {
+            desc = await this.myjobsGeScraperService.fetchSmartRecruitersDescription(job.description);
           }
 
-          if (desc && desc.trim().length > 0) {
+          if (desc && desc.trim().length > 0 && desc.trim() !== job.description) {
             job.description = desc.trim();
             await this.jobRepo.save(job);
             const index = i + j + 1;

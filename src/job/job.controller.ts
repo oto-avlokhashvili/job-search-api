@@ -1,26 +1,34 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ParseIntPipe, BadRequestException, UseGuards, Logger } from '@nestjs/common';
-import { ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { JobService } from './job.service';
 import { CreateJobDto } from './dto/create-job.dto';
 import { UpdateJobDto } from './dto/update-job.dto';
 import { FilterJobDto } from './dto/filter-job.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 
+@ApiTags('job')
 @Controller('job')
 export class JobController {
   private readonly logger = new Logger(JobController.name);
 
   constructor(private readonly jobService: JobService) { }
 
+  @ApiOperation({ summary: 'Scrape all sources (jobs.ge, hr.ge, awork.ge, myjobs.ge), deduplicate, and upload to DB' })
+  @Post('scrape-all')
+  async scrapeAllPost() {
+    return await this.jobService.scrapeAndSaveAll();
+  }
+
+  @ApiOperation({ summary: 'Scrape all sources (jobs.ge, hr.ge, awork.ge, myjobs.ge), deduplicate, and upload to DB' })
+  @Get('scrape-all')
+  async scrapeAllGet() {
+    return await this.jobService.scrapeAndSaveAll();
+  }
+
   @Post('scrapper')
   async scrapper(): Promise<boolean> {
     await this.jobService.scrapper();
     return true;
-  }
-
-  @Get('scrape-all')
-  async scrapePreview() {
-    return await this.jobService.scrapeAndSaveAll();
   }
 
 

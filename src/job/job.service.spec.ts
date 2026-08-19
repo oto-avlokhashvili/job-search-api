@@ -5,6 +5,7 @@ import { JobEntity } from 'src/Entities/job.entity';
 import { JobsGeScraperService } from '../scrapers/jobs-ge.scraper';
 import { HrGeScraperService } from '../scrapers/hr-ge-scraper.service';
 import { AworkGeScraperService } from '../scrapers/awork-ge.scraper';
+import { MyjobsGeScraperService } from '../scrapers/myjobs-ge.scraper';
 
 describe('JobService', () => {
   let service: JobService;
@@ -53,6 +54,10 @@ describe('JobService', () => {
         },
         {
           provide: AworkGeScraperService,
+          useValue: {},
+        },
+        {
+          provide: MyjobsGeScraperService,
           useValue: {},
         },
       ],

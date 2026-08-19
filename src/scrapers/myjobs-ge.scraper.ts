@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import * as cheerio from 'cheerio';
 import { JobData } from './jobs-ge.scraper';
 
 export interface MyjobsScraperOptions {
@@ -76,7 +77,7 @@ export class MyjobsGeScraperService {
           break;
         }
 
-        items.forEach((item: any) => {
+        for (const item of items) {
           const vacancy = item.title || item.name || 'N/A';
           const company =
             item.company?.brand_name ||
@@ -99,7 +100,14 @@ export class MyjobsGeScraperService {
           const rawDeadline = item.deadline || item.end_date || item.expired_at || '';
 
           const rawDescription = item.description || '';
-          const description = this.cleanHtmlDescription(rawDescription);
+          let description = '';
+
+          if (rawDescription.includes('jobs.smartrecruiters.com')) {
+            const srDesc = await this.fetchSmartRecruitersDescription(rawDescription);
+            description = srDesc || this.cleanHtmlDescription(rawDescription);
+          } else {
+            description = this.cleanHtmlDescription(rawDescription);
+          }
 
           const publishDate = this.formatDate(rawPublishDate);
           let deadline = this.formatDate(rawDeadline);
@@ -117,7 +125,7 @@ export class MyjobsGeScraperService {
 
           const id = item.id;
           if (id) {
-            const link = `https://myjobs.ge/ka/vacancies/${id}`;
+            const link = `https://myjobs.ge/ka/vacancy/${id}`;
             allJobs.push({
               vacancy: vacancy.trim(),
               location: location.trim(),
@@ -129,7 +137,7 @@ export class MyjobsGeScraperService {
               description,
             });
           }
-        });
+        }
 
         this.logger.log(
           `Page ${currentPage} processed. Scraped so far: ${allJobs.length} / ${totalAvailable || 'unknown'} total jobs`,
@@ -176,6 +184,142 @@ export class MyjobsGeScraperService {
     };
   }
 
+  /**
+   * Fetches the single vacancy description from MyJobs.ge (including SmartRecruiters integration if applicable).
+   */
+  public async fetchDescription(id: number): Promise<string> {
+    try {
+      const url = `https://api.myjobs.ge/api/ka/public/vacancies/${id}`;
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json, text/plain, */*',
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Origin': 'https://myjobs.ge',
+          'Referer': 'https://myjobs.ge/',
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (!response.ok) return '';
+      const payload = await response.json();
+      const rawDescription = payload?.data?.description || '';
+
+      if (rawDescription.includes('jobs.smartrecruiters.com')) {
+        const srDesc = await this.fetchSmartRecruitersDescription(rawDescription);
+        if (srDesc) return srDesc;
+      }
+
+      return this.cleanHtmlDescription(rawDescription);
+    } catch (error: any) {
+      this.logger.warn(`Failed to fetch description for MyJobs ID ${id}: ${error.message}`);
+      return '';
+    }
+  }
+
+  /**
+   * Fetches full job description from SmartRecruiters public API or HTML page.
+   */
+  public async fetchSmartRecruitersDescription(rawUrlOrText: string): Promise<string> {
+    if (!rawUrlOrText) return '';
+
+    const match = rawUrlOrText.match(/jobs\.smartrecruiters\.com\/([^\/\?\"\'\s<]+)\/(\d+)/i);
+    if (!match) return '';
+
+    const company = match[1];
+    const postingId = match[2];
+
+    // Method 1: Try public SmartRecruiters API
+    try {
+      const apiUrl = `https://api.smartrecruiters.com/v1/companies/${company}/postings/${postingId}`;
+      const response = await fetch(apiUrl, {
+        headers: {
+          'Accept': 'application/json, text/plain, */*',
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36',
+        },
+        signal: AbortSignal.timeout(8000),
+      });
+
+      if (response.ok) {
+        const payload = await response.json();
+        const sections = payload?.jobAd?.sections || {};
+        const fullDescParts: string[] = [];
+
+        const sectionKeys: { key: string; defaultTitle: string }[] = [
+          { key: 'companyDescription', defaultTitle: 'კომპანიის აღწერა' },
+          { key: 'jobDescription', defaultTitle: 'ვაკანსიის აღწერა' },
+          { key: 'qualifications', defaultTitle: 'კვალიფიკაცია' },
+          { key: 'additionalInformation', defaultTitle: 'დამატებითი ინფორმაცია' },
+        ];
+
+        for (const { key, defaultTitle } of sectionKeys) {
+          const sec = sections[key];
+          if (sec && sec.text) {
+            const cleanedText = this.cleanHtmlDescription(sec.text);
+            if (cleanedText) {
+              const title = sec.title?.trim() || defaultTitle;
+              fullDescParts.push(`${title}:\n${cleanedText}`);
+            }
+          }
+        }
+
+        if (fullDescParts.length > 0) {
+          return fullDescParts.join('\n\n').trim();
+        }
+      }
+    } catch (apiError: any) {
+      this.logger.debug(
+        `SmartRecruiters API call failed for ${company}/${postingId}: ${apiError.message}`,
+      );
+    }
+
+    // Method 2: Fallback to scraping the public HTML page
+    try {
+      const pageUrl = `https://jobs.smartrecruiters.com/${company}/${postingId}`;
+      const pageResponse = await fetch(pageUrl, {
+        headers: {
+          'Accept': 'text/html,application/xhtml+xml',
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36',
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (pageResponse.ok) {
+        const html = await pageResponse.text();
+        const $ = cheerio.load(html);
+        const sections: string[] = [];
+
+        $('.job-sections .job-section').each((_, el) => {
+          const title = $(el).find('h3, h2').first().text().trim();
+          const contentEl = $(el).find('.job-section-content').length
+            ? $(el).find('.job-section-content')
+            : $(el);
+
+          contentEl.find('br').replaceWith('\n');
+          contentEl.find('p, div, li, h1, h2, h3, h4, h5, h6, tr').after('\n');
+          const content = contentEl.text().replace(/\n{3,}/g, '\n\n').trim();
+
+          if (content) {
+            sections.push(title ? `${title}:\n${content}` : content);
+          }
+        });
+
+        if (sections.length > 0) {
+          return sections.join('\n\n').trim();
+        }
+      }
+    } catch (htmlError: any) {
+      this.logger.warn(
+        `SmartRecruiters HTML scrape failed for ${company}/${postingId}: ${htmlError.message}`,
+      );
+    }
+
+    return '';
+  }
+
   private formatDate(dateStr: string): string {
     if (!dateStr || dateStr.trim() === '') return '';
     try {
@@ -202,6 +346,7 @@ export class MyjobsGeScraperService {
 
   /**
    * Cleans raw HTML text from vacancy descriptions:
+   * - Preserves anchor URLs as text (e.g. "ბმულზე (https://...)")
    * - Unescapes multi-encoded HTML entities repeatedly
    * - Decodes numeric and hex HTML entities
    * - Decodes standard named entities
@@ -212,6 +357,16 @@ export class MyjobsGeScraperService {
     if (!html || typeof html !== 'string') return '';
 
     let text = html;
+
+    // Convert anchor tags with href before stripping tags so link target is preserved
+    text = text.replace(/<a\s+[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_, href, anchorText) => {
+      const cleanAnchor = anchorText.replace(/<[^>]+>/g, '').trim();
+      const cleanHref = href.trim();
+      if (!cleanAnchor || cleanAnchor === 'ბმულზე' || cleanAnchor.toLowerCase() === 'link') {
+        return cleanHref ? `ბმულზე: ${cleanHref}` : cleanAnchor;
+      }
+      return `${cleanAnchor} (${cleanHref})`;
+    });
 
     for (let pass = 0; pass < 3; pass++) {
       const prev = text;

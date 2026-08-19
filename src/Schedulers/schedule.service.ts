@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression, Interval } from '@nestjs/schedule';
-import { JobsGeScraperService } from '../scrapers/jobs-ge.scraper';
 import { TelegramService } from 'src/telegram/telegram.service';
 import { JobService } from 'src/job/job.service';
 import { EmailService } from '../email/email.service';
@@ -11,16 +10,15 @@ export class ScheduleService {
 
   constructor(
     private readonly telegramService: TelegramService,
-    private readonly scraperService: JobsGeScraperService,
     private readonly jobsService: JobService,
     private readonly emailService: EmailService,
   ) { }
   @Cron('10 23 * * *')
   async scrappper(): Promise<void> {
-    this.logger.log('🚀 Starting scheduled full scrape (jobs.ge + hr.ge + awork.ge) with deduplication...');
+    this.logger.log('🚀 Starting scheduled full scrape (jobs.ge + hr.ge + awork.ge + myjobs.ge) with deduplication...');
     const result = await this.jobsService.scrapeAndSaveAll();
     this.logger.log(
-      `✅ Scheduled scrape completed: ${result.uniqueCount} total unique jobs saved (awork duplicates removed: ${result.aworkGeDuplicatesRemoved})`,
+      `✅ Scheduled scrape completed: ${result.uniqueInsertedCount} total unique jobs saved into DB`,
     );
   }
 
