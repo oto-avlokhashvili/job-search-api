@@ -39,7 +39,7 @@ export class User {
     @Column({ default: false })
     isEmailVerified: boolean;
 
-    @Column({ default: true })
+    @Column({ default: false })
     receiveMessages: boolean;
 
     @Column({ type: 'varchar', nullable: true })

@@ -137,11 +137,11 @@ export class JobService {
             qb.setParameter(param, `%${term}%`);
             if (i === 0) {
               qb2.where(
-                `(LOWER(job.vacancy) LIKE :${param} OR LOWER(job.description) LIKE :${param})`
+                `(LOWER(job.vacancy) LIKE :${param} OR LOWER(job.company) LIKE :${param} OR LOWER(job.description) LIKE :${param})`
               );
             } else {
               qb2.orWhere(
-                `(LOWER(job.vacancy) LIKE :${param} OR LOWER(job.description) LIKE :${param})`
+                `(LOWER(job.vacancy) LIKE :${param} OR LOWER(job.company) LIKE :${param} OR LOWER(job.description) LIKE :${param})`
               );
             }
           });
@@ -150,20 +150,22 @@ export class JobService {
 
       const scoreClauses: string[] = [];
 
-      // Whole phrase matches (give huge boost for exact title phrase, moderate boost for exact description phrase)
+      // Whole phrase matches (give huge boost for exact title/company phrase, moderate boost for exact description phrase)
       if (terms.length > 1) {
         qb.setParameter('wholePhrase', `%${trimmedQuery}%`);
         scoreClauses.push(
           `CASE WHEN LOWER(job.vacancy) LIKE :wholePhrase THEN 50 ELSE 0 END`,
+          `CASE WHEN LOWER(job.company) LIKE :wholePhrase THEN 50 ELSE 0 END`,
           `CASE WHEN LOWER(job.description) LIKE :wholePhrase THEN 10 ELSE 0 END`
         );
       }
 
-      // Individual term matches: Title match = 10 pts, Description match = 1 pt
+      // Individual term matches: Title match = 10 pts, Company match = 10 pts, Description match = 1 pt
       terms.forEach((term, i) => {
         const param = `searchTerm${i}`;
         scoreClauses.push(
           `(CASE WHEN LOWER(job.vacancy) LIKE :${param} THEN 10 ELSE 0 END +
+            CASE WHEN LOWER(job.company) LIKE :${param} THEN 10 ELSE 0 END +
             CASE WHEN LOWER(job.description) LIKE :${param} THEN 1 ELSE 0 END)`
         );
       });
@@ -300,13 +302,14 @@ export class JobService {
 
     const qb = this.jobRepo.createQueryBuilder('job');
 
-    // Title match = 10 points, description match = 1 point
-    const buildClauses = (tokens: string[], prefix: string, titleWeight = 10, descWeight = 1) =>
+    // Title match = 10 points, company match = 10 points, description match = 1 point
+    const buildClauses = (tokens: string[], prefix: string, titleWeight = 10, compWeight = 10, descWeight = 1) =>
       tokens.map((q, i) => {
         const p = `${prefix}${i}`;
         qb.setParameter(p, `%${q.toLowerCase()}%`);
         return `(
         CASE WHEN LOWER(job.vacancy) LIKE :${p} THEN ${titleWeight} ELSE 0 END +
+        CASE WHEN LOWER(job.company) LIKE :${p} THEN ${compWeight} ELSE 0 END +
         CASE WHEN LOWER(job.description) LIKE :${p} THEN ${descWeight} ELSE 0 END
       )`;
       });

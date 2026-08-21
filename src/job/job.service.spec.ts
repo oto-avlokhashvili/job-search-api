@@ -86,9 +86,15 @@ describe('JobService', () => {
 
       // Verify ordering
       expect(queryBuilderMock.orderBy).toHaveBeenCalledWith(
-        '(CASE WHEN LOWER(job.vacancy) LIKE :wholePhrase THEN 100 ELSE 0 END + ' +
-        'CASE WHEN LOWER(job.vacancy) LIKE :query0 THEN 10 ELSE 0 END + ' +
-        'CASE WHEN LOWER(job.vacancy) LIKE :query1 THEN 1 ELSE 0 END)',
+        '(CASE WHEN LOWER(job.vacancy) LIKE :wholePhrase THEN 50 ELSE 0 END + ' +
+        'CASE WHEN LOWER(job.company) LIKE :wholePhrase THEN 50 ELSE 0 END + ' +
+        'CASE WHEN LOWER(job.description) LIKE :wholePhrase THEN 10 ELSE 0 END + ' +
+        '(CASE WHEN LOWER(job.vacancy) LIKE :searchTerm0 THEN 10 ELSE 0 END +\n            ' +
+        'CASE WHEN LOWER(job.company) LIKE :searchTerm0 THEN 10 ELSE 0 END +\n            ' +
+        'CASE WHEN LOWER(job.description) LIKE :searchTerm0 THEN 1 ELSE 0 END) + ' +
+        '(CASE WHEN LOWER(job.vacancy) LIKE :searchTerm1 THEN 10 ELSE 0 END +\n            ' +
+        'CASE WHEN LOWER(job.company) LIKE :searchTerm1 THEN 10 ELSE 0 END +\n            ' +
+        'CASE WHEN LOWER(job.description) LIKE :searchTerm1 THEN 1 ELSE 0 END))',
         'DESC'
       );
       expect(queryBuilderMock.addOrderBy).toHaveBeenCalledWith('job.id', 'DESC');
@@ -102,9 +108,10 @@ describe('JobService', () => {
       });
 
       // Since N=1, terms.length <= 1, so wholePhrase weight ordering won't be included.
-      // It should only have CASE WHEN for the single term query0.
       expect(queryBuilderMock.orderBy).toHaveBeenCalledWith(
-        '(CASE WHEN LOWER(job.vacancy) LIKE :query0 THEN 1 ELSE 0 END)',
+        '((CASE WHEN LOWER(job.vacancy) LIKE :searchTerm0 THEN 10 ELSE 0 END +\n            ' +
+        'CASE WHEN LOWER(job.company) LIKE :searchTerm0 THEN 10 ELSE 0 END +\n            ' +
+        'CASE WHEN LOWER(job.description) LIKE :searchTerm0 THEN 1 ELSE 0 END))',
         'DESC'
       );
       expect(queryBuilderMock.addOrderBy).toHaveBeenCalledWith('job.id', 'DESC');
