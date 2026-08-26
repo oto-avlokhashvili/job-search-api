@@ -24,6 +24,7 @@ describe('JobService', () => {
       addOrderBy: jest.fn().mockReturnThis(),
       take: jest.fn().mockReturnThis(),
       skip: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
       getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
       getMany: jest.fn().mockResolvedValue([]),
       getRawMany: jest.fn().mockResolvedValue([]),
@@ -115,6 +116,46 @@ describe('JobService', () => {
         'DESC'
       );
       expect(queryBuilderMock.addOrderBy).toHaveBeenCalledWith('job.id', 'DESC');
+    });
+  });
+
+  describe('findAllByQuery', () => {
+    it('should return empty array when given empty query', async () => {
+      const result = await service.findAllByQuery([]);
+      expect(result).toEqual([]);
+      expect(jobRepoMock.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it('should build query and relevancy ordering when searching with array of terms and phrases', async () => {
+      const mockJobs = [{ id: 1, vacancy: 'Angular Developer', company: 'Google', description: 'Web development' }];
+      queryBuilderMock.getMany.mockResolvedValue(mockJobs);
+
+      const result = await service.findAllByQuery(['Angular Developer', 'Frontend']);
+
+      expect(jobRepoMock.createQueryBuilder).toHaveBeenCalledWith('job');
+      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('wholePhrase0', '%angular developer%');
+      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('searchTerm0', '%angular%');
+      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('searchTerm1', '%developer%');
+      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('searchTerm2', '%frontend%');
+
+      expect(queryBuilderMock.orderBy).toHaveBeenCalledWith(
+        '(CASE WHEN LOWER(job.vacancy) LIKE :wholePhrase0 THEN 50 ELSE 0 END + ' +
+        'CASE WHEN LOWER(job.company) LIKE :wholePhrase0 THEN 50 ELSE 0 END + ' +
+        'CASE WHEN LOWER(job.description) LIKE :wholePhrase0 THEN 10 ELSE 0 END + ' +
+        '(CASE WHEN LOWER(job.vacancy) LIKE :searchTerm0 THEN 10 ELSE 0 END +\n          ' +
+        'CASE WHEN LOWER(job.company) LIKE :searchTerm0 THEN 10 ELSE 0 END +\n          ' +
+        'CASE WHEN LOWER(job.description) LIKE :searchTerm0 THEN 1 ELSE 0 END) + ' +
+        '(CASE WHEN LOWER(job.vacancy) LIKE :searchTerm1 THEN 10 ELSE 0 END +\n          ' +
+        'CASE WHEN LOWER(job.company) LIKE :searchTerm1 THEN 10 ELSE 0 END +\n          ' +
+        'CASE WHEN LOWER(job.description) LIKE :searchTerm1 THEN 1 ELSE 0 END) + ' +
+        '(CASE WHEN LOWER(job.vacancy) LIKE :searchTerm2 THEN 10 ELSE 0 END +\n          ' +
+        'CASE WHEN LOWER(job.company) LIKE :searchTerm2 THEN 10 ELSE 0 END +\n          ' +
+        'CASE WHEN LOWER(job.description) LIKE :searchTerm2 THEN 1 ELSE 0 END))',
+        'DESC'
+      );
+      expect(queryBuilderMock.addOrderBy).toHaveBeenCalledWith('job.id', 'DESC');
+      expect(queryBuilderMock.limit).toHaveBeenCalledWith(60);
+      expect(result).toEqual(mockJobs);
     });
   });
 

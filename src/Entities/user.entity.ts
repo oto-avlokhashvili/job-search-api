@@ -19,7 +19,7 @@ export class User {
     @Column({
         type:'enum',
         enum: Subscription,
-        default:Subscription.BASIC
+        default:Subscription.FREE
     })
     subscription: Subscription
 

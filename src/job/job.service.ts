@@ -292,39 +292,104 @@ export class JobService {
   }
 
   async findAllByQuery(query: string | string[]) {
-    const queries = (Array.isArray(query) ? query : [query])
+    const rawQueries = (Array.isArray(query) ? query : [query])
       .filter((q) => typeof q === 'string' && q.trim().length > 0);
 
-    if (queries.length === 0) return [];
-
-    const georgianTokens = queries.filter(q => /[\u10D0-\u10FF]/.test(q));
-    const englishTokens = queries.filter(q => !/[\u10D0-\u10FF]/.test(q));
+    if (rawQueries.length === 0) return [];
 
     const qb = this.jobRepo.createQueryBuilder('job');
 
-    // Title match = 10 points, company match = 10 points, description match = 1 point
-    const buildClauses = (tokens: string[], prefix: string, titleWeight = 10, compWeight = 10, descWeight = 1) =>
-      tokens.map((q, i) => {
-        const p = `${prefix}${i}`;
-        qb.setParameter(p, `%${q.toLowerCase()}%`);
-        return `(
-        CASE WHEN LOWER(job.vacancy) LIKE :${p} THEN ${titleWeight} ELSE 0 END +
-        CASE WHEN LOWER(job.company) LIKE :${p} THEN ${compWeight} ELSE 0 END +
-        CASE WHEN LOWER(job.description) LIKE :${p} THEN ${descWeight} ELSE 0 END
-      )`;
-      });
+    const phrases: string[] = [];
+    const termSet = new Set<string>();
 
-    const enClauses = buildClauses(englishTokens, 'en');
-    const kaClauses = buildClauses(georgianTokens, 'ka');
+    const expandTermVariants = (t: string): string[] => {
+      const variants = new Set<string>([t]);
+      if (t.includes('-')) {
+        variants.add(t.replace(/-/g, ''));
+        variants.add(t.replace(/-/g, ' '));
+      } else {
+        if (t === 'frontend') variants.add('front-end');
+        if (t === 'backend') variants.add('back-end');
+        if (t === 'fullstack') variants.add('full-stack');
+      }
+      return Array.from(variants);
+    };
 
-    const allClauses = [...enClauses, ...kaClauses];
-    const totalScore = allClauses.length > 0
-      ? `(${allClauses.join(' + ')})`
-      : '0';
+    for (const raw of rawQueries) {
+      const trimmed = raw.trim().toLowerCase();
+      if (!trimmed) continue;
 
-    qb.where(`${totalScore} >= 1`)
-      .orderBy(totalScore, 'DESC')
-      .limit(60); // send top matches
+      // Add original phrase and hyphen variants if applicable
+      phrases.push(trimmed);
+      for (const variant of expandTermVariants(trimmed)) {
+        if (!phrases.includes(variant)) phrases.push(variant);
+      }
+
+      const terms = trimmed.split(/[\s,]+/).filter((t) => t.length > 0);
+      for (const term of terms) {
+        for (const variant of expandTermVariants(term)) {
+          termSet.add(variant);
+        }
+      }
+    }
+
+    const uniqueTerms = Array.from(termSet);
+    if (uniqueTerms.length === 0) return [];
+
+    // WHERE clause matches any term in Title, Description, or Company
+    qb.where(
+      new Brackets((qb2) => {
+        uniqueTerms.forEach((term, i) => {
+          const param = `searchTerm${i}`;
+          if (i === 0) {
+            qb2.where(
+              `(LOWER(job.vacancy) LIKE :${param} OR LOWER(job.description) LIKE :${param} OR LOWER(job.company) LIKE :${param})`
+            );
+          } else {
+            qb2.orWhere(
+              `(LOWER(job.vacancy) LIKE :${param} OR LOWER(job.description) LIKE :${param} OR LOWER(job.company) LIKE :${param})`
+            );
+          }
+        });
+      })
+    );
+
+    const scoreClauses: string[] = [];
+
+    // 1. Whole phrase matches:
+    // Title match: 1000 pts (Top priority)
+    // Description phrase match: 80 pts (High-point description match)
+    // Company match: 15 pts
+    phrases.forEach((phrase, i) => {
+      const phraseParam = `wholePhrase${i}`;
+      qb.setParameter(phraseParam, `%${phrase}%`);
+      scoreClauses.push(
+        `CASE WHEN LOWER(job.vacancy) LIKE :${phraseParam} THEN 1000 ELSE 0 END`,
+        `CASE WHEN LOWER(job.description) LIKE :${phraseParam} THEN 80 ELSE 0 END`,
+        `CASE WHEN LOWER(job.company) LIKE :${phraseParam} THEN 15 ELSE 0 END`
+      );
+    });
+
+    // 2. Individual term matches:
+    // Title term: 200 pts
+    // Description term: 25 pts (multiple terms in description accumulate strong score)
+    // Company term: 2 pts
+    uniqueTerms.forEach((term, i) => {
+      const param = `searchTerm${i}`;
+      qb.setParameter(param, `%${term}%`);
+      scoreClauses.push(
+        `CASE WHEN LOWER(job.vacancy) LIKE :${param} THEN 200 ELSE 0 END`,
+        `CASE WHEN LOWER(job.description) LIKE :${param} THEN 25 ELSE 0 END`,
+        `CASE WHEN LOWER(job.company) LIKE :${param} THEN 2 ELSE 0 END`
+      );
+    });
+
+    const orderScoreSql = `(${scoreClauses.join(' + ')})`;
+    // Exclude accidental 1-word boilerplate matches (< 50) while keeping all high-point description & title matches (>= 50)
+    qb.andWhere(`${orderScoreSql} >= 50`);
+    qb.orderBy(orderScoreSql, 'DESC');
+    qb.addOrderBy('job.id', 'DESC');
+    qb.limit(60);
 
     return qb.getMany();
   }

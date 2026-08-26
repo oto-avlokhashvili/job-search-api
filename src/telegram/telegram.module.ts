@@ -6,8 +6,10 @@ import { UserModule } from 'src/user/user.module';
 import { SentJobsModule } from 'src/sent-jobs/sent-jobs.module';
 import { AiMatchedJobsModule } from 'src/ai-matched-jobs/ai-matched-jobs.module';
 import { AiModule } from 'src/ai/ai.module';
+import { CvModule } from 'src/cv/cv.module';
+
 @Module({
-  imports:[forwardRef(() => JobModule), UserModule, SentJobsModule,AiMatchedJobsModule, AiModule],
+  imports: [forwardRef(() => JobModule), UserModule, SentJobsModule, AiMatchedJobsModule, AiModule, CvModule],
   controllers: [TelegramController],
   providers: [TelegramService],
   exports: [TelegramService], 
