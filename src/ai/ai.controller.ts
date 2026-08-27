@@ -3,15 +3,18 @@ import { AiService } from './ai.service';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation } from '@nestjs/swagger';
 import { AiChatDto, ChatDto } from './dto/analyze-job.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
+import { SubscriptionGuard } from 'src/auth/guards/subscription.guard';
+import { RequireSubscription } from 'src/auth/decorators/subscription.decorator';
+import { SubscriptionPlan } from 'src/enums/subscriptions.enum';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
-
 
 @Controller('ai')
 export class AiController {
   constructor(private readonly aiService: AiService) { }
 
   @Post('search-job')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, SubscriptionGuard)
+  @RequireSubscription(SubscriptionPlan.PRO)
   @ApiBearerAuth('bearerAuth')
   async searchJob(@Req() req) {
     return this.aiService.jobsearchWithCv(req.user.id);

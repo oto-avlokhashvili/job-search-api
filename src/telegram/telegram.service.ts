@@ -7,6 +7,7 @@ import { CvService } from 'src/cv/cv.service';
 import { JobService } from 'src/job/job.service';
 import { SentJobsService } from 'src/sent-jobs/sent-jobs.service';
 import { UserService } from 'src/user/user.service';
+import { EntitlementService } from 'src/subscription/entitlement.service';
 
 interface UserSession {
     chatId: string;
@@ -22,7 +23,7 @@ interface UserSession {
 @Injectable()
 export class TelegramService implements OnModuleInit, OnModuleDestroy {
     private readonly logger = new Logger(TelegramService.name);
-    private bot: TelegramBot | null = null;  // ← Changed this line
+    private bot: TelegramBot | null = null;
     private userSessions: Map<number, UserSession> = new Map();
     private isRunning = false;
 
@@ -37,6 +38,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         private readonly cvService: CvService,
         private userService: UserService,
         private aiService: AiService,
+        private readonly entitlementService: EntitlementService,
     ) { }
 
     onModuleInit() {
@@ -48,20 +50,18 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         this.stopBot();
     }
 
-    setupCommands() {
-        this.logger.log('✅ Telegram Bot successfully started and running!');
-        this.logger.log('🔗 Bot link: https://t.me/job_notifcation_bot');
-
-        if (this.bot) {
-            this.bot.stopPolling();
+    private setupCommands() {
+        if (!this.token) {
+            this.logger.error('TELEGRAM_TOKEN is not defined in environment variables');
+            return;
         }
 
         this.bot = new TelegramBot(this.token, {
             polling: {
-                interval: 2000, // Increased to 2s to be less aggressive
+                interval: 2000,
                 autoStart: true,
                 params: {
-                    timeout: 50, // Increased to 50s for more stable long polling
+                    timeout: 50,
                 },
             },
         });
@@ -84,17 +84,17 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
             console.log(linkedUser);
 
             if (linkedUser) {
-                if (linkedUser.subscription !== 'BASIC') {
+                if (!this.entitlementService.canReceiveTelegramAlerts(linkedUser)) {
                     this.bot?.sendMessage(
                         chatId,
                         `⚠️ გამარჯობა, ${linkedUser.firstName}!\n` +
-                        `ტელეგრამ შეტყობინებები ხელმისაწვდომია მხოლოდ BASIC მომხმარებლებისთვის.\n` +
-                        `გთხოვთ, გაააქტიუროთ BASIC გამოწერა.`
+                        `ტელეგრამ შეტყობინებები ხელმისაწვდომია მხოლოდ BASIC/PRO მომხმარებლებისთვის.\n` +
+                        `გთხოვთ, გაააქტიუროთ გამოწერა.`
                     );
                 } else {
                     this.bot?.sendMessage(
                         chatId,
-                        `✅ ტელეგრამ ბოტი წარმატებულად ჩაირთო, ${linkedUser.firstName}! თქვენ ყოველდღიურად მიიღებთ 5-10 ახალ ვაკანსიას.`
+                        `✅ ტელეგრამ ბოტი წარმატებულად ჩაირთო, ${linkedUser.firstName}! თქვენ ყოველდღიურად მიიღებთ ახალ ვაკანსიებს თქვენი პროფილის მიხედვით.`
                     );
                 }
             } else {
@@ -110,17 +110,17 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
                     return;
                 }
 
-                if (user.subscription !== 'BASIC') {
+                if (!this.entitlementService.canReceiveTelegramAlerts(user)) {
                     this.bot?.sendMessage(
                         chatId,
                         `✅ ტელეგრამი წარმატებით დაუკავშირდა თქვენს ანგარიშს, ${user.firstName}!\n` +
-                        `⚠️ გაითვალისწინეთ: ვაკანსიების მისაღებად საჭიროა BASIC გამოწერის გააქტიურება.`
+                        `⚠️ გაითვალისწინეთ: ვაკანსიების მისაღებად საჭიროა გამოწერის გააქტიურება.`
                     );
                 } else {
                     this.bot?.sendMessage(
                         chatId,
                         `✅ ტელეგრამი წარმატებით დაუკავშირდა თქვენს ანგარიშს, ${user.firstName}!\n` +
-                        `🔔 თქვენ ყოველდღიურად მიიღებთ 5-10 ახალ ვაკანსიას თქვენი პროფილის მიხედვით.`
+                        `🔔 თქვენ ყოველდღიურად მიიღებთ ახალ ვაკანსიებს თქვენი პროფილის მიხედვით.`
                     );
                 }
             }
@@ -134,8 +134,6 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         }
 
         try {
-            //this.bot = new TelegramBot(this.token, { polling: true });
-            //this.setupCommands();
             this.isRunning = true;
             this.logger.log('🚀 Telegram Bot started successfully!');
 
@@ -148,20 +146,18 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
 
     async stopBot() {
         if (!this.isRunning) {
-            this.logger.warn('⚠️ Bot is not running');
+            this.logger.warn('⚠️ Bot is not already stopped');
             return;
         }
 
         try {
+            this.logger.log('🛑 Stopping bot polling & cleaning up sessions...');
+
             // Automatically execute stop logic for all linked users
             await this.autoStopForAllUsers();
 
-            if (this.bot) {
-                await this.bot.stopPolling();
-                this.logger.log('🛑 Telegram Bot stopped successfully!');
-                this.isRunning = false;
-                this.bot = null;
-            }
+            this.isRunning = false;
+            this.logger.log('✅ Bot stopped and cleaned up successfully');
         } catch (error) {
             this.logger.error('❌ Failed to stop bot:', error);
         }
@@ -170,8 +166,8 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     private async autoStartForAllUsers() {
         try {
             const allUsers = await this.userService.findAllWithTelegram();
-            const users = allUsers.filter(u => u.subscription === 'BASIC' && u.receiveMessages !== false);
-            this.logger.log(`🚀 Starting queue for ${users.length} BASIC users...`);
+            const users = allUsers.filter(u => this.entitlementService.canReceiveTelegramAlerts(u) && u.receiveMessages !== false);
+            this.logger.log(`🚀 Starting queue for ${users.length} eligible Telegram users...`);
 
             let successCount = 0;
             let failCount = 0;
@@ -202,7 +198,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
 
     private async processUserStart(user: any): Promise<void> {
         if (!user.telegramChatId) return;
-        if (user.subscription !== 'BASIC') return;
+        if (!this.entitlementService.canReceiveTelegramAlerts(user)) return;
         if (user.receiveMessages === false) return;
 
         try {
@@ -227,17 +223,18 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
 
             const sentJobIds = new Set<number>(sentJobIdsArr);
 
-            // 3. Exclude already sent jobs & slice to daily limit (5-10)
-            const DAILY_LIMIT = 10;
+            // 3. Exclude already sent jobs & slice to dynamic daily limit
+            const dailyLimit = this.entitlementService.getDailyJobLimit(user);
+            const effectivePlan = this.entitlementService.getEffectivePlan(user);
             const newJobs = matchingJobs
                 .filter(job => !sentJobIds.has(job.id))
-                .slice(0, DAILY_LIMIT);
+                .slice(0, dailyLimit === Infinity ? undefined : dailyLimit);
 
             // Send welcome message
             await this.bot?.sendMessage(
                 user.telegramChatId,
                 `✅ გამარჯობა, ${user.firstName}! ბოტი აქტიურია და ეძებს ვაკანსიებს.\n` +
-                `⭐ თქვენი გამოწერა: BASIC\n` +
+                `⭐ თქვენი გამოწერა: ${effectivePlan}\n` +
                 `📊 დღეს მიიღებთ: ${newJobs.length} ვაკანსიას`
             );
 
@@ -249,7 +246,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
                 return;
             }
 
-            this.logger.log(`📨 Sending ${newJobs.length} jobs to user ${user.telegramChatId} (BASIC)`);
+            this.logger.log(`📨 Sending ${newJobs.length} jobs to user ${user.telegramChatId} (${effectivePlan})`);
 
             // Send jobs with delay between each
             for (const job of newJobs) {
@@ -301,7 +298,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     private async autoStopForAllUsers() {
         try {
             const allUsers = await this.userService.findAllWithTelegram();
-            const users = allUsers.filter(u => u.subscription === 'BASIC' && u.receiveMessages !== false);
+            const users = allUsers.filter(u => this.entitlementService.canReceiveTelegramAlerts(u) && u.receiveMessages !== false);
 
             // Process in parallel batches
             const BATCH_SIZE = 20; // Can be higher for stop messages
@@ -322,7 +319,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
             // Clear all sessions
             this.userSessions.clear();
 
-            this.logger.log(`🛑 Stopped sessions for ${users.length} BASIC users`);
+            this.logger.log(`🛑 Stopped sessions for ${users.length} users`);
         } catch (error) {
             this.logger.error('Failed to auto-stop for users:', error);
         }
@@ -350,25 +347,25 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
 
     async runDailyAnalysis() {
         const users = await this.userService.findAll();
-        const proUsers = users.filter(
-            (u) => u.subscription === 'PRO' && u.receiveMessages !== false && (u.telegramChatId || (u.email && u.isEmailVerified)),
+        const eligibleUsers = users.filter(
+            (u) => this.entitlementService.canUseAiJobSearch(u) && u.receiveMessages !== false && (u.telegramChatId || (u.email && u.isEmailVerified)),
         );
 
-        this.logger.log(`🤖 Running AI analysis for ${proUsers.length} PRO/PREMIUM users...`);
+        this.logger.log(`🤖 Running AI analysis for ${eligibleUsers.length} eligible users...`);
 
-        for (let i = 0; i < proUsers.length; i++) {
-            const user = proUsers[i];
+        for (let i = 0; i < eligibleUsers.length; i++) {
+            const user = eligibleUsers[i];
             try {
                 const { response, comment } = await this.aiService.jobsearchWithCv(user.id);
 
                 const topJobs = response?.topJobs ?? [];
-                this.logger.log(`✅ [${i + 1}/${proUsers.length}] ${comment} for user ${user.id} — ${topJobs.length} jobs`);
+                this.logger.log(`✅ [${i + 1}/${eligibleUsers.length}] ${comment} for user ${user.id} — ${topJobs.length} jobs`);
 
             } catch (error) {
                 this.logger.error(`❌ Failed analysis for user ${user.id}:`, error);
             }
 
-            if (i < proUsers.length - 1) {
+            if (i < eligibleUsers.length - 1) {
                 await new Promise(resolve => setTimeout(resolve, 1500));
             }
         }

@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { UserService } from '../user/user.service';
 import { AiMatchedJobsService } from '../ai-matched-jobs/ai-matched-jobs.service';
 import { SentJobsService } from '../sent-jobs/sent-jobs.service';
+import { EntitlementService } from '../subscription/entitlement.service';
 
 @Injectable()
 export class EmailService {
@@ -15,6 +16,7 @@ export class EmailService {
     private readonly userService: UserService,
     private readonly aiMatchedJobsService: AiMatchedJobsService,
     private readonly sentJobsService: SentJobsService,
+    private readonly entitlementService: EntitlementService,
   ) {
     const apiKey = this.configService.get<string>('BREVO_API_KEY') || process.env.BREVO_API_KEY || '';
     const maskedKey = apiKey ? `${apiKey.substring(0, 6)}... (length: ${apiKey.length})` : 'MISSING';
@@ -46,13 +48,9 @@ export class EmailService {
         htmlContent: html,
       });
       return response;
-    } catch (error: any) {
-      console.error('[EmailService] Error calling Brevo API:', {
-        message: error.message,
-        status: error.status || error.statusCode || error.response?.status,
-        body: error.body || error.response?.data,
-      });
-      throw error;
+    } catch (err: any) {
+      console.error(`[EmailService] Failed to send email to ${to}:`, err);
+      throw err;
     }
   }
 
@@ -64,7 +62,7 @@ export class EmailService {
     let sentEmailsCount = 0;
 
     for (const user of users) {
-      if (!user.email || !user.isEmailVerified || user.subscription !== 'PRO' || user.receiveMessages === false) continue;
+      if (!user.email || !user.isEmailVerified || !this.entitlementService.canReceiveEmailAlerts(user) || user.receiveMessages === false) continue;
 
       if (sentEmailsCount >= SAFETY_DAILY_LIMIT) {
         console.warn(`[EmailService] Daily safety limit of ${SAFETY_DAILY_LIMIT} emails reached. Stopping alerts dispatch.`);
@@ -88,8 +86,9 @@ export class EmailService {
           continue;
         }
 
-        const jobsToSend = newJobs; // Send everything to PRO users
-        console.log(`[EmailService] Sending ${jobsToSend.length} jobs to user ${user.email} (PRO)`);
+        const jobsToSend = newJobs; // Send everything to eligible users
+        const effectivePlan = this.entitlementService.getEffectivePlan(user);
+        console.log(`[EmailService] Sending ${jobsToSend.length} jobs to user ${user.email} (${effectivePlan})`);
 
         // Mark them as sent in database using bulk upsert
         const sentJobDtos = jobsToSend.map((job) => ({
@@ -108,7 +107,7 @@ export class EmailService {
           user.firstName,
           jobsToSend,
           0,
-          user.subscription,
+          effectivePlan,
         );
 
         // Send Email
@@ -131,7 +130,7 @@ export class EmailService {
     firstName: string,
     jobs: any[],
     remainingCount: number,
-    subscription: string,
+    subscription: string | null,
   ): string {
     const jobsHtml = jobs
       .map((job) => {

@@ -1,6 +1,8 @@
-import { BeforeInsert, Column, CreateDateColumn, Entity, PrimaryGeneratedColumn } from "typeorm";
+import { BeforeInsert, Column, CreateDateColumn, Entity, OneToOne, PrimaryGeneratedColumn } from "typeorm";
 import * as bcrypt from 'bcrypt';
 import { Subscription } from "src/enums/subscriptions.enum";
+import { UserRole } from "src/enums/user-role.enum";
+import { Subscription as SubscriptionDetails } from "./subscription.entity";
 
 @Entity()
 export class User {
@@ -15,13 +17,22 @@ export class User {
 
     @Column()
     email:string;
+
+    @Column({
+        type: 'enum',
+        enum: UserRole,
+        default: UserRole.USER
+    })
+    role: UserRole;
     
     @Column({
-        type:'enum',
-        enum: Subscription,
-        default:Subscription.FREE
+        type: 'varchar',
+        nullable: true,
     })
-    subscription: Subscription
+    subscription?: string | null;
+
+    @OneToOne(() => SubscriptionDetails, (sub) => sub.user, { cascade: true, eager: true })
+    subscriptionDetails?: SubscriptionDetails;
 
     @CreateDateColumn()
     createdAt:Date;

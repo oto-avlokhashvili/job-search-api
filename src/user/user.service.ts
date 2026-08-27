@@ -1,18 +1,47 @@
-import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, forwardRef, OnModuleInit } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Not, Repository } from 'typeorm';
 import { User } from 'src/Entities/user.entity';
+import { Subscription } from 'src/Entities/subscription.entity';
+import { SubscriptionPlan, SubscriptionStatus } from 'src/enums/subscriptions.enum';
 import { EmailService } from '../email/email.service';
 
 @Injectable()
-export class UserService {
+export class UserService implements OnModuleInit {
   constructor(
     @InjectRepository(User) private userRepo: Repository<User>,
+    @InjectRepository(Subscription) private subscriptionRepo: Repository<Subscription>,
     @Inject(forwardRef(() => EmailService))
     private readonly emailService: EmailService,
   ) { }
+
+  async onModuleInit() {
+    try {
+      const usersWithoutSub = await this.userRepo
+        .createQueryBuilder('user')
+        .leftJoinAndSelect('user.subscriptionDetails', 'subscription')
+        .where('subscription.id IS NULL')
+        .getMany();
+
+      for (const user of usersWithoutSub) {
+        if (
+          user.subscription &&
+          Object.values(SubscriptionPlan).includes(user.subscription as unknown as SubscriptionPlan)
+        ) {
+          const sub = this.subscriptionRepo.create({
+            userId: user.id,
+            plan: user.subscription as unknown as SubscriptionPlan,
+            status: SubscriptionStatus.ACTIVE,
+          });
+          await this.subscriptionRepo.save(sub);
+        }
+      }
+    } catch (err) {
+      console.error('[UserService] Subscription backfill failed or table not ready:', err);
+    }
+  }
 
   async create(createUserDto: CreateUserDto, isEmailVerified = false) {
     const user = await this.userRepo.create(createUserDto);
@@ -84,8 +113,9 @@ export class UserService {
       where: {
         id,
       },
-      select: ['id', 'firstName', 'lastName', 'email', 'createdAt', 'subscription','telegramChatId', 'isEmailVerified', 'receiveMessages']
-    })
+      relations: ['subscriptionDetails'],
+      select: ['id', 'firstName', 'lastName', 'email', 'role', 'createdAt', 'subscription', 'telegramChatId', 'isEmailVerified', 'receiveMessages']
+    });
   }
 
   async update(id: number, updateUserDto: UpdateUserDto) {
