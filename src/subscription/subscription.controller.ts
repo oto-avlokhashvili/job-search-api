@@ -11,9 +11,11 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
+import { Public } from 'src/auth/decorators/public.decorator';
 import { SubscriptionService } from './subscription.service';
 import { EntitlementService } from './entitlement.service';
 import { AssignPlanDto, CancelSubscriptionDto } from './dto/update-subscription.dto';
+import { JoinWaitlistDto } from './dto/join-waitlist.dto';
 
 @ApiTags('Subscription')
 @Controller('subscription')
@@ -61,4 +63,26 @@ export class SubscriptionController {
   ) {
     return this.subscriptionService.cancelSubscription(req.user.id, dto.cancelImmediately);
   }
+
+  @Post('waitlist')
+  @Public()
+  @ApiOperation({ summary: 'Register for a plan waitlist (e.g. PRO / ENTERPRISE)' })
+  async joinWaitlist(
+    @Req() req,
+    @Body() dto: JoinWaitlistDto,
+  ) {
+    const userId = req.user?.id;
+    const authHeader = req.headers?.authorization;
+    return this.subscriptionService.joinWaitlist(dto, userId, authHeader);
+  }
+
+
+  @Get('waitlist/stats')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('bearerAuth')
+  @ApiOperation({ summary: 'Get waitlist demand statistics (Admin / Internal)' })
+  async getWaitlistStats() {
+    return this.subscriptionService.getWaitlistStats();
+  }
 }
+

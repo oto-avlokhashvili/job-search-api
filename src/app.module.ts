@@ -17,12 +17,19 @@ import { AiMatchedJobsModule } from './ai-matched-jobs/ai-matched-jobs.module';
 import { ScrapersModule } from './scrapers/scrapers.module';
 import { EmailModule } from './email/email.module';
 import { SubscriptionModule } from './subscription/subscription.module';
+import { ThrottlerModule } from '@nestjs/throttler';
 
 @Module({
   imports: [
     TypeOrmModule.forRoot(pgConfig),
     JobModule,
     ScheduleModule.forRoot(),
+    ThrottlerModule.forRoot([
+      {
+        ttl: 60000,
+        limit: 60,
+      },
+    ]),
     UserModule,
     TelegramModule,
     AuthModule,

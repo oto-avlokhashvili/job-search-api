@@ -1,10 +1,13 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { JwtService } from '@nestjs/jwt';
 import { Repository } from 'typeorm';
 import { Subscription } from 'src/Entities/subscription.entity';
 import { User } from 'src/Entities/user.entity';
+import { Waitlist } from 'src/Entities/waitlist.entity';
 import { SubscriptionPlan, SubscriptionStatus } from 'src/enums/subscriptions.enum';
 import { AssignPlanDto } from './dto/update-subscription.dto';
+import { JoinWaitlistDto } from './dto/join-waitlist.dto';
 
 @Injectable()
 export class SubscriptionService {
@@ -13,7 +16,12 @@ export class SubscriptionService {
     private readonly subscriptionRepo: Repository<Subscription>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    @InjectRepository(Waitlist)
+    private readonly waitlistRepo: Repository<Waitlist>,
+    private readonly jwtService: JwtService,
   ) {}
+
+
 
   /**
    * Retrieves subscription details for a specific user ID.
@@ -115,4 +123,96 @@ export class SubscriptionService {
   async removeSubscription(userId: number): Promise<void> {
     await this.subscriptionRepo.delete({ userId });
   }
+
+  /**
+   * Registers a user or guest email for a plan waitlist (e.g. PRO / ENTERPRISE).
+   */
+  async joinWaitlist(
+    dto: JoinWaitlistDto,
+    userId?: number,
+    authHeader?: string,
+  ): Promise<{ success: boolean; message: string; alreadyJoined: boolean; data: Waitlist }> {
+
+    let email = dto.email?.trim().toLowerCase();
+
+    // 1. If userId is not passed, attempt extracting it from the Authorization Bearer token header
+    if (!userId && authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.substring(7).trim();
+      try {
+        const decoded: any = this.jwtService.decode(token);
+        if (decoded && (decoded.sub || decoded.id)) {
+          userId = Number(decoded.sub || decoded.id);
+        }
+      } catch (err) {
+        // Continue fallback to email in DTO
+      }
+    }
+
+    // 2. If authenticated userId found, automatically lookup and insert user's email
+    if (userId) {
+      const user = await this.userRepo.findOne({ where: { id: userId } });
+      if (user && user.email) {
+        email = user.email.trim().toLowerCase();
+      }
+    }
+
+    if (!email) {
+      throw new BadRequestException('გთხოვთ მიუთითოთ ელ-ფოსტის მისამართი');
+    }
+
+
+    const plan = (dto.plan || 'PRO').trim().toUpperCase();
+    const source = dto.source || 'landing';
+
+    const existing = await this.waitlistRepo.findOne({
+      where: { email, plan },
+    });
+
+    if (existing) {
+      return {
+        success: true,
+        message: 'თქვენ უკვე დარეგისტრირებული ხართ ამ პაკეტის Waitlist-ში!',
+        alreadyJoined: true,
+        data: existing,
+      };
+    }
+
+    const entry = this.waitlistRepo.create({
+      email,
+      userId: userId ?? null,
+      plan,
+      source,
+      notes: dto.notes ?? null,
+    });
+
+    const saved = await this.waitlistRepo.save(entry);
+
+    return {
+      success: true,
+      message: 'გმადლობთ! თქვენ წარმატებით დაემატეთ Waitlist-ში 🎉',
+      alreadyJoined: false,
+      data: saved,
+    };
+  }
+
+  /**
+   * Retrieves aggregate waitlist statistics for admin/metrics inspection.
+   */
+  async getWaitlistStats(): Promise<{ total: number; proCount: number; enterpriseCount: number; list: Waitlist[] }> {
+    const total = await this.waitlistRepo.count();
+    const proCount = await this.waitlistRepo.count({ where: { plan: 'PRO' } });
+    const enterpriseCount = await this.waitlistRepo.count({ where: { plan: 'ENTERPRISE' } });
+    const list = await this.waitlistRepo.find({
+      order: { createdAt: 'DESC' },
+      take: 100,
+    });
+
+    return {
+      total,
+      proCount,
+      enterpriseCount,
+      list,
+    };
+  }
 }
+

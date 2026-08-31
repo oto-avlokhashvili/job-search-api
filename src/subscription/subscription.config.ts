@@ -8,6 +8,7 @@ export interface PlanFeatures {
   enableEmailAlerts: boolean;
   canUseAiChat: boolean;
   canUseAiJobSearch: boolean;
+  maxDailyChatMessages: number;
 }
 
 /**
@@ -19,8 +20,9 @@ export const DEFAULT_UNPAID_FEATURES: PlanFeatures = {
   includeSalaryAnalysis: false,
   enableTelegramAlerts: false,
   enableEmailAlerts: false,
-  canUseAiChat: true,
+  canUseAiChat: false,
   canUseAiJobSearch: false,
+  maxDailyChatMessages: 0,
 };
 
 /**
@@ -33,8 +35,9 @@ export const PLAN_POLICIES: Record<SubscriptionPlan, PlanFeatures> = {
     includeSalaryAnalysis: false,
     enableTelegramAlerts: true,
     enableEmailAlerts: false,
-    canUseAiChat: false,
+    canUseAiChat: true,
     canUseAiJobSearch: false,
+    maxDailyChatMessages: 3,
   },
   [SubscriptionPlan.PRO]: {
     maxDailyJobs: Infinity,
@@ -44,5 +47,6 @@ export const PLAN_POLICIES: Record<SubscriptionPlan, PlanFeatures> = {
     enableEmailAlerts: true,
     canUseAiChat: true,
     canUseAiJobSearch: true,
+    maxDailyChatMessages: Infinity,
   },
 };
