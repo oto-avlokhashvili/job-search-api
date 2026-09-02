@@ -46,8 +46,15 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         this.setupCommands();
     }
 
-    onModuleDestroy() {
-        this.stopBot();
+    async onModuleDestroy() {
+        if (this.bot?.isPolling()) {
+            try {
+                await this.bot.stopPolling();
+            } catch (err) {
+                this.logger.debug('Error stopping telegram bot polling:', err);
+            }
+        }
+        await this.stopBot();
     }
 
     private setupCommands() {
@@ -61,7 +68,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
                 interval: 2000,
                 autoStart: true,
                 params: {
-                    timeout: 50,
+                    timeout: 10,
                 },
             },
         });

@@ -40,7 +40,7 @@ export class ScheduleService {
     await this.telegramService.runDailyAnalysis();
   } */
   
-  @Cron('30 16 * * *')
+  @Cron('00 10 * * *')
   async startTelegramBot() {
     this.logger.log('🚀 Starting Telegram bot via cron...');
     await this.telegramService.startBot();
