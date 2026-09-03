@@ -32,9 +32,9 @@ export class EmailService {
     senderEmail?: string,
     senderName?: string,
   ) {
-    let fromEmail = senderEmail || this.configService.get<string>('BREVO_SENDER_EMAIL') || 'oto.aldagi10@gmail.com';
+    let fromEmail = senderEmail || this.configService.get<string>('BREVO_SENDER_EMAIL') || 'jobup.ge@gmail.com';
     if (fromEmail === 'noreply@jobsearch.ge') {
-      fromEmail = 'oto.aldagi10@gmail.com';
+      fromEmail = 'jobup.ge@gmail.com';
     }
     const fromName = senderName || this.configService.get<string>('BREVO_SENDER_NAME') || 'Job Up';
     try {
@@ -247,7 +247,7 @@ export class EmailService {
   }
 
   async sendContactEmail(email: string, comment: string) {
-    const adminEmail = this.configService.get<string>('BREVO_SENDER_EMAIL') || 'oto.aldagi10@gmail.com';
+    const adminEmail = this.configService.get<string>('BREVO_SENDER_EMAIL') || 'jobup.ge@gmail.com';
     const subject = `📬 New Contact Form Submission from ${email}`;
     const html = `
       <div style="font-family: sans-serif; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; max-width: 600px; margin: 0 auto;">
