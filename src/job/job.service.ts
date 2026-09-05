@@ -37,6 +37,47 @@ export const CITY_MAPPING: { [city: string]: string[] } = {
   'სიღნაღი': ['სიღნაღი', 'sighnaghi']
 };
 
+export function getSearchVariants(term: string): string[] {
+  const t = term.trim().toLowerCase();
+  if (!t) return [];
+  const variants = new Set<string>([t]);
+
+  // Georgian suffixes
+  if (/[ა-ჰ]/.test(t)) {
+    const georgianSuffixes = [
+      'ების', 'ებით', 'ებად', 'ებს', 'ები',
+      'ური', 'ული', 'ის', 'ით', 'ად', 'მა', 'ზე', 'ში', 'ი'
+    ];
+    for (const suffix of georgianSuffixes) {
+      if (t.endsWith(suffix) && t.length - suffix.length >= 3) {
+        variants.add(t.slice(0, -suffix.length));
+        break; // Only strip the longest matching suffix
+      }
+    }
+  } else {
+    // English suffixes
+    const englishSuffixes = ['ies', 'ing', 'ers', 'er', 'ed', 'es', 's'];
+    for (const suffix of englishSuffixes) {
+      if (t.endsWith(suffix) && t.length - suffix.length >= 3) {
+        variants.add(t.slice(0, -suffix.length));
+        break;
+      }
+    }
+  }
+
+  return Array.from(variants);
+}
+
+export function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+export function buildWordBoundaryRegex(term: string): string {
+  const variants = getSearchVariants(term);
+  const escaped = variants.map(escapeRegex).join('|');
+  return `(^|[^a-zA-Z0-9\u10A0-\u10FF])(${escaped})`;
+}
+
 @Injectable()
 export class JobService {
   private readonly logger = new Logger(JobService.name);
@@ -128,51 +169,74 @@ export class JobService {
       hasFilter = true;
 
       const trimmedQuery = query.trim().toLowerCase();
-      const terms = trimmedQuery.split(/\s+/).filter((t) => t.length > 0);
+      const rawTerms = trimmedQuery.split(/\s+/).filter((t) => t.length > 0);
 
+      const termRegexParams: string[] = [];
+      rawTerms.forEach((term, i) => {
+        const param = `termRegex${i}`;
+        qb.setParameter(param, buildWordBoundaryRegex(term));
+        termRegexParams.push(param);
+      });
+
+      const hasPhrase = rawTerms.length > 1;
+      if (hasPhrase) {
+        qb.setParameter('phraseRegex', `(^|[^a-zA-Z0-9\u10A0-\u10FF])(${escapeRegex(trimmedQuery)})`);
+        qb.setParameter('wholePhraseLike', `%${trimmedQuery}%`);
+      }
+
+      // WHERE clause ensures at least one term matches with word boundary
       qb.andWhere(
         new Brackets((qb2) => {
-          terms.forEach((term, i) => {
-            const param = `searchTerm${i}`;
-            qb.setParameter(param, `%${term}%`);
+          termRegexParams.forEach((param, i) => {
+            const cond = `(job.vacancy ~* :${param} OR job.company ~* :${param} OR job.description ~* :${param})`;
             if (i === 0) {
-              qb2.where(
-                `(LOWER(job.vacancy) LIKE :${param} OR LOWER(job.company) LIKE :${param} OR LOWER(job.description) LIKE :${param})`
-              );
+              qb2.where(cond);
             } else {
-              qb2.orWhere(
-                `(LOWER(job.vacancy) LIKE :${param} OR LOWER(job.company) LIKE :${param} OR LOWER(job.description) LIKE :${param})`
-              );
+              qb2.orWhere(cond);
             }
           });
         })
       );
 
-      const scoreClauses: string[] = [];
+      // Conditions for determining tier membership
+      const titleConds = termRegexParams.map((p) => `job.vacancy ~* :${p}`).join(' OR ');
+      const companyConds = termRegexParams.map((p) => `job.company ~* :${p}`).join(' OR ');
 
-      // Whole phrase matches (give huge boost for exact title/company phrase, moderate boost for exact description phrase)
-      if (terms.length > 1) {
-        qb.setParameter('wholePhrase', `%${trimmedQuery}%`);
-        scoreClauses.push(
-          `CASE WHEN LOWER(job.vacancy) LIKE :wholePhrase THEN 50 ELSE 0 END`,
-          `CASE WHEN LOWER(job.company) LIKE :wholePhrase THEN 50 ELSE 0 END`,
-          `CASE WHEN LOWER(job.description) LIKE :wholePhrase THEN 10 ELSE 0 END`
+      // Boost clauses
+      const boostClauses: string[] = [];
+
+      if (hasPhrase) {
+        boostClauses.push(
+          `CASE WHEN job.vacancy ~* :phraseRegex OR LOWER(job.vacancy) LIKE :wholePhraseLike THEN 50000 ELSE 0 END`,
+          `CASE WHEN job.company ~* :phraseRegex OR LOWER(job.company) LIKE :wholePhraseLike THEN 500 ELSE 0 END`,
+          `CASE WHEN job.description ~* :phraseRegex OR LOWER(job.description) LIKE :wholePhraseLike THEN 10 ELSE 0 END`
         );
       }
 
-      // Individual term matches: Title match = 10 pts, Company match = 10 pts, Description match = 1 pt
-      terms.forEach((term, i) => {
-        const param = `searchTerm${i}`;
-        scoreClauses.push(
-          `(CASE WHEN LOWER(job.vacancy) LIKE :${param} THEN 10 ELSE 0 END +
-            CASE WHEN LOWER(job.company) LIKE :${param} THEN 10 ELSE 0 END +
-            CASE WHEN LOWER(job.description) LIKE :${param} THEN 1 ELSE 0 END)`
+      termRegexParams.forEach((param) => {
+        boostClauses.push(
+          `CASE WHEN job.vacancy ~* :${param} THEN 5000 ELSE 0 END`,
+          `CASE WHEN job.company ~* :${param} THEN 50 ELSE 0 END`,
+          `CASE WHEN job.description ~* :${param} THEN 1 ELSE 0 END`
         );
       });
 
-      const orderScoreSql = `(${scoreClauses.join(' + ')})`;
+      // Priority ordering:
+      // 1. Vacancy Title Match (Base 1,000,000 pts)
+      // 2. Company Name Match (Base 10,000 pts)
+      // 3. Description Match (Base 100 pts)
+      const orderScoreSql = `(
+        CASE 
+          WHEN (${titleConds}) THEN 1000000
+          WHEN (${companyConds}) THEN 10000
+          ELSE 100
+        END + (${boostClauses.join(' + ')})
+      )`;
+
       qb.orderBy(orderScoreSql, 'DESC');
       qb.addOrderBy('job.id', 'DESC');
+    } else {
+      qb.orderBy('job.id', 'DESC');
     }
 
     if (source && source.trim().length > 0) {
@@ -336,57 +400,71 @@ export class JobService {
     const uniqueTerms = Array.from(termSet);
     if (uniqueTerms.length === 0) return [];
 
-    // WHERE clause matches any term in Title, Description, or Company
+    const termRegexParams: string[] = [];
+    uniqueTerms.forEach((term, i) => {
+      const param = `searchTerm${i}`;
+      qb.setParameter(param, buildWordBoundaryRegex(term));
+      termRegexParams.push(param);
+    });
+
+    const phraseRegexParams: string[] = [];
+    phrases.forEach((phrase, i) => {
+      const param = `wholePhrase${i}`;
+      const likeParam = `wholePhraseLike${i}`;
+      qb.setParameter(param, `(^|[^a-zA-Z0-9\u10A0-\u10FF])(${escapeRegex(phrase)})`);
+      qb.setParameter(likeParam, `%${phrase}%`);
+      phraseRegexParams.push(param);
+    });
+
+    // WHERE clause matches any term with word boundary
     qb.where(
       new Brackets((qb2) => {
-        uniqueTerms.forEach((term, i) => {
-          const param = `searchTerm${i}`;
+        termRegexParams.forEach((param, i) => {
+          const cond = `(job.vacancy ~* :${param} OR job.company ~* :${param} OR job.description ~* :${param})`;
           if (i === 0) {
-            qb2.where(
-              `(LOWER(job.vacancy) LIKE :${param} OR LOWER(job.description) LIKE :${param} OR LOWER(job.company) LIKE :${param})`
-            );
+            qb2.where(cond);
           } else {
-            qb2.orWhere(
-              `(LOWER(job.vacancy) LIKE :${param} OR LOWER(job.description) LIKE :${param} OR LOWER(job.company) LIKE :${param})`
-            );
+            qb2.orWhere(cond);
           }
         });
       })
     );
 
-    const scoreClauses: string[] = [];
+    const titleConds = termRegexParams.map((p) => `job.vacancy ~* :${p}`).join(' OR ');
+    const companyConds = termRegexParams.map((p) => `job.company ~* :${p}`).join(' OR ');
 
-    // 1. Whole phrase matches:
-    // Title match: 1000 pts (Top priority)
-    // Description phrase match: 80 pts (High-point description match)
-    // Company match: 15 pts
-    phrases.forEach((phrase, i) => {
+    const boostClauses: string[] = [];
+
+    // 1. Whole phrase boosts
+    phrases.forEach((_, i) => {
       const phraseParam = `wholePhrase${i}`;
-      qb.setParameter(phraseParam, `%${phrase}%`);
-      scoreClauses.push(
-        `CASE WHEN LOWER(job.vacancy) LIKE :${phraseParam} THEN 1000 ELSE 0 END`,
-        `CASE WHEN LOWER(job.description) LIKE :${phraseParam} THEN 80 ELSE 0 END`,
-        `CASE WHEN LOWER(job.company) LIKE :${phraseParam} THEN 15 ELSE 0 END`
+      const likeParam = `wholePhraseLike${i}`;
+      boostClauses.push(
+        `CASE WHEN job.vacancy ~* :${phraseParam} OR LOWER(job.vacancy) LIKE :${likeParam} THEN 50000 ELSE 0 END`,
+        `CASE WHEN job.company ~* :${phraseParam} OR LOWER(job.company) LIKE :${likeParam} THEN 500 ELSE 0 END`,
+        `CASE WHEN job.description ~* :${phraseParam} OR LOWER(job.description) LIKE :${likeParam} THEN 10 ELSE 0 END`
       );
     });
 
-    // 2. Individual term matches:
-    // Title term: 200 pts
-    // Description term: 25 pts (multiple terms in description accumulate strong score)
-    // Company term: 2 pts
-    uniqueTerms.forEach((term, i) => {
-      const param = `searchTerm${i}`;
-      qb.setParameter(param, `%${term}%`);
-      scoreClauses.push(
-        `CASE WHEN LOWER(job.vacancy) LIKE :${param} THEN 200 ELSE 0 END`,
-        `CASE WHEN LOWER(job.description) LIKE :${param} THEN 25 ELSE 0 END`,
-        `CASE WHEN LOWER(job.company) LIKE :${param} THEN 2 ELSE 0 END`
+    // 2. Individual term boosts
+    termRegexParams.forEach((param) => {
+      boostClauses.push(
+        `CASE WHEN job.vacancy ~* :${param} THEN 5000 ELSE 0 END`,
+        `CASE WHEN job.company ~* :${param} THEN 50 ELSE 0 END`,
+        `CASE WHEN job.description ~* :${param} THEN 1 ELSE 0 END`
       );
     });
 
-    const orderScoreSql = `(${scoreClauses.join(' + ')})`;
-    // Exclude accidental 1-word boilerplate matches (< 50) while keeping all high-point description & title matches (>= 50)
-    qb.andWhere(`${orderScoreSql} >= 50`);
+    // Priority ordering: Title > Company > Description
+    const orderScoreSql = `(
+      CASE 
+        WHEN (${titleConds}) THEN 1000000
+        WHEN (${companyConds}) THEN 10000
+        ELSE 100
+      END + (${boostClauses.join(' + ')})
+    )`;
+
+    qb.andWhere(`${orderScoreSql} >= 100`);
     qb.orderBy(orderScoreSql, 'DESC');
     qb.addOrderBy('job.id', 'DESC');
     qb.limit(60);

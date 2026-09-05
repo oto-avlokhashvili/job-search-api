@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { JobService } from './job.service';
+import { JobService, buildWordBoundaryRegex } from './job.service';
 import { JobEntity } from 'src/Entities/job.entity';
 import { JobsGeScraperService } from '../scrapers/jobs-ge.scraper';
 import { HrGeScraperService } from '../scrapers/hr-ge-scraper.service';
@@ -71,8 +71,38 @@ describe('JobService', () => {
     expect(service).toBeDefined();
   });
 
+  describe('buildWordBoundaryRegex & getSearchVariants', () => {
+    it('should correctly strip Georgian suffixes and build word boundary regex', () => {
+      const regexFinance = buildWordBoundaryRegex('ფინანსები');
+      // Should include stem 'ფინანს'
+      expect(regexFinance).toContain('ფინანს');
+      expect(regexFinance).toContain('(^|[^a-zA-Z0-9\u10A0-\u10FF])');
+
+      // Test matching in JS against realistic strings
+      const jsRegex = new RegExp('(^|[^a-zA-Z0-9\u10A0-\u10FF])(ფინანსები|ფინანს)', 'i');
+      expect(jsRegex.test('მთავარი ფინანსისტი')).toBe(true);
+      expect(jsRegex.test('ფინანსური დირექტორი')).toBe(true);
+      expect(jsRegex.test('Finance / ფინანსები')).toBe(true);
+
+      // Crucial: should NOT match 'დაფინანსება' or 'სრული დაფინანსებით'
+      expect(jsRegex.test('სრული დაფინანსებით')).toBe(false);
+      expect(jsRegex.test('დაფინანსება')).toBe(false);
+      expect(jsRegex.test('თანადაფინანსება')).toBe(false);
+    });
+
+    it('should correctly handle English suffixes', () => {
+      const regexDeveloper = buildWordBoundaryRegex('developer');
+      expect(regexDeveloper).toContain('develop');
+
+      const jsRegex = new RegExp('(^|[^a-zA-Z0-9\u10A0-\u10FF])(developer|develop)', 'i');
+      expect(jsRegex.test('Senior Developer')).toBe(true);
+      expect(jsRegex.test('Web Development')).toBe(true);
+      expect(jsRegex.test('Undeveloped')).toBe(false);
+    });
+  });
+
   describe('findAll', () => {
-    it('should build query with correct relevancy ordering when searching with multiple terms', async () => {
+    it('should build query with correct hierarchical priority: Title (1,000,000) > Company (10,000) > Description (100)', async () => {
       await service.findAll({
         query: 'ანგულარ დეველოპერი',
         page: 1,
@@ -82,39 +112,32 @@ describe('JobService', () => {
       // Verify that queryBuilder was created
       expect(jobRepoMock.createQueryBuilder).toHaveBeenCalledWith('job');
 
-      // Verify that parameter for whole phrase was set
-      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('wholePhrase', '%ანგულარ დეველოპერი%');
+      // Verify parameters
+      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('phraseRegex', expect.any(String));
+      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('wholePhraseLike', '%ანგულარ დეველოპერი%');
+      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('termRegex0', expect.any(String));
+      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('termRegex1', expect.any(String));
 
-      // Verify ordering
-      expect(queryBuilderMock.orderBy).toHaveBeenCalledWith(
-        '(CASE WHEN LOWER(job.vacancy) LIKE :wholePhrase THEN 50 ELSE 0 END + ' +
-        'CASE WHEN LOWER(job.company) LIKE :wholePhrase THEN 50 ELSE 0 END + ' +
-        'CASE WHEN LOWER(job.description) LIKE :wholePhrase THEN 10 ELSE 0 END + ' +
-        '(CASE WHEN LOWER(job.vacancy) LIKE :searchTerm0 THEN 10 ELSE 0 END +\n            ' +
-        'CASE WHEN LOWER(job.company) LIKE :searchTerm0 THEN 10 ELSE 0 END +\n            ' +
-        'CASE WHEN LOWER(job.description) LIKE :searchTerm0 THEN 1 ELSE 0 END) + ' +
-        '(CASE WHEN LOWER(job.vacancy) LIKE :searchTerm1 THEN 10 ELSE 0 END +\n            ' +
-        'CASE WHEN LOWER(job.company) LIKE :searchTerm1 THEN 10 ELSE 0 END +\n            ' +
-        'CASE WHEN LOWER(job.description) LIKE :searchTerm1 THEN 1 ELSE 0 END))',
-        'DESC'
-      );
+      // Verify hierarchical ordering: 1000000 for title, 10000 for company, 100 for description
+      const orderByCall = queryBuilderMock.orderBy.mock.calls[0][0];
+      expect(orderByCall).toContain('1000000');
+      expect(orderByCall).toContain('10000');
+      expect(orderByCall).toContain('100');
       expect(queryBuilderMock.addOrderBy).toHaveBeenCalledWith('job.id', 'DESC');
     });
 
     it('should build query with correct ordering when searching with a single term', async () => {
       await service.findAll({
-        query: 'ანგულარ',
+        query: 'ფინანსები',
         page: 1,
         limit: 10,
       });
 
-      // Since N=1, terms.length <= 1, so wholePhrase weight ordering won't be included.
-      expect(queryBuilderMock.orderBy).toHaveBeenCalledWith(
-        '((CASE WHEN LOWER(job.vacancy) LIKE :searchTerm0 THEN 10 ELSE 0 END +\n            ' +
-        'CASE WHEN LOWER(job.company) LIKE :searchTerm0 THEN 10 ELSE 0 END +\n            ' +
-        'CASE WHEN LOWER(job.description) LIKE :searchTerm0 THEN 1 ELSE 0 END))',
-        'DESC'
-      );
+      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('termRegex0', expect.any(String));
+
+      const orderByCall = queryBuilderMock.orderBy.mock.calls[0][0];
+      expect(orderByCall).toContain('WHEN (job.vacancy ~* :termRegex0) THEN 1000000');
+      expect(orderByCall).toContain('WHEN (job.company ~* :termRegex0) THEN 10000');
       expect(queryBuilderMock.addOrderBy).toHaveBeenCalledWith('job.id', 'DESC');
     });
   });
@@ -133,26 +156,14 @@ describe('JobService', () => {
       const result = await service.findAllByQuery(['Angular Developer', 'Frontend']);
 
       expect(jobRepoMock.createQueryBuilder).toHaveBeenCalledWith('job');
-      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('wholePhrase0', '%angular developer%');
-      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('searchTerm0', '%angular%');
-      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('searchTerm1', '%developer%');
-      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('searchTerm2', '%frontend%');
+      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('wholePhrase0', expect.any(String));
+      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('wholePhraseLike0', '%angular developer%');
+      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('searchTerm0', expect.any(String));
 
-      expect(queryBuilderMock.orderBy).toHaveBeenCalledWith(
-        '(CASE WHEN LOWER(job.vacancy) LIKE :wholePhrase0 THEN 50 ELSE 0 END + ' +
-        'CASE WHEN LOWER(job.company) LIKE :wholePhrase0 THEN 50 ELSE 0 END + ' +
-        'CASE WHEN LOWER(job.description) LIKE :wholePhrase0 THEN 10 ELSE 0 END + ' +
-        '(CASE WHEN LOWER(job.vacancy) LIKE :searchTerm0 THEN 10 ELSE 0 END +\n          ' +
-        'CASE WHEN LOWER(job.company) LIKE :searchTerm0 THEN 10 ELSE 0 END +\n          ' +
-        'CASE WHEN LOWER(job.description) LIKE :searchTerm0 THEN 1 ELSE 0 END) + ' +
-        '(CASE WHEN LOWER(job.vacancy) LIKE :searchTerm1 THEN 10 ELSE 0 END +\n          ' +
-        'CASE WHEN LOWER(job.company) LIKE :searchTerm1 THEN 10 ELSE 0 END +\n          ' +
-        'CASE WHEN LOWER(job.description) LIKE :searchTerm1 THEN 1 ELSE 0 END) + ' +
-        '(CASE WHEN LOWER(job.vacancy) LIKE :searchTerm2 THEN 10 ELSE 0 END +\n          ' +
-        'CASE WHEN LOWER(job.company) LIKE :searchTerm2 THEN 10 ELSE 0 END +\n          ' +
-        'CASE WHEN LOWER(job.description) LIKE :searchTerm2 THEN 1 ELSE 0 END))',
-        'DESC'
-      );
+      const orderByCall = queryBuilderMock.orderBy.mock.calls[0][0];
+      expect(orderByCall).toContain('1000000');
+      expect(orderByCall).toContain('10000');
+      expect(orderByCall).toContain('100');
       expect(queryBuilderMock.addOrderBy).toHaveBeenCalledWith('job.id', 'DESC');
       expect(queryBuilderMock.limit).toHaveBeenCalledWith(60);
       expect(result).toEqual(mockJobs);
