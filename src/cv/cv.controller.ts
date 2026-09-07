@@ -15,6 +15,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CvService } from './cv.service';
 import { CvFileValidationPipe } from './cv-file-validation.pipe';
 import { UpdateCvSummaryDto } from './dto/update-cv.dto';
+import { CreateCvDto } from './dto/create-cv.dto';
 import { CvParserService } from './cv-parser.service';
 
 @ApiTags('CV')
@@ -35,12 +36,18 @@ export class CvController {
       type: 'object',
       properties: {
         file: { type: 'string', format: 'binary', description: 'PDF or Word document, max 5MB' },
+        consent: { type: 'boolean', description: 'Consent to store and process this CV. Required.' },
       },
+      required: ['file', 'consent'],
     },
   })
   @UseInterceptors(FileInterceptor('file', { storage: memoryStorage() }))
-  async upload(@UploadedFile(CvFileValidationPipe) file: Express.Multer.File, @Req() req) {
-    return this.cvService.uploadCv(req.user.id, file);
+  async upload(
+    @UploadedFile(CvFileValidationPipe) file: Express.Multer.File,
+    @Body() dto: CreateCvDto,
+    @Req() req,
+  ) {
+    return this.cvService.uploadCv(req.user.id, file, dto.consent);
   }
 
   @Get()

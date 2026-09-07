@@ -1,5 +1,5 @@
 // src/cv/cv.service.ts
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { UpdateCvSummaryDto } from './dto/update-cv.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Cv } from 'src/Entities/cv.entity';
@@ -15,7 +15,11 @@ export class CvService {
     private readonly cvParserService: CvParserService,
   ) {}
 
-  async uploadCv(userId: number, file: Express.Multer.File): Promise<Omit<Cv, 'fileData'>> {
+  async uploadCv(userId: number, file: Express.Multer.File, consent: boolean): Promise<Omit<Cv, 'fileData'>> {
+    if (!consent) {
+      throw new BadRequestException('Consent is required to upload your CV');
+    }
+
     // Delete existing CV for this user
     const existing = await this.cvRepository.findOne({ where: { userId } });
     if (existing) {
@@ -32,6 +36,8 @@ export class CvService {
       size: file.size,
       fileData: file.buffer,
       summary: null,
+      consentGiven: true,
+      consentGivenAt: new Date(),
     });
 
     const saved = await this.cvRepository.save(cv);
