@@ -25,8 +25,11 @@ async create(createSentJobDto: CreateSentJobDto) {
 
 
 async createBulk(jobs: CreateSentJobDto[]) {
-  await this.sentJobRepo.upsert(jobs, ['userId', 'jobId']);
-  return { success: true, count: jobs.length };
+  const deduped = Array.from(
+    new Map(jobs.map((job) => [`${job.userId}_${job.jobId}`, job])).values(),
+  );
+  await this.sentJobRepo.upsert(deduped, ['userId', 'jobId']);
+  return { success: true, count: deduped.length };
 }
 async findByUserId(id: number, page = 1, limit = 10) {
   const take = limit;
