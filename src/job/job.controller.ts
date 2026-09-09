@@ -1,10 +1,11 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ParseIntPipe, BadRequestException, UseGuards, Logger } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ParseIntPipe, BadRequestException, ForbiddenException, UseGuards, Req, Logger } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { JobService } from './job.service';
 import { CreateJobDto } from './dto/create-job.dto';
 import { UpdateJobDto } from './dto/update-job.dto';
 import { FilterJobDto } from './dto/filter-job.dto';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from 'src/auth/guards/optional-jwt-auth.guard';
 
 @ApiTags('job')
 @Controller('job')
@@ -40,6 +41,8 @@ export class JobController {
     return await this.jobService.create(createJobDto);
   }
   
+  @ApiBearerAuth('bearerAuth')
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'query', required: false, type: String })
@@ -48,7 +51,13 @@ export class JobController {
   @ApiQuery({ name: 'location', required: false, type: String })
   @ApiQuery({ name: 'publishDate', required: false, type: String })
   @Get('all')
-  async findAll(@Query() filterDto: FilterJobDto) {
+  async findAll(@Query() filterDto: FilterJobDto, @Req() req: any) {
+    const page = Math.max(1, Number(filterDto.page) || 1);
+
+    if (page > 5 && !req?.user) {
+      throw new ForbiddenException('Authentication is required to view pages beyond page 5');
+    }
+
     return await this.jobService.findAll(filterDto);
   }
 
