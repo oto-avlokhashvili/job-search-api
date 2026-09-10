@@ -442,7 +442,7 @@ Return ONLY valid raw JSON, no markdown, no backticks:
     ---
 
     ## CRITICAL RULE — ROLE RELEVANCE FILTER
-    **Before scoring, apply a hard filter:**
+    **Before scoring, apply a hard filter. If the candidate is not qualified for a vacancy, SKIP it entirely — do not score it, do not include it in the output:**
     - The candidate's detected role is: "${summary.detectedRole}" in "${summary.careerDirection}"
     - EXCLUDE any vacancy that is NOT in ${summary.domains}
     - EXCLUDE any vacancy that is NOT in secondarySkills or primary skills ${summary.secondarySkills}
@@ -475,9 +475,9 @@ Return ONLY valid raw JSON, no markdown, no backticks:
     ---
 
     ## STEP 2 — FILTER & RANK
-    - MINIMUM score to include: **50**
-    - Return at least 5 and up to 10 of the top-ranked vacancies.
-    - If fewer than 5 vacancies reach 50, include the top 5 dev-relevant ones anyway to ensure you return at least 5 vacancies (and up to 10 if available).
+    - MINIMUM score to include: **60**
+    - **Hard rule: NEVER include a vacancy scoring below 60. Do not pad the results to reach a minimum count — if fewer than 5 (or even zero) vacancies reach 60, return only those that do.**
+    - Return up to 10 of the top-ranked vacancies that score 60 or above.
     - Sort descending by score
     - **No marketing, no retail, no non-IT roles — ever**
 
@@ -603,6 +603,9 @@ Return ONLY valid raw JSON, no markdown, no backticks:
           const cleanJson = this.extractJson(responseText);
           const repaired = jsonrepair(cleanJson);
           const parsedResponse = JSON.parse(repaired);
+          parsedResponse.topJobs = (parsedResponse.topJobs || []).filter(
+            (job: any) => typeof job?.match === 'number' && job.match >= 60,
+          );
           await this.aiMatchedJobsService.createBulk(userId, parsedResponse.topJobs || []);
           return {
             response: parsedResponse,
