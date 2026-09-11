@@ -1,6 +1,8 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Inject, forwardRef, Logger } from '@nestjs/common';
 import { BrevoClient } from '@getbrevo/brevo';
 import { ConfigService } from '@nestjs/config';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { UserService } from '../user/user.service';
 import { AiMatchedJobsService } from '../ai-matched-jobs/ai-matched-jobs.service';
 import { SentJobsService } from '../sent-jobs/sent-jobs.service';
@@ -8,6 +10,7 @@ import { EntitlementService } from '../subscription/entitlement.service';
 
 @Injectable()
 export class EmailService {
+  private readonly logger = new Logger(EmailService.name);
   private client: BrevoClient;
 
   constructor(
@@ -17,15 +20,19 @@ export class EmailService {
     private readonly aiMatchedJobsService: AiMatchedJobsService,
     private readonly sentJobsService: SentJobsService,
     private readonly entitlementService: EntitlementService,
+    @InjectQueue('email') private readonly emailQueue: Queue,
   ) {
     const apiKey = this.configService.get<string>('BREVO_API_KEY') || process.env.BREVO_API_KEY || '';
-    const maskedKey = apiKey ? `${apiKey.substring(0, 6)}... (length: ${apiKey.length})` : 'MISSING';
     this.client = new BrevoClient({
       apiKey,
     });
   }
 
-  async sendEmail(
+  /**
+   * Directly sends an email via Brevo API.
+   * Typically called by the BullMQ processor worker.
+   */
+  async sendDirectEmail(
     to: string,
     subject: string,
     html: string,
@@ -49,81 +56,144 @@ export class EmailService {
       });
       return response;
     } catch (err: any) {
-      console.error(`[EmailService] Failed to send email to ${to}:`, err);
+      this.logger.error(`Failed to send email to ${to}:`, err);
       throw err;
     }
   }
 
+  /**
+   * Pushes a single email job into the BullMQ background queue.
+   */
+  async queueEmail(
+    to: string,
+    subject: string,
+    html: string,
+    senderEmail?: string,
+    senderName?: string,
+  ) {
+    return await this.emailQueue.add(
+      'send-email',
+      { to, subject, html, senderEmail, senderName },
+      {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2000 },
+        removeOnComplete: true,
+        removeOnFail: false,
+      },
+    );
+  }
+
+  /**
+   * Standard sendEmail method (enqueues the email for asynchronous delivery).
+   */
+  async sendEmail(
+    to: string,
+    subject: string,
+    html: string,
+    senderEmail?: string,
+    senderName?: string,
+  ) {
+    return this.sendDirectEmail(to, subject, html, senderEmail, senderName);
+  }
+
+  /**
+   * Iterates eligible users and enqueues individual alert jobs into BullMQ.
+   * Returns immediately in milliseconds without blocking execution.
+   */
   async sendDailyEmailAlerts() {
     const users = await this.userService.findAll();
-    console.log(`[EmailService] Starting daily email alerts for ${users.length} users...`);
+    this.logger.log(`Starting daily email alerts queueing for ${users.length} users...`);
 
     const SAFETY_DAILY_LIMIT = 250;
-    let sentEmailsCount = 0;
+    let queuedCount = 0;
 
     for (const user of users) {
-      if (!user.email || !user.isEmailVerified || !this.entitlementService.canReceiveEmailAlerts(user) || user.receiveMessages === false) continue;
+      if (
+        !user.email ||
+        !user.isEmailVerified ||
+        !this.entitlementService.canReceiveEmailAlerts(user) ||
+        user.receiveMessages === false
+      ) {
+        continue;
+      }
 
-      if (sentEmailsCount >= SAFETY_DAILY_LIMIT) {
-        console.warn(`[EmailService] Daily safety limit of ${SAFETY_DAILY_LIMIT} emails reached. Stopping alerts dispatch.`);
+      if (queuedCount >= SAFETY_DAILY_LIMIT) {
+        this.logger.warn(`Daily safety limit of ${SAFETY_DAILY_LIMIT} reached. Stopping queueing.`);
         break;
       }
 
-      try {
-        // Fetch matched jobs and sent jobs in parallel, matching Telegram bot daily flow
-        const [matchedJobs, sentJobIdsArr] = await Promise.all([
-          this.aiMatchedJobsService.findAllMatched(user.id),
-          this.sentJobsService.findAllJobIdsByUserId(user.id),
-        ]);
+      await this.emailQueue.add(
+        'send-user-alert',
+        { userId: user.id },
+        {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 3000 },
+          removeOnComplete: true,
+          removeOnFail: false,
+        },
+      );
 
-        const sentJobIds = new Set<number>(sentJobIdsArr);
-
-        // Filter new jobs that haven't been sent
-        const newJobs = matchedJobs.filter((job: any) => !sentJobIds.has(job.id));
-
-        if (newJobs.length === 0) {
-          console.log(`[EmailService] No new jobs found for user ${user.email} (all were already sent). Skipping email alert.`);
-          continue;
-        }
-
-        const jobsToSend = newJobs; // Send everything to eligible users
-        const effectivePlan = this.entitlementService.getEffectivePlan(user);
-        console.log(`[EmailService] Sending ${jobsToSend.length} jobs to user ${user.email} (${effectivePlan})`);
-
-        // Mark them as sent in database using bulk upsert
-        const sentJobDtos = jobsToSend.map((job) => ({
-          userId: user.id,
-          jobId: job.id,
-          vacancy: job.vacancy,
-          location: job.location,
-          company: job.company,
-          match: job.match,
-          salaryRange: job.salaryRange,
-        }));
-        await this.sentJobsService.createBulk(sentJobDtos);
-
-        // Build HTML
-        const htmlBody = this.buildJobsEmailHtml(
-          user.firstName,
-          jobsToSend,
-          0,
-          effectivePlan,
-        );
-
-        // Send Email
-        const subject = `🔔 Job Up ${jobsToSend.length} ახალი ვაკანსია თქვენთვის!`;
-        await this.sendEmail(user.email, subject, htmlBody);
-        
-        sentEmailsCount++;
-
-        // Add 1.5 seconds delay between emails to respect rates and safety limits
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-      } catch (err: any) {
-        console.error(`[EmailService] Failed to process email alerts for user ${user.id}:`, err);
-      }
+      queuedCount++;
     }
 
-    console.log(`[EmailService] Completed daily email alerting run. Dispatched ${sentEmailsCount} emails.`);
+    this.logger.log(`Successfully queued ${queuedCount} daily alert jobs into BullMQ.`);
+    return { queuedCount };
+  }
+
+  /**
+   * Worker handler: Processes matching and sending daily email alerts for a specific user.
+   */
+  async processUserDailyAlert(userId: number) {
+    const user = await this.userService.findOne(userId);
+    if (!user || !user.email || !user.isEmailVerified || !this.entitlementService.canReceiveEmailAlerts(user) || user.receiveMessages === false) {
+      return { status: 'skipped', reason: 'user ineligible or not found' };
+    }
+
+    // Fetch matched jobs and sent jobs in parallel
+    const [matchedJobs, sentJobIdsArr] = await Promise.all([
+      this.aiMatchedJobsService.findAllMatched(user.id),
+      this.sentJobsService.findAllJobIdsByUserId(user.id),
+    ]);
+
+    const sentJobIds = new Set<number>(sentJobIdsArr);
+
+    // Filter new jobs that haven't been sent yet
+    const newJobs = matchedJobs.filter((job: any) => !sentJobIds.has(job.id));
+
+    if (newJobs.length === 0) {
+      this.logger.log(`No new jobs found for user ${user.email}. Skipping email alert.`);
+      return { status: 'skipped', reason: 'no new matched jobs' };
+    }
+
+    const jobsToSend = newJobs;
+    const effectivePlan = this.entitlementService.getEffectivePlan(user);
+    this.logger.log(`Sending ${jobsToSend.length} jobs to user ${user.email} (${effectivePlan})`);
+
+    // Mark them as sent in database using bulk upsert
+    const sentJobDtos = jobsToSend.map((job) => ({
+      userId: user.id,
+      jobId: job.id,
+      vacancy: job.vacancy,
+      location: job.location,
+      company: job.company,
+      match: job.match,
+      salaryRange: job.salaryRange,
+    }));
+    await this.sentJobsService.createBulk(sentJobDtos);
+
+    // Build HTML
+    const htmlBody = this.buildJobsEmailHtml(
+      user.firstName,
+      jobsToSend,
+      0,
+      effectivePlan,
+    );
+
+    // Send direct transactional email via Brevo
+    const subject = `🔔 Job Up ${jobsToSend.length} ახალი ვაკანსია თქვენთვის!`;
+    const response = await this.sendDirectEmail(user.email, subject, htmlBody);
+
+    return { status: 'sent', recipient: user.email, jobsCount: jobsToSend.length, response };
   }
 
   private buildJobsEmailHtml(
@@ -243,7 +313,7 @@ export class EmailService {
         <p style="font-size: 13px; color: #6b7280; text-align: center;">ეს კოდი აქტიურია ელ-ფოსტის დადასტურებამდე.</p>
       </div>
     `;
-    await this.sendEmail(to, subject, html);
+    return await this.queueEmail(to, subject, html);
   }
 
   async sendContactEmail(email: string, comment: string) {
@@ -257,7 +327,6 @@ export class EmailService {
         <div style="background-color: #f9fafb; padding: 15px; border-radius: 6px; border: 1px solid #f3f4f6; white-space: pre-wrap; font-size: 14px; color: #374151; line-height: 1.6;">${comment}</div>
       </div>
     `;
-    return await this.sendEmail(adminEmail, subject, html);
+    return await this.queueEmail(adminEmail, subject, html);
   }
 }
-

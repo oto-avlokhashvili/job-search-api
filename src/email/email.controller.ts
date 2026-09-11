@@ -11,10 +11,10 @@ export class EmailController {
   constructor(private readonly emailService: EmailService) {}
 
   @Post('send')
-  @ApiOperation({ summary: 'Send a test email using Brevo' })
+  @ApiOperation({ summary: 'Send a test email using Brevo (queued in BullMQ)' })
   async sendTestEmail(@Body() dto: SendEmailDto) {
-    const response = await this.emailService.sendEmail(dto.to, dto.subject, dto.html, dto.senderEmail, dto.senderName);
-    return { success: true, message: 'Email sent successfully', data: response };
+    const job = await this.emailService.queueEmail(dto.to, dto.subject, dto.html, dto.senderEmail, dto.senderName);
+    return { success: true, message: 'Email queued successfully for delivery', jobId: job.id };
   }
 
   @Post('contact')
@@ -22,16 +22,18 @@ export class EmailController {
   @Throttle({ default: { limit: 3, ttl: 600000 } }) // Limit to max 3 contact emails per 10 minutes per IP
   @ApiOperation({ summary: 'Send a contact/feedback email from a user (rate-limited to 3/10m)' })
   async sendContactEmail(@Body() dto: ContactEmailDto) {
-    const response = await this.emailService.sendContactEmail(dto.email, dto.comment);
-    return { success: true, message: 'Contact email sent successfully', data: response };
+    const job = await this.emailService.sendContactEmail(dto.email, dto.comment);
+    return { success: true, message: 'Contact email queued successfully', jobId: job?.id };
   }
 
   @Post('send-daily-alerts')
-  @ApiOperation({ summary: 'Manually trigger sending daily email alerts to all users' })
+  @ApiOperation({ summary: 'Manually trigger sending daily email alerts to all users via BullMQ queue' })
   async triggerDailyEmailAlerts() {
-    this.emailService.sendDailyEmailAlerts().catch((err) => {
-      console.error('[EmailController] Error sending daily email alerts in background:', err);
-    });
-    return { success: true, message: 'Daily email alerts triggered successfully (running in background)' };
+    const result = await this.emailService.sendDailyEmailAlerts();
+    return {
+      success: true,
+      message: `Daily email alerts successfully queued in BullMQ (${result.queuedCount} users).`,
+      data: result,
+    };
   }
 }
