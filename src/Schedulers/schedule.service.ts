@@ -41,15 +41,9 @@ export class ScheduleService {
   } */
   
   @Cron('00 10 * * *')
-  async startTelegramBot() {
-    this.logger.log('🚀 Starting Telegram bot via cron...');
-    await this.telegramService.startBot();
-  }
-
-  @Cron('40 10 * * *')
-  async stopTelegramBot() {
-    this.logger.log('🛑 Stopping Telegram bot via cron...');
-    await this.telegramService.stopBot();
+  async sendDailyTelegramAlerts() {
+    this.logger.log('🚀 Starting daily Telegram job alerts dispatch...');
+    await this.telegramService.dispatchDailyTelegramAlerts();
   }
 
   @Cron('00 09 * * *')
