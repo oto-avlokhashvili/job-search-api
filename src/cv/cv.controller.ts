@@ -6,20 +6,22 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
-import { Response } from 'express';
 import {
   ApiTags, ApiConsumes, ApiBody, ApiOperation,
   ApiOkResponse, ApiNoContentResponse, ApiBearerAuth,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Public } from '../auth/decorators/public.decorator';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { CvService } from './cv.service';
 import { CvFileValidationPipe } from './cv-file-validation.pipe';
 import { UpdateCvSummaryDto } from './dto/update-cv.dto';
 import { CreateCvDto } from './dto/create-cv.dto';
+import { PublicCvUploadDto } from './dto/public-cv-upload.dto';
 import { CvParserService } from './cv-parser.service';
 
 @ApiTags('CV')
-@ApiBearerAuth()
+@ApiBearerAuth('bearerAuth')
 @Controller('cv')
 @UseGuards(JwtAuthGuard)
 export class CvController {
@@ -28,8 +30,35 @@ export class CvController {
     private readonly cvParserService: CvParserService,
   ) {}
 
+  @Public()
+  @Post('public-submit')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 600000 } }) // Limit to max 5 submissions per 10 minutes per IP
+  @ApiOperation({ summary: 'Landing page public CV upload (Leave CV for HRs to contact you)' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        email: { type: 'string', format: 'email', description: 'Contact email address' },
+        fullName: { type: 'string', description: 'Full name (optional)' },
+        phoneNumber: { type: 'string', description: 'Phone number (optional)' },
+        file: { type: 'string', format: 'binary', description: 'PDF or Word document, max 5MB' },
+        consent: { type: 'boolean', description: 'Consent to store and share CV with HRs. Required.' },
+      },
+      required: ['email', 'file', 'consent'],
+    },
+  })
+  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage() }))
+  async publicSubmit(
+    @UploadedFile(CvFileValidationPipe) file: Express.Multer.File,
+    @Body() dto: PublicCvUploadDto,
+  ) {
+    return this.cvService.submitPublicCv(dto, file);
+  }
+
   @Post('upload')
-  @ApiOperation({ summary: 'Upload or replace your CV' })
+  @ApiOperation({ summary: 'Upload or replace your CV (Registered user)' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {

@@ -19,6 +19,7 @@ import { EmailModule } from './email/email.module';
 import { SubscriptionModule } from './subscription/subscription.module';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { BullModule } from '@nestjs/bullmq';
+import { StatsModule } from './stats/stats.module';
 
 @Module({
   imports: [
@@ -90,6 +91,7 @@ import { BullModule } from '@nestjs/bullmq';
     AiMatchedJobsModule,
     ScrapersModule,
     EmailModule,
+    StatsModule,
   ],
   controllers: [AppController],
   providers: [AppService, ScheduleService],

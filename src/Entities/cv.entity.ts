@@ -1,14 +1,25 @@
 // src/Entities/cv.entity.ts
 import { CvSummaryDetails } from "src/cv/dto/cv-summary.dto";
-import { PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Entity } from "typeorm";
+import { PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, Entity, Index } from "typeorm";
 
 @Entity('cv_files')
 export class Cv {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column()
-  userId: number;
+  @Column({ type: 'int', nullable: true })
+  @Index()
+  userId: number | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  @Index()
+  email: string | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  fullName: string | null;
+
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  phoneNumber: string | null;
 
   @Column()
   fileName: string;
@@ -22,8 +33,8 @@ export class Cv {
   @Column()
   size: number;
 
-  @Column({ type: 'bytea' })
-  fileData: Buffer;
+  @Column({ type: 'varchar', length: 500, default: '' })
+  storagePath: string;
 
   @Column({ type: 'jsonb', nullable: true, default: null })
   summary: CvSummaryDetails | null;
