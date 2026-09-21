@@ -1,6 +1,8 @@
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
 import TelegramBot from 'node-telegram-bot-api';
 import { from, lastValueFrom } from 'rxjs';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { AiMatchedJobsService } from 'src/ai-matched-jobs/ai-matched-jobs.service';
 import { AiService } from 'src/ai/ai.service';
 import { CvService } from 'src/cv/cv.service';
@@ -36,13 +38,15 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         private readonly jobService: JobService,
         private readonly aiMatchedJobsService: AiMatchedJobsService,
         private readonly cvService: CvService,
+        @Inject(forwardRef(() => UserService))
         private userService: UserService,
+        @Inject(forwardRef(() => AiService))
         private aiService: AiService,
         private readonly entitlementService: EntitlementService,
+        @InjectQueue('telegram') private readonly telegramQueue: Queue,
     ) { }
 
     onModuleInit() {
-        // Bot will be started by ScheduleService
         this.setupCommands();
     }
 
@@ -92,14 +96,14 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
 
             if (linkedUser) {
                 if (!this.entitlementService.canReceiveTelegramAlerts(linkedUser)) {
-                    this.bot?.sendMessage(
+                    await this.sendDirectMessage(
                         chatId,
                         `⚠️ გამარჯობა, ${linkedUser.firstName}!\n` +
                         `ტელეგრამ შეტყობინებები ხელმისაწვდომია მხოლოდ BASIC/PRO მომხმარებლებისთვის.\n` +
                         `გთხოვთ, გაააქტიუროთ გამოწერა.`
                     );
                 } else {
-                    this.bot?.sendMessage(
+                    await this.sendDirectMessage(
                         chatId,
                         `✅ ტელეგრამ ბოტი წარმატებულად ჩაირთო, ${linkedUser.firstName}! თქვენ ყოველდღიურად მიიღებთ ახალ ვაკანსიებს თქვენი პროფილის მიხედვით.`
                     );
@@ -107,24 +111,24 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
             } else {
                 const token = match?.[1];
                 if (!token) {
-                    this.bot?.sendMessage(chatId, '❌ დამაკავშირებელი ტოკენი ვერ მოიძებნა.');
+                    await this.sendDirectMessage(chatId, '❌ დამაკავშირებელი ტოკენი ვერ მოიძებნა.');
                     return;
                 }
 
                 const user = await this.userService.linkTelegramToken(token, chatId);
                 if (!user) {
-                    this.bot?.sendMessage(chatId, '❌ ტოკენი არ არის ვალიდური.');
+                    await this.sendDirectMessage(chatId, '❌ ტოკენი არ არის ვალიდური.');
                     return;
                 }
 
                 if (!this.entitlementService.canReceiveTelegramAlerts(user)) {
-                    this.bot?.sendMessage(
+                    await this.sendDirectMessage(
                         chatId,
                         `✅ ტელეგრამი წარმატებით დაუკავშირდა თქვენს ანგარიშს, ${user.firstName}!\n` +
                         `⚠️ გაითვალისწინეთ: ვაკანსიების მისაღებად საჭიროა გამოწერის გააქტიურება.`
                     );
                 } else {
-                    this.bot?.sendMessage(
+                    await this.sendDirectMessage(
                         chatId,
                         `✅ ტელეგრამი წარმატებით დაუკავშირდა თქვენს ანგარიშს, ${user.firstName}!\n` +
                         `🔔 თქვენ ყოველდღიურად მიიღებთ ახალ ვაკანსიებს თქვენი პროფილის მიხედვით.`
@@ -134,79 +138,91 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         });
     }
 
-    async startBot() {
-        if (this.isRunning) {
-            this.logger.warn('⚠️ Bot is already running');
-            return;
+    /**
+     * Directly sends a message via the Telegram bot API.
+     */
+    async sendDirectMessage(
+        chatId: string | number,
+        text: string,
+        options?: TelegramBot.SendMessageOptions,
+    ): Promise<TelegramBot.Message | null> {
+        if (!this.bot) {
+            this.logger.error('Telegram bot instance is not initialized');
+            return null;
         }
 
         try {
-            this.isRunning = true;
-            this.logger.log('🚀 Telegram Bot started successfully!');
-
-            // Automatically execute start logic for all linked users
-            await this.autoStartForAllUsers();
-        } catch (error) {
-            this.logger.error('❌ Failed to start bot:', error);
+            return await this.bot.sendMessage(chatId, text, options);
+        } catch (error: any) {
+            this.logger.error(`Failed to send direct message to Telegram chat ${chatId}:`, error.message || error);
+            throw error;
         }
     }
 
-    async stopBot() {
-        if (!this.isRunning) {
-            this.logger.warn('⚠️ Bot is not already stopped');
-            return;
-        }
-
-        try {
-            this.logger.log('🛑 Stopping bot polling & cleaning up sessions...');
-
-            // Automatically execute stop logic for all linked users
-            await this.autoStopForAllUsers();
-
-            this.isRunning = false;
-            this.logger.log('✅ Bot stopped and cleaned up successfully');
-        } catch (error) {
-            this.logger.error('❌ Failed to stop bot:', error);
-        }
+    /**
+     * Enqueues a single message job into BullMQ.
+     */
+    async queueDirectMessage(
+        chatId: string | number,
+        text: string,
+        options?: TelegramBot.SendMessageOptions,
+    ) {
+        return await this.telegramQueue.add(
+            'send-direct-telegram-message',
+            { chatId, text, options },
+            {
+                attempts: 3,
+                backoff: { type: 'exponential', delay: 2000 },
+                removeOnComplete: true,
+                removeOnFail: false,
+            },
+        );
     }
 
-    private async autoStartForAllUsers() {
-        try {
-            const allUsers = await this.userService.findAllWithTelegram();
-            const users = allUsers.filter(u => this.entitlementService.canReceiveTelegramAlerts(u) && u.receiveMessages !== false);
-            this.logger.log(`🚀 Starting queue for ${users.length} eligible Telegram users...`);
+    /**
+     * Dispatches daily Telegram job alert tasks to BullMQ for all eligible users.
+     * Non-blocking: returns in milliseconds.
+     */
+    async dispatchDailyTelegramAlerts(): Promise<{ queuedCount: number }> {
+        const allUsers = await this.userService.findAllWithTelegram();
+        const eligibleUsers = allUsers.filter(
+            (u) => this.entitlementService.canReceiveTelegramAlerts(u) && u.receiveMessages !== false && u.telegramChatId,
+        );
 
-            let successCount = 0;
-            let failCount = 0;
+        this.logger.log(`🚀 Queueing daily Telegram alerts for ${eligibleUsers.length} eligible users...`);
 
-            for (let i = 0; i < users.length; i++) {
-                const user = users[i];
-
-                try {
-                    await this.processUserStart(user);
-                    successCount++;
-                    this.logger.log(`✅ [${i + 1}/${users.length}] Processed user ${user.telegramChatId}`);
-                } catch (error) {
-                    failCount++;
-                    this.logger.error(`❌ [${i + 1}/${users.length}] Failed for user ${user.telegramChatId}:`, error);
-                }
-
-                // Wait 1.5s between each user to respect Telegram rate limits
-                if (i < users.length - 1) {
-                    await new Promise(resolve => setTimeout(resolve, 1500));
-                }
-            }
-
-            this.logger.log(`✅ Queue finished. Success: ${successCount}, Failed: ${failCount}`);
-        } catch (error) {
-            this.logger.error('Failed to process user queue:', error);
+        let queuedCount = 0;
+        for (const user of eligibleUsers) {
+            await this.telegramQueue.add(
+                'send-user-telegram-alerts',
+                { userId: user.id },
+                {
+                    attempts: 3,
+                    backoff: { type: 'exponential', delay: 3000 },
+                    removeOnComplete: true,
+                    removeOnFail: false,
+                },
+            );
+            queuedCount++;
         }
+
+        this.logger.log(`✅ Successfully queued ${queuedCount} Telegram alert jobs into BullMQ.`);
+        return { queuedCount };
     }
 
-    private async processUserStart(user: any): Promise<void> {
-        if (!user.telegramChatId) return;
-        if (!this.entitlementService.canReceiveTelegramAlerts(user)) return;
-        if (user.receiveMessages === false) return;
+    /**
+     * Worker Handler: Processes and sends Telegram alerts for a single user.
+     */
+    async processUserTelegramAlert(userId: number) {
+        const user = await this.userService.findOne(userId);
+        if (
+            !user ||
+            !user.telegramChatId ||
+            !this.entitlementService.canReceiveTelegramAlerts(user) ||
+            user.receiveMessages === false
+        ) {
+            return { status: 'skipped', reason: 'user ineligible or no telegramChatId' };
+        }
 
         try {
             // 1. Fetch user's stored CV and search queries
@@ -215,11 +231,11 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
 
             if (searchQueries.length === 0) {
                 this.logger.warn(`No search queries found for user ${user.id}`);
-                await this.bot?.sendMessage(
+                await this.sendDirectMessage(
                     user.telegramChatId,
                     `ℹ️ გამარჯობა, ${user.firstName}! თქვენს პროფილში საძიებო სიტყვები ვერ მოიძებნა. გთხოვთ ატვირთოთ CV ან მიუთითოთ თქვენი პროფილი.`
                 );
-                return;
+                return { status: 'skipped', reason: 'no search queries' };
             }
 
             // 2. Fetch matching raw jobs directly from DB and sent jobs in parallel
@@ -234,11 +250,11 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
             const dailyLimit = this.entitlementService.getDailyJobLimit(user);
             const effectivePlan = this.entitlementService.getEffectivePlan(user);
             const newJobs = matchingJobs
-                .filter(job => !sentJobIds.has(job.id))
+                .filter((job) => !sentJobIds.has(job.id))
                 .slice(0, dailyLimit === Infinity ? undefined : dailyLimit);
 
             // Send welcome message
-            await this.bot?.sendMessage(
+            await this.sendDirectMessage(
                 user.telegramChatId,
                 `✅ გამარჯობა, ${user.firstName}! ბოტი აქტიურია და ეძებს ვაკანსიებს.\n` +
                 `⭐ თქვენი გამოწერა: ${effectivePlan}\n` +
@@ -246,16 +262,16 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
             );
 
             if (newJobs.length === 0) {
-                await this.bot?.sendMessage(
+                await this.sendDirectMessage(
                     user.telegramChatId,
                     `ℹ️ ახალი ვაკანსია ვერ მოიძებნა`
                 );
-                return;
+                return { status: 'skipped', reason: 'no new jobs' };
             }
 
             this.logger.log(`📨 Sending ${newJobs.length} jobs to user ${user.telegramChatId} (${effectivePlan})`);
 
-            // Send jobs with delay between each
+            // Send jobs with a small pacing delay between each message for the same chat
             for (const job of newJobs) {
                 try {
                     await this.sentJobsService.create({
@@ -267,7 +283,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
                         match: 0,
                     });
 
-                    await this.bot?.sendMessage(
+                    await this.sendDirectMessage(
                         user.telegramChatId,
                         `━━━━━━━━━━━━━━━━━━━\n` +
                         `🔔 *ახალი ვაკანსია*\n` +
@@ -281,19 +297,50 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
                         { parse_mode: 'Markdown' }
                     );
 
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                } catch (jobError) {
-                    this.logger.error(`Failed to send job ${job.id} to user ${user.telegramChatId}:`, jobError);
+                    // Small 300ms pacing delay per chat
+                    await new Promise((resolve) => setTimeout(resolve, 300));
+                } catch (jobError: any) {
+                    this.logger.error(`Failed to send job ${job.id} to user ${user.telegramChatId}:`, jobError.message || jobError);
                 }
             }
 
-            await this.bot?.sendMessage(
+            await this.sendDirectMessage(
                 user.telegramChatId,
                 `✅ ყველა ვაკანსია გამოიგზავნა. დარჩენილია: 0.`
             );
 
+            return { status: 'sent', recipient: user.telegramChatId, jobsCount: newJobs.length };
+        } catch (error: any) {
+            this.logger.error(`Failed processing Telegram alert for user ${user.telegramChatId}:`, error.message || error);
+            throw error;
+        }
+    }
+
+    async startBot() {
+        if (this.isRunning) {
+            this.logger.warn('⚠️ Bot alert dispatch is already in progress');
+            return;
+        }
+
+        try {
+            this.isRunning = true;
+            this.logger.log('🚀 Telegram Bot started successfully! Triggering alert queue...');
+            await this.dispatchDailyTelegramAlerts();
+            this.isRunning = false;
         } catch (error) {
-            this.logger.error(`Failed to start session for user ${user.telegramChatId}:`, error);
+            this.isRunning = false;
+            this.logger.error('❌ Failed to dispatch telegram alerts:', error);
+        }
+    }
+
+    async stopBot() {
+        try {
+            this.logger.log('🛑 Cleaning up Telegram sessions...');
+            this.userSessions.clear();
+            this.isRunning = false;
+            this.logger.log('✅ Bot stopped and cleaned up successfully');
+        } catch (error) {
+            this.logger.error('❌ Failed to stop bot:', error);
         }
     }
 
@@ -301,56 +348,6 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         const filled = Math.round(match / 10);
         return '🟩'.repeat(filled) + '⬜'.repeat(10 - filled);
     }
-
-    private async autoStopForAllUsers() {
-        try {
-            const allUsers = await this.userService.findAllWithTelegram();
-            const users = allUsers.filter(u => this.entitlementService.canReceiveTelegramAlerts(u) && u.receiveMessages !== false);
-
-            // Process in parallel batches
-            const BATCH_SIZE = 20; // Can be higher for stop messages
-
-            for (let i = 0; i < users.length; i += BATCH_SIZE) {
-                const batch = users.slice(i, i + BATCH_SIZE);
-
-                await Promise.allSettled(
-                    batch.map(user => this.processUserStop(user))
-                );
-
-                // Small delay between batches
-                if (i + BATCH_SIZE < users.length) {
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                }
-            }
-
-            // Clear all sessions
-            this.userSessions.clear();
-
-            this.logger.log(`🛑 Stopped sessions for ${users.length} users`);
-        } catch (error) {
-            this.logger.error('Failed to auto-stop for users:', error);
-        }
-    }
-
-    private async processUserStop(user: any): Promise<void> {
-        if (!user.telegramChatId) return;
-
-        try {
-            // Deactivate user session
-            const session = this.userSessions.get(parseInt(user.telegramChatId));
-            if (session) {
-                session.isActive = false;
-            }
-
-            await this.bot?.sendMessage(
-                user.telegramChatId,
-                `🛑 ბოტმა საქმე შეასრულა, დროებით ${user.firstName}!`
-            );
-        } catch (error) {
-            this.logger.error(`Failed to stop session for user ${user.telegramChatId}:`, error);
-        }
-    }
-
 
     async runDailyAnalysis() {
         const users = await this.userService.findAll();
