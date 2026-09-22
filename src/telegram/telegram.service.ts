@@ -107,6 +107,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
                         chatId,
                         `✅ ტელეგრამ ბოტი წარმატებულად ჩაირთო, ${linkedUser.firstName}! თქვენ ყოველდღიურად მიიღებთ ახალ ვაკანსიებს თქვენი პროფილის მიხედვით.`
                     );
+                    await this.telegramQueue.add('send-user-telegram-alerts', { userId: linkedUser.id });
                 }
             } else {
                 const token = match?.[1];
@@ -133,6 +134,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
                         `✅ ტელეგრამი წარმატებით დაუკავშირდა თქვენს ანგარიშს, ${user.firstName}!\n` +
                         `🔔 თქვენ ყოველდღიურად მიიღებთ ახალ ვაკანსიებს თქვენი პროფილის მიხედვით.`
                     );
+                    await this.telegramQueue.add('send-user-telegram-alerts', { userId: user.id });
                 }
             }
         });

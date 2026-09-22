@@ -1,6 +1,7 @@
 import { Module, Global } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtModule } from '@nestjs/jwt';
+import { BullModule } from '@nestjs/bullmq';
 import { Subscription } from 'src/Entities/subscription.entity';
 import { User } from 'src/Entities/user.entity';
 import { ChatUsage } from 'src/Entities/chat-usage.entity';
@@ -14,10 +15,11 @@ import { SubscriptionController } from './subscription.controller';
   imports: [
     TypeOrmModule.forFeature([Subscription, User, ChatUsage, Waitlist]),
     JwtModule.register({}),
+    BullModule.registerQueue({
+      name: 'telegram',
+    }),
   ],
   controllers: [SubscriptionController],
-
-
   providers: [EntitlementService, SubscriptionService],
   exports: [EntitlementService, SubscriptionService, TypeOrmModule],
 })

@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Logger,
   Param,
   ParseIntPipe,
   Patch,
@@ -10,6 +11,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { Public } from 'src/auth/decorators/public.decorator';
 import { SubscriptionService } from './subscription.service';
@@ -20,9 +23,12 @@ import { JoinWaitlistDto } from './dto/join-waitlist.dto';
 @ApiTags('Subscription')
 @Controller('subscription')
 export class SubscriptionController {
+  private readonly logger = new Logger(SubscriptionController.name);
+
   constructor(
     private readonly subscriptionService: SubscriptionService,
     private readonly entitlementService: EntitlementService,
+    @InjectQueue('telegram') private readonly telegramQueue: Queue,
   ) {}
 
   @Get('me')
@@ -45,12 +51,31 @@ export class SubscriptionController {
   @Patch('assign/:userId')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('bearerAuth')
-  @ApiOperation({ summary: 'Assign or update a subscription plan for a user' })
+  @ApiOperation({ summary: 'Assign or update a subscription plan for a user and immediately trigger Telegram alerts' })
   async assignPlan(
     @Param('userId', ParseIntPipe) userId: number,
     @Body() dto: AssignPlanDto,
   ) {
-    return this.subscriptionService.assignPlan(userId, dto);
+    const subscription = await this.subscriptionService.assignPlan(userId, dto);
+
+    // Immediately trigger Telegram alert dispatch for this user
+    try {
+      await this.telegramQueue.add(
+        'send-user-telegram-alerts',
+        { userId },
+        {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 2000 },
+          removeOnComplete: true,
+          removeOnFail: false,
+        },
+      );
+      this.logger.log(`Enqueued immediate Telegram alerts for user ${userId} following plan assignment.`);
+    } catch (err: any) {
+      this.logger.error(`Failed to enqueue Telegram alert for user ${userId}: ${err.message || err}`);
+    }
+
+    return subscription;
   }
 
   @Post('cancel')
