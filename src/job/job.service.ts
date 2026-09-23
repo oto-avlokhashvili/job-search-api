@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger, ConflictException } from '@nestjs/common';
 import { CreateJobDto } from './dto/create-job.dto';
 import { UpdateJobDto } from './dto/update-job.dto';
 import { Brackets, ILike, In, LessThan, Like, Repository } from 'typeorm';
@@ -101,9 +101,17 @@ export class JobService {
       const sig = `${normalizedVacancy}|${normalizedCompany}|${normalizedLocation}`;
       createJobDto.fingerprint = crypto.createHash('md5').update(sig).digest('hex');
     }
-    const job = await this.jobRepo.save(createJobDto);
-    this.citiesCache = null; // Invalidate cache
-    return job;
+    createJobDto.page ??= 1;
+    try {
+      const job = await this.jobRepo.save(createJobDto);
+      this.citiesCache = null; // Invalidate cache
+      return job;
+    } catch (err: any) {
+      if (err?.code === '23505') { // unique_violation (link or fingerprint)
+        throw new ConflictException('A job with the same link or fingerprint already exists');
+      }
+      throw err;
+    }
   }
 
   async scrapper() {

@@ -1,5 +1,5 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ParseIntPipe, BadRequestException, ForbiddenException, UseGuards, Req, Logger } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiConflictResponse, ApiCreatedResponse, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { JobService } from './job.service';
 import { CreateJobDto } from './dto/create-job.dto';
 import { UpdateJobDto } from './dto/update-job.dto';
@@ -36,6 +36,39 @@ export class JobController {
 
   @ApiBearerAuth('bearerAuth')
   @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Create a single job vacancy' })
+  @ApiBody({
+    type: CreateJobDto,
+    examples: {
+      minimal: {
+        summary: 'Required fields only',
+        value: {
+          vacancy: 'Senior Backend Developer (Node.js)',
+          location: 'თბილისი',
+          company: 'Job Up',
+          link: 'https://jobs.ge/ge/?view=jobs&id=123456',
+          publishDate: '2026-09-23',
+          deadline: '2026-10-23',
+        },
+      },
+      full: {
+        summary: 'All fields',
+        value: {
+          vacancy: 'Senior Backend Developer (Node.js)',
+          location: 'თბილისი',
+          company: 'Job Up',
+          link: 'https://jobs.ge/ge/?view=jobs&id=123457',
+          publishDate: '2026-09-23',
+          deadline: '2026-10-23',
+          page: 1,
+          description: 'We are looking for a backend developer with 4+ years of experience in Node.js, NestJS and PostgreSQL.',
+        },
+      },
+    },
+  })
+  @ApiCreatedResponse({ description: 'Job created' })
+  @ApiBadRequestResponse({ description: 'Validation failed' })
+  @ApiConflictResponse({ description: 'A job with the same link or fingerprint already exists' })
   @Post('create')
   async create(@Body() createJobDto: CreateJobDto) {
     return await this.jobService.create(createJobDto);
