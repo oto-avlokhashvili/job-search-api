@@ -1,5 +1,7 @@
 import { HttpException, Injectable, Logger, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import axios from 'axios';
 import { AiChatDto, AnalyzeJobDto, ChatDto } from './dto/analyze-job.dto';
 import { CvService } from 'src/cv/cv.service';
@@ -10,19 +12,23 @@ import { CvSummaryDetails } from 'src/cv/dto/cv-summary.dto';
 import { AiMatchedJobsService } from 'src/ai-matched-jobs/ai-matched-jobs.service';
 import mammoth from 'mammoth';
 import { CvParserService } from 'src/cv/cv-parser.service';
+import { EntitlementService } from 'src/subscription/entitlement.service';
 
 @Injectable()
 export class AiService {
   private readonly apiKey = process.env.GEMINI_API_KEY;
   private readonly openrouterKey = process.env.OPENROUTER_KEY;
   private readonly logger = new Logger(AiService.name);
-  constructor(private readonly configService: ConfigService,
+  constructor(
+    private readonly configService: ConfigService,
     private readonly cvService: CvService,
     private readonly jobService: JobService,
     @Inject(forwardRef(() => UserService))
     private readonly userService: UserService,
     private readonly aiMatchedJobsService: AiMatchedJobsService,
     private readonly cvParserService: CvParserService,
+    private readonly entitlementService: EntitlementService,
+    @InjectQueue('ai') private readonly aiQueue: Queue,
   ) { }
 
   private async callGemini(
@@ -34,10 +40,13 @@ export class AiService {
       throw new Error('GEMINI_API_KEY is not configured');
     }
 
-    const candidateModels = [
-      this.configService.get<string>('GEMINI_MODEL') || 'gemini-3.5-flash-lite',
-      
-    ];
+    const preferredModel = this.configService.get<string>('GEMINI_MODEL') || 'gemini-3.5-flash';
+    const candidateModels = Array.from(new Set([
+      preferredModel,
+      'gemini-3.5-flash',
+      'gemini-2.5-flash-lite',
+      'gemini-3.6-flash',
+    ]));
 
     let lastError: any = null;
     for (const model of candidateModels) {
@@ -417,42 +426,57 @@ Return ONLY valid raw JSON, no markdown, no backticks:
 
       // ── 3. If summary missing or incomplete, summarize CV now ─────────────────
       if (!summary) {
-        if (!storedCv.storagePath) {
+        if (storedCv.storagePath) {
+          try {
+            this.logger.log(`Summary missing or incomplete for user ${userId}. Analyzing CV...`);
+            const { buffer, mimeType, originalName } = await this.cvService.downloadCv(userId);
+            const cvFile = {
+              buffer,
+              mimetype: mimeType,
+              originalname: originalName,
+              size: buffer.length,
+            } as Express.Multer.File;
+
+            summary = await this.summarizeCv(cvFile);
+
+            if (summary) {
+              await this.cvService.updateSummary(userId, summary);
+              this.logger.log(`CV summary generated and saved for user ${userId}`);
+            }
+          } catch (e: any) {
+            this.logger.warn(
+              `Could not summarize CV for user ${userId}: ${e.message}`,
+              JSON.stringify(e.response?.data, null, 2),
+            );
+          }
+        }
+
+        // Fallback: If we still don't have a full summary but searchQueries exist in storedCv.summary
+        if (
+          !summary &&
+          storedCv.summary &&
+          Array.isArray(storedCv.summary.searchQueries) &&
+          storedCv.summary.searchQueries.length > 0
+        ) {
+          this.logger.log(`Using fallback summary with existing searchQueries for user ${userId}`);
+          summary = {
+            detectedRole: storedCv.summary.detectedRole || 'Specialist',
+            seniorityLevel: storedCv.summary.seniorityLevel || 'Mid',
+            primarySkills: storedCv.summary.primarySkills || [],
+            secondarySkills: storedCv.summary.secondarySkills || [],
+            domains: storedCv.summary.domains || [],
+            locationPreference: storedCv.summary.locationPreference || 'Tbilisi',
+            careerDirection: storedCv.summary.careerDirection || storedCv.summary.detectedRole || 'Specialist',
+            searchQueries: storedCv.summary.searchQueries,
+          };
+        }
+
+        if (!summary) {
           return {
             response: { candidateProfile: null, summary: null, strengths: [], skillGaps: [], topJobs: [] },
             comment: 'გთხოვთ ხელახლა ატვირთოთ თქვენი CV',
           };
         }
-
-        try {
-          this.logger.log(`Summary missing or incomplete for user ${userId}. Analyzing CV...`);
-          const { buffer, mimeType, originalName } = await this.cvService.downloadCv(userId);
-          const cvFile = {
-            buffer,
-            mimetype: mimeType,
-            originalname: originalName,
-            size: buffer.length,
-          } as Express.Multer.File;
-
-          summary = await this.summarizeCv(cvFile);
-
-          if (summary) {
-            await this.cvService.updateSummary(userId, summary);
-            this.logger.log(`CV summary generated and saved for user ${userId}`);
-          }
-        } catch (e: any) {
-          this.logger.warn(
-            `Could not summarize CV for user ${userId}: ${e.message}`,
-            JSON.stringify(e.response?.data, null, 2),
-          );
-        }
-      }
-
-      if (!summary || !Array.isArray(summary.searchQueries) || summary.searchQueries.length === 0) {
-        return {
-          response: { candidateProfile: null, summary: null, strengths: [], skillGaps: [], topJobs: [] },
-          comment: 'CV-ს დამუშავება ვერ მოხერხდა. გთხოვთ ხელახლა ატვირთოთ თქვენი CV',
-        };
       }
 
       // ── 4. Use searchQueries from summary to find jobs ───────────────────────
@@ -687,6 +711,39 @@ Return ONLY valid raw JSON, no markdown, no backticks:
     }
   }
 
+  /**
+   * Dispatches daily AI job search & matching tasks to BullMQ for all eligible users.
+   * Non-blocking: enqueues all jobs into Redis in milliseconds.
+   */
+  async dispatchDailyAiAnalysis(): Promise<{ queuedCount: number }> {
+    const allUsers = await this.userService.findAll();
+    const eligibleUsers = allUsers.filter(
+      (u) =>
+        this.entitlementService.canUseAiJobSearch(u) &&
+        u.receiveMessages !== false &&
+        (u.telegramChatId || (u.email && u.isEmailVerified)),
+    );
+
+    this.logger.log(`🤖 Queueing daily AI analysis for ${eligibleUsers.length} eligible users...`);
+
+    let queuedCount = 0;
+    for (const user of eligibleUsers) {
+      await this.aiQueue.add(
+        'analyze-user-cv',
+        { userId: user.id },
+        {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 5000 },
+          removeOnComplete: true,
+          removeOnFail: false,
+        },
+      );
+      queuedCount++;
+    }
+
+    this.logger.log(`✅ Successfully queued ${queuedCount} AI analysis jobs into BullMQ.`);
+    return { queuedCount };
+  }
 
 async chat(
   userId: number,

@@ -72,7 +72,10 @@ import { StatsModule } from './stats/stats.module';
         };
       },
     }),
-    TypeOrmModule.forRoot(pgConfig),
+    TypeOrmModule.forRoot({
+      ...pgConfig,
+      autoLoadEntities: true,
+    }),
     JobModule,
     ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([

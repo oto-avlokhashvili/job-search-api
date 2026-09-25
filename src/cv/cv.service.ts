@@ -164,7 +164,7 @@ export class CvService {
   async updateSummary(userId: number, dto: UpdateCvSummaryDto | null): Promise<Cv> {
     const cv = await this.cvRepository.findOne({ where: { userId } });
     if (!cv) throw new NotFoundException('No CV found for this user');
-    cv.summary = dto ? { ...dto } : null;
+    cv.summary = dto ? { ...(cv.summary || {}), ...dto } : null;
     return this.cvRepository.save(cv);
   }
 }

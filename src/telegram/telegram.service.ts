@@ -352,28 +352,6 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     }
 
     async runDailyAnalysis() {
-        const users = await this.userService.findAll();
-        const eligibleUsers = users.filter(
-            (u) => this.entitlementService.canUseAiJobSearch(u) && u.receiveMessages !== false && (u.telegramChatId || (u.email && u.isEmailVerified)),
-        );
-
-        this.logger.log(`🤖 Running AI analysis for ${eligibleUsers.length} eligible users...`);
-
-        for (let i = 0; i < eligibleUsers.length; i++) {
-            const user = eligibleUsers[i];
-            try {
-                const { response, comment } = await this.aiService.jobsearchWithCv(user.id);
-
-                const topJobs = response?.topJobs ?? [];
-                this.logger.log(`✅ [${i + 1}/${eligibleUsers.length}] ${comment} for user ${user.id} — ${topJobs.length} jobs`);
-
-            } catch (error) {
-                this.logger.error(`❌ Failed analysis for user ${user.id}:`, error);
-            }
-
-            if (i < eligibleUsers.length - 1) {
-                await new Promise(resolve => setTimeout(resolve, 1500));
-            }
-        }
+        return this.aiService.dispatchDailyAiAnalysis();
     }
 }

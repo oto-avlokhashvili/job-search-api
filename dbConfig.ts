@@ -12,7 +12,7 @@ const isLocal =
 export const pgConfig: PostgresConnectionOptions = {
   url: process.env.DATABASE_URL,
   type: 'postgres',
-  entities: [__dirname + '/**/*.entity{.ts,.js}'],
+  entities: [__dirname.replace(/\\/g, '/') + '/**/*.entity{.ts,.js}'],
   synchronize: true,
   ssl: isLocal ? false : { rejectUnauthorized: false },
   extra: {

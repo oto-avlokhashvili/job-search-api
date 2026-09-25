@@ -3,6 +3,7 @@ import { Cron, CronExpression, Interval } from '@nestjs/schedule';
 import { TelegramService } from 'src/telegram/telegram.service';
 import { JobService } from 'src/job/job.service';
 import { EmailService } from '../email/email.service';
+import { AiService } from '../ai/ai.service';
 
 @Injectable()
 export class ScheduleService {
@@ -12,6 +13,7 @@ export class ScheduleService {
     private readonly telegramService: TelegramService,
     private readonly jobsService: JobService,
     private readonly emailService: EmailService,
+    private readonly aiService: AiService,
   ) { }
   @Cron('10 23 * * *')
   async scrappper(): Promise<void> {
@@ -30,9 +32,10 @@ export class ScheduleService {
     this.logger.log(`🚀 Removed ${result.deletedCount} outdated jobs`);
   }
 
-  @Cron('00 07 * * *')
+  @Cron('33 11 * * *')
   async analyzeJobs() {
-    await this.telegramService.runDailyAnalysis();
+    this.logger.log('🤖 Starting scheduled daily AI analysis queue dispatch...');
+    await this.aiService.dispatchDailyAiAnalysis();
   }
 
   /* @Cron('00 08 * * *')
