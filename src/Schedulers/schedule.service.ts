@@ -32,7 +32,7 @@ export class ScheduleService {
     this.logger.log(`🚀 Removed ${result.deletedCount} outdated jobs`);
   }
 
-  @Cron('33 11 * * *')
+  @Cron('00 07 * * *')
   async analyzeJobs() {
     this.logger.log('🤖 Starting scheduled daily AI analysis queue dispatch...');
     await this.aiService.dispatchDailyAiAnalysis();
