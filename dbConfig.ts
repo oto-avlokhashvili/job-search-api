@@ -7,7 +7,9 @@ dotenv.config();
 const isLocal =
   !process.env.DATABASE_URL ||
   process.env.DATABASE_URL.includes('localhost') ||
-  process.env.DATABASE_URL.includes('127.0.0.1');
+  process.env.DATABASE_URL.includes('127.0.0.1') ||
+  // Railway private network doesn't use SSL
+  process.env.DATABASE_URL.includes('.railway.internal');
 
 export const pgConfig: PostgresConnectionOptions = {
   url: process.env.DATABASE_URL,
