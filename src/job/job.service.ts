@@ -9,6 +9,7 @@ import { JobsGeScraperService, JobData } from '../scrapers/jobs-ge.scraper';
 import { HrGeScraperService } from '../scrapers/hr-ge-scraper.service';
 import { AworkGeScraperService } from '../scrapers/awork-ge.scraper';
 import { MyjobsGeScraperService } from '../scrapers/myjobs-ge.scraper';
+import { LinkedinScraperService, LinkedinScraperOptions } from '../scrapers/linkedin.scraper';
 import * as crypto from 'crypto';
 
 export const CITY_MAPPING: { [city: string]: string[] } = {
@@ -88,6 +89,7 @@ export class JobService {
     private readonly hrGeScraperService: HrGeScraperService,
     private readonly aworkGeScraperService: AworkGeScraperService,
     private readonly myjobsGeScraperService: MyjobsGeScraperService,
+    private readonly linkedinScraperService: LinkedinScraperService,
     @InjectRepository(JobEntity) 
     private readonly jobRepo: Repository<JobEntity>
   ) {
@@ -964,6 +966,11 @@ export class JobService {
             const id = parseInt(parts[parts.length - 1], 10);
             if (!isNaN(id)) {
               desc = await this.myjobsGeScraperService.fetchDescription(id);
+            }
+          } else if (job.link.includes('linkedin.com')) {
+            const match = job.link.match(/-(\d+)(?:\?|$)/) || job.link.match(/\/(\d+)(?:\?|$)/);
+            if (match) {
+              desc = await this.linkedinScraperService.fetchJobDescription(match[1]);
             }
           } else if (job.description && job.description.includes('smartrecruiters.com')) {
             desc = await this.myjobsGeScraperService.fetchSmartRecruitersDescription(job.description);

@@ -6,6 +6,7 @@ import { JobsGeScraperService } from '../scrapers/jobs-ge.scraper';
 import { HrGeScraperService } from '../scrapers/hr-ge-scraper.service';
 import { AworkGeScraperService } from '../scrapers/awork-ge.scraper';
 import { MyjobsGeScraperService } from '../scrapers/myjobs-ge.scraper';
+import { LinkedinScraperService } from '../scrapers/linkedin.scraper';
 
 describe('JobService', () => {
   let service: JobService;
@@ -59,6 +60,10 @@ describe('JobService', () => {
         },
         {
           provide: MyjobsGeScraperService,
+          useValue: {},
+        },
+        {
+          provide: LinkedinScraperService,
           useValue: {},
         },
       ],

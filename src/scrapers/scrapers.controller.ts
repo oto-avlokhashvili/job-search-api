@@ -4,6 +4,7 @@ import { HrGeScraperService } from './hr-ge-scraper.service';
 import { JobsGeScraperService, ScraperResult, JobData } from './jobs-ge.scraper';
 import { AworkGeScraperService, AworkScraperResult } from './awork-ge.scraper';
 import { MyjobsGeScraperService, MyjobsScraperResult } from './myjobs-ge.scraper';
+import { LinkedinScraperService, LinkedinScraperResult } from './linkedin.scraper';
 
 @ApiTags('scraper')
 @Controller('scraper')
@@ -13,6 +14,7 @@ export class ScrapersController {
     private readonly jobsGeScraperService: JobsGeScraperService,
     private readonly aworkGeScraperService: AworkGeScraperService,
     private readonly myjobsGeScraperService: MyjobsGeScraperService,
+    private readonly linkedinScraperService: LinkedinScraperService,
   ) {}
 
   @Get('sync-all')
@@ -81,6 +83,25 @@ export class ScrapersController {
       delayBetweenRequests: delayBetweenRequests ?? 250,
       maxPages: maxPages || undefined,
       pageSize: pageSize ?? 50,
+    });
+  }
+
+  @Get('sync-linkedin')
+  @ApiQuery({ name: 'keywords', required: false, type: String })
+  @ApiQuery({ name: 'maxPagesPerRegion', required: false, type: Number, description: 'Max pages to scrape per region (default: 30)' })
+  @ApiQuery({ name: 'fetchDescriptions', required: false, type: Boolean })
+  @ApiQuery({ name: 'descriptionLimit', required: false, type: Number, description: 'Limit number of descriptions to fetch (e.g. 10 or 25) to prevent rate limits' })
+  async syncLinkedin(
+    @Query('keywords') keywords?: string,
+    @Query('maxPagesPerRegion', new ParseIntPipe({ optional: true })) maxPagesPerRegion?: number,
+    @Query('fetchDescriptions') fetchDescriptions?: string,
+    @Query('descriptionLimit', new ParseIntPipe({ optional: true })) descriptionLimit?: number,
+  ): Promise<LinkedinScraperResult> {
+    return await this.linkedinScraperService.scrapeAllGeorgiaJobs({
+      keywords: keywords || '',
+      maxPagesPerRegion: maxPagesPerRegion || 30,
+      fetchDescriptions: fetchDescriptions === 'true',
+      descriptionLimit: descriptionLimit || undefined,
     });
   }
 }
