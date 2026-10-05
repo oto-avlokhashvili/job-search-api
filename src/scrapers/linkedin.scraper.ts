@@ -30,7 +30,7 @@ export class LinkedinScraperService {
   private readonly searchBaseUrl = 'https://ge.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search';
   private readonly jobDetailBaseUrl = 'https://ge.linkedin.com/jobs-guest/jobs/api/jobPosting';
 
-  private sessionCookies = '';
+  private cookiesMap = new Map<string, string>();
   private requestCounter = 0;
 
   private readonly userAgents = [
@@ -42,11 +42,23 @@ export class LinkedinScraperService {
 
   private extractCookies(setCookieHeader: string[] | string | undefined) {
     if (!setCookieHeader) return;
-    const cookies = Array.isArray(setCookieHeader) ? setCookieHeader : [setCookieHeader];
-    const newCookies = cookies.map((c) => c.split(';')[0]).join('; ');
-    if (newCookies) {
-      this.sessionCookies = this.sessionCookies ? `${this.sessionCookies}; ${newCookies}` : newCookies;
+    const rawCookies = Array.isArray(setCookieHeader) ? setCookieHeader : [setCookieHeader];
+    for (const raw of rawCookies) {
+      const parts = raw.split(';')[0].trim();
+      const eqIdx = parts.indexOf('=');
+      if (eqIdx > 0) {
+        const key = parts.slice(0, eqIdx).trim();
+        const value = parts.slice(eqIdx + 1).trim();
+        this.cookiesMap.set(key, value);
+      }
     }
+  }
+
+  private getSessionCookieHeader(): string {
+    if (this.cookiesMap.size === 0) return '';
+    return Array.from(this.cookiesMap.entries())
+      .map(([k, v]) => `${k}=${v}`)
+      .join('; ');
   }
 
   private getRandomUserAgent(): string {
@@ -89,6 +101,7 @@ export class LinkedinScraperService {
     }
 
     this.requestCounter = 0;
+    this.cookiesMap.clear();
 
     const {
       keywords = '',
@@ -142,7 +155,7 @@ export class LinkedinScraperService {
             'Sec-Fetch-Site': 'same-origin',
             'Sec-Fetch-Mode': 'cors',
             'Sec-Fetch-Dest': 'empty',
-            ...(this.sessionCookies ? { Cookie: this.sessionCookies } : {}),
+            ...(this.getSessionCookieHeader() ? { Cookie: this.getSessionCookieHeader() } : {}),
           },
           timeout: 15000,
         });
@@ -307,6 +320,7 @@ export class LinkedinScraperService {
     } = options;
 
     this.requestCounter = 0;
+    this.cookiesMap.clear();
 
     const partitions = [
       { name: 'All Georgia', location: '', extraParam: '' },
@@ -353,7 +367,7 @@ export class LinkedinScraperService {
               'Sec-Fetch-Site': 'same-origin',
               'Sec-Fetch-Mode': 'cors',
               'Sec-Fetch-Dest': 'empty',
-              ...(this.sessionCookies ? { Cookie: this.sessionCookies } : {}),
+              ...(this.getSessionCookieHeader() ? { Cookie: this.getSessionCookieHeader() } : {}),
             },
             timeout: 15000,
           });
@@ -555,7 +569,7 @@ export class LinkedinScraperService {
           'Accept-Language': 'en-US,en;q=0.9,ka;q=0.8',
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
           'Referer': 'https://ge.linkedin.com/jobs/search',
-          ...(this.sessionCookies ? { Cookie: this.sessionCookies } : {}),
+          ...(this.getSessionCookieHeader() ? { Cookie: this.getSessionCookieHeader() } : {}),
         },
         timeout: 10000,
       });

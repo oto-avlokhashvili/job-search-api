@@ -62,14 +62,14 @@ describe('StatsService & StatsController', () => {
       expect.objectContaining({
         activeAgents: 14204,
         activeUsers: 8942,
-        activeAggregators: 4,
+        activeAggregators: 5,
         activeVacancies: 8551,
         uploadedCvs: 94,
         systemStatus: 'ოპტიმალური',
-        syncedPortals: 4,
+        syncedPortals: 5,
       }),
     );
-    expect(result.aggregators).toHaveLength(4);
+    expect(result.aggregators).toHaveLength(5);
     expect(result.avgCalculationTimeSeconds).toBeGreaterThan(0);
   });
 });

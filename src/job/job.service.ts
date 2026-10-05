@@ -12,6 +12,24 @@ import { MyjobsGeScraperService } from '../scrapers/myjobs-ge.scraper';
 import { LinkedinScraperService, LinkedinScraperOptions } from '../scrapers/linkedin.scraper';
 import * as crypto from 'crypto';
 
+export interface LinkedinDuplicateCheckResult {
+  nonDuplicatedJobs: JobData[];
+  nonDuplicatedCount: number;
+  duplicatesCount: number;
+  totalScraped: number;
+  comparedAgainstCount: number;
+  insertedToDbCount: number;
+  savedToDb: boolean;
+  duplicates: {
+    linkedinJob: JobData;
+    matchedWith?: any;
+    matchedSignature: string;
+    reason: string;
+  }[];
+  jobs: JobData[];
+  totalJobs: number;
+}
+
 export const CITY_MAPPING: { [city: string]: string[] } = {
   'თბილისი': [
     'თბილისი', 'tbilisi', 'საბურთალო', 'დიღომი', 'ვარკეთილი', 'გლდანი', 'ისანი', 'სამგორი',
@@ -264,9 +282,12 @@ export class JobService {
       } else if (lowerSource === 'awork' || lowerSource === 'awork.ge' || lowerSource === 'aworkge') {
         qb.andWhere('job.link LIKE :sourcePattern', { sourcePattern: '%awork%' });
       } else if (lowerSource === 'jobs.ge' || lowerSource === 'jobsge') {
-        qb.andWhere('job.link LIKE :sourcePattern', { sourcePattern: '%jobs.ge%' });
+        qb.andWhere('job.link LIKE :sourcePattern', { sourcePattern: '%jobs.ge%' })
+          .andWhere('job.link NOT LIKE :notMyjobsPattern', { notMyjobsPattern: '%myjobs%' });
       } else if (lowerSource === 'myjobs' || lowerSource === 'myjobs.ge' || lowerSource === 'myjobsge') {
         qb.andWhere('job.link LIKE :sourcePattern', { sourcePattern: '%myjobs%' });
+      } else if (lowerSource === 'linkedin' || lowerSource === 'linkedin.com' || lowerSource === 'linkedinge') {
+        qb.andWhere('job.link LIKE :sourcePattern', { sourcePattern: '%linkedin%' });
       } else {
         qb.andWhere('job.link LIKE :sourcePattern', { sourcePattern: `%${lowerSource}%` });
       }
@@ -321,11 +342,11 @@ export class JobService {
     const [jobs, filteredRecords] = await qb.take(limit).skip(skip).getManyAndCount();
     const totalRecords = await this.jobRepo.count();
 
-    const totalJobsGe = await this.jobRepo.count({
-      where: {
-        link: Like('%jobs.ge%'),
-      },
-    });
+    const totalJobsGe = await this.jobRepo
+      .createQueryBuilder('job')
+      .where('job.link LIKE :jobsGe', { jobsGe: '%jobs.ge%' })
+      .andWhere('job.link NOT LIKE :myjobs', { myjobs: '%myjobs%' })
+      .getCount();
 
     const totalHrGe = await this.jobRepo.count({
       where: [
@@ -350,6 +371,10 @@ export class JobService {
       ],
     });
 
+    const totalLinkedin = await this.jobRepo.count({
+      where: { link: Like('%linkedin%') },
+    });
+
     return {
       jobs,
       counts: {
@@ -359,6 +384,7 @@ export class JobService {
         hrGe: totalHrGe,
         aworkGe: totalAworkGe,
         myjobsGe: totalMyjobsGe,
+        linkedin: totalLinkedin,
       },
       page,
       limit,
@@ -818,7 +844,41 @@ export class JobService {
       - MyJobs: ${myjobsJobs.length} scraped (${myjobsDuplicatesRemoved} duplicates removed, ${uniqueMyjobsJobs.length} unique)`,
     );
 
-    const combined = [...jobsGeJobs, ...hrGeJobs, ...uniqueAworkJobs, ...uniqueMyjobsJobs];
+    // 5. Scrape LinkedIn across Georgia
+    this.logger.log('Step 5: Scraping LinkedIn across Georgia...');
+    const linkedinRes = await this.linkedinScraperService.scrapeAllGeorgiaJobs({
+      fetchDescriptions: false,
+    });
+    const linkedinJobs = linkedinRes.jobs || [];
+
+    // Add unique myjobs signatures into set before filtering linkedin
+    uniqueMyjobsJobs.forEach(job => {
+      const v = this.normalizeText(job.vacancy);
+      const c = this.normalizeText(job.company);
+      if (v && c) {
+        existingSignatures.add(`${v}|${c}`);
+      }
+    });
+
+    let linkedinDuplicatesRemoved = 0;
+    const uniqueLinkedinJobs = linkedinJobs.filter(job => {
+      const v = this.normalizeText(job.vacancy);
+      const c = this.normalizeText(job.company);
+      const isDuplicate = existingSignatures.has(`${v}|${c}`);
+      if (isDuplicate) linkedinDuplicatesRemoved++;
+      return !isDuplicate;
+    });
+
+    this.logger.log(
+      `Final multi-source deduplication summary:
+      - Jobs.ge: ${jobsGeJobs.length}
+      - HR.ge: ${hrGeJobs.length}
+      - Awork: ${aworkJobs.length} scraped (${aworkDuplicatesRemoved} duplicates removed, ${uniqueAworkJobs.length} unique)
+      - MyJobs: ${myjobsJobs.length} scraped (${myjobsDuplicatesRemoved} duplicates removed, ${uniqueMyjobsJobs.length} unique)
+      - LinkedIn: ${linkedinJobs.length} scraped (${linkedinDuplicatesRemoved} duplicates removed, ${uniqueLinkedinJobs.length} unique)`,
+    );
+
+    const combined = [...jobsGeJobs, ...hrGeJobs, ...uniqueAworkJobs, ...uniqueMyjobsJobs, ...uniqueLinkedinJobs];
 
     const uniqueMap = new Map<string, any>();
 
@@ -867,10 +927,13 @@ export class JobService {
       myjobsGeOriginalCount: myjobsJobs.length,
       myjobsGeDuplicatesRemoved: myjobsDuplicatesRemoved,
       myjobsGeUniqueCount: uniqueMyjobsJobs.length,
+      linkedinOriginalCount: linkedinJobs.length,
+      linkedinDuplicatesRemoved: linkedinDuplicatesRemoved,
+      linkedinUniqueCount: uniqueLinkedinJobs.length,
       totalCombined: combined.length,
       uniqueCount: uniqueJobs.length,
       uniqueInsertedCount: uniqueJobs.length,
-      message: 'Successfully scraped from all 4 sources (jobs.ge, hr.ge, awork.ge, myjobs.ge), deduplicated, and inserted unique jobs into database. Description enrichment is running in the background.',
+      message: 'Successfully scraped from all 5 sources (jobs.ge, hr.ge, awork.ge, myjobs.ge, linkedin.com), deduplicated, and inserted unique jobs into database. Description enrichment is running in the background.',
       jobs: uniqueJobs,
     };
   }
@@ -923,6 +986,170 @@ export class JobService {
     };
   }
 
+  /**
+   * Scrapes LinkedIn jobs for Georgia, compares each job against existing database jobs,
+   * and filters out duplicates based on normalized vacancy title and company name signatures.
+   */
+  async scrapeAndDeduplicateLinkedin(
+    options: LinkedinScraperOptions & { saveToDb?: boolean; jobsToCompareAgainst?: JobData[] } = {},
+  ): Promise<LinkedinDuplicateCheckResult> {
+    this.logger.log('Starting LinkedIn scrape and deduplication against other job sources...');
+
+    // 1. Scrape LinkedIn (use targeted scrapeJobs if location or page limits specified, otherwise multi-region all Georgia)
+    const hasSpecificLocationOrPages = Boolean(options.location || options.startPage || options.maxPages);
+    const linkedinRes = hasSpecificLocationOrPages
+      ? await this.linkedinScraperService.scrapeJobs({
+          keywords: options.keywords,
+          location: options.location,
+          startPage: options.startPage,
+          maxPages: options.maxPages,
+          delayBetweenRequests: options.delayBetweenRequests,
+          fetchDescriptions: options.fetchDescriptions ?? false,
+          descriptionLimit: options.descriptionLimit,
+        })
+      : await this.linkedinScraperService.scrapeAllGeorgiaJobs({
+          keywords: options.keywords,
+          maxPagesPerRegion: options.maxPagesPerRegion ?? 30,
+          fetchDescriptions: options.fetchDescriptions ?? false,
+          descriptionLimit: options.descriptionLimit,
+        });
+
+    const linkedinJobs = linkedinRes.jobs || [];
+    this.logger.log(`Scraped ${linkedinJobs.length} jobs from LinkedIn. Now checking for duplicates...`);
+
+    // 2. Fetch existing database jobs to compare against
+    const existingDbJobs = await this.jobRepo.find({
+      select: ['id', 'vacancy', 'company', 'location', 'link'],
+    });
+
+    // 3. Build lookup maps/sets for existing jobs
+    const existingSignatures = new Map<string, any>();
+    const existingLinks = new Set<string>();
+
+    const registerJob = (
+      job: { vacancy?: string; company?: string; link?: string; location?: string; id?: number },
+      source: string,
+    ) => {
+      if (job.link) {
+        existingLinks.add(job.link.split('?')[0].trim().toLowerCase());
+      }
+      const v = this.normalizeText(job.vacancy || '');
+      const c = this.normalizeText(job.company || '');
+      if (v && c) {
+        const sig = `${v}|${c}`;
+        if (!existingSignatures.has(sig)) {
+          existingSignatures.set(sig, {
+            source,
+            id: job.id,
+            vacancy: job.vacancy,
+            company: job.company,
+            location: job.location,
+            link: job.link,
+          });
+        }
+      }
+    };
+
+    existingDbJobs.forEach((job) => registerJob(job, 'database'));
+
+    if (options.jobsToCompareAgainst && options.jobsToCompareAgainst.length > 0) {
+      options.jobsToCompareAgainst.forEach((job) => registerJob(job, 'provided_baseline'));
+    }
+
+    // 4. Deduplicate LinkedIn jobs against existing baseline + within-batch duplicates
+    const duplicates: {
+      linkedinJob: JobData;
+      matchedWith?: any;
+      matchedSignature: string;
+      reason: string;
+    }[] = [];
+    const nonDuplicatedJobs: JobData[] = [];
+    const seenBatchSignatures = new Set<string>();
+
+    for (const job of linkedinJobs) {
+      const cleanLink = (job.link || '').split('?')[0].trim().toLowerCase();
+      const v = this.normalizeText(job.vacancy);
+      const c = this.normalizeText(job.company);
+      const sig = `${v}|${c}`;
+
+      // Check duplicate by exact link
+      if (cleanLink && existingLinks.has(cleanLink)) {
+        duplicates.push({
+          linkedinJob: job,
+          matchedWith: { link: cleanLink },
+          matchedSignature: sig,
+          reason: 'Exact link match with existing job',
+        });
+        continue;
+      }
+
+      // Check duplicate by normalized vacancy and company
+      if (existingSignatures.has(sig)) {
+        const matched = existingSignatures.get(sig);
+        duplicates.push({
+          linkedinJob: job,
+          matchedWith: matched,
+          matchedSignature: sig,
+          reason: `Matched ${matched.source || 'existing'} job with same vacancy title and company`,
+        });
+        continue;
+      }
+
+      // Check duplicate within the current LinkedIn batch
+      if (seenBatchSignatures.has(sig)) {
+        duplicates.push({
+          linkedinJob: job,
+          matchedWith: { source: 'linkedin_current_batch' },
+          matchedSignature: sig,
+          reason: 'Duplicate within current LinkedIn scrape batch',
+        });
+        continue;
+      }
+
+      seenBatchSignatures.add(sig);
+      nonDuplicatedJobs.push(job);
+    }
+
+    const comparedAgainstCount = existingDbJobs.length + (options.jobsToCompareAgainst?.length || 0);
+
+    const shouldSaveToDb = options.saveToDb !== false;
+    let insertedToDbCount = 0;
+
+    if (shouldSaveToDb && nonDuplicatedJobs.length > 0) {
+      this.logger.log(`Inserting ${nonDuplicatedJobs.length} non-duplicated LinkedIn jobs into the database...`);
+      await this.insertMany(nonDuplicatedJobs);
+      insertedToDbCount = nonDuplicatedJobs.length;
+      this.logger.log(`Insertion completed successfully! Saved ${insertedToDbCount} LinkedIn jobs into the database.`);
+
+      // Trigger background description enrichment
+      this.enrichMissingDescriptionsInBackground().catch((err) => {
+        this.logger.error('Background description enrichment failed for LinkedIn jobs', err);
+      });
+    }
+
+    this.logger.log(
+      `LinkedIn deduplication complete:
+      - Total LinkedIn Scraped: ${linkedinJobs.length}
+      - Compared Against: ${comparedAgainstCount} jobs
+      - Non-duplicated (Unique): ${nonDuplicatedJobs.length}
+      - Duplicates Found: ${duplicates.length}
+      - Saved to Database: ${shouldSaveToDb} (${insertedToDbCount} inserted)`,
+    );
+
+    return {
+      nonDuplicatedJobs,
+      nonDuplicatedCount: nonDuplicatedJobs.length,
+      duplicatesCount: duplicates.length,
+      totalScraped: linkedinJobs.length,
+      comparedAgainstCount,
+      insertedToDbCount,
+      savedToDb: shouldSaveToDb,
+      duplicates,
+      jobs: nonDuplicatedJobs,
+      totalJobs: nonDuplicatedJobs.length,
+    };
+  }
+
   async enrichMissingDescriptionsInBackground() {
     this.logger.log('Starting background description enrichment...');
     
@@ -959,15 +1186,15 @@ export class JobService {
 
               desc = await this.hrGeScraperService.fetchDescription(tenantId, id);
             }
-          } else if (job.link.includes('jobs.ge')) {
-            desc = await this.scraperService.fetchDescription(job.link);
-          } else if (job.link.includes('myjobs.ge')) {
+          } else if (job.link.includes('myjobs.ge') || job.link.includes('myjobs')) {
             const parts = job.link.split('/');
             const id = parseInt(parts[parts.length - 1], 10);
             if (!isNaN(id)) {
               desc = await this.myjobsGeScraperService.fetchDescription(id);
             }
-          } else if (job.link.includes('linkedin.com')) {
+          } else if (job.link.includes('jobs.ge')) {
+            desc = await this.scraperService.fetchDescription(job.link);
+          } else if (job.link.includes('linkedin.com') || job.link.includes('linkedin')) {
             const match = job.link.match(/-(\d+)(?:\?|$)/) || job.link.match(/\/(\d+)(?:\?|$)/);
             if (match) {
               desc = await this.linkedinScraperService.fetchJobDescription(match[1]);

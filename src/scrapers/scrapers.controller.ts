@@ -1,10 +1,11 @@
-import { Controller, Get, Query, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Query, ParseIntPipe, Inject, forwardRef } from '@nestjs/common';
 import { ApiQuery, ApiTags } from '@nestjs/swagger';
 import { HrGeScraperService } from './hr-ge-scraper.service';
 import { JobsGeScraperService, ScraperResult, JobData } from './jobs-ge.scraper';
 import { AworkGeScraperService, AworkScraperResult } from './awork-ge.scraper';
 import { MyjobsGeScraperService, MyjobsScraperResult } from './myjobs-ge.scraper';
 import { LinkedinScraperService, LinkedinScraperResult } from './linkedin.scraper';
+import { JobService, LinkedinDuplicateCheckResult } from '../job/job.service';
 
 @ApiTags('scraper')
 @Controller('scraper')
@@ -15,6 +16,8 @@ export class ScrapersController {
     private readonly aworkGeScraperService: AworkGeScraperService,
     private readonly myjobsGeScraperService: MyjobsGeScraperService,
     private readonly linkedinScraperService: LinkedinScraperService,
+    @Inject(forwardRef(() => JobService))
+    private readonly jobService: JobService,
   ) {}
 
   @Get('sync-all')
@@ -87,21 +90,37 @@ export class ScrapersController {
   }
 
   @Get('sync-linkedin')
-  @ApiQuery({ name: 'keywords', required: false, type: String })
-  @ApiQuery({ name: 'maxPagesPerRegion', required: false, type: Number, description: 'Max pages to scrape per region (default: 30)' })
+  @ApiQuery({ name: 'query', required: false, type: String, description: 'Alias for keywords filter' })
+  @ApiQuery({ name: 'keywords', required: false, type: String, description: 'Search keywords' })
+  @ApiQuery({ name: 'location', required: false, type: String, description: 'Location (e.g. Tbilisi, Batumi, Georgia)' })
+  @ApiQuery({ name: 'startPage', required: false, type: Number })
+  @ApiQuery({ name: 'maxPages', required: false, type: Number })
+  @ApiQuery({ name: 'maxPagesPerRegion', required: false, type: Number, description: 'Max pages to scrape per region when running countrywide (default: 30)' })
+  @ApiQuery({ name: 'delayBetweenRequests', required: false, type: Number })
   @ApiQuery({ name: 'fetchDescriptions', required: false, type: Boolean })
   @ApiQuery({ name: 'descriptionLimit', required: false, type: Number, description: 'Limit number of descriptions to fetch (e.g. 10 or 25) to prevent rate limits' })
   async syncLinkedin(
+    @Query('query') query?: string,
     @Query('keywords') keywords?: string,
+    @Query('location') location?: string,
+    @Query('startPage', new ParseIntPipe({ optional: true })) startPage?: number,
+    @Query('maxPages', new ParseIntPipe({ optional: true })) maxPages?: number,
     @Query('maxPagesPerRegion', new ParseIntPipe({ optional: true })) maxPagesPerRegion?: number,
+    @Query('delayBetweenRequests', new ParseIntPipe({ optional: true })) delayBetweenRequests?: number,
     @Query('fetchDescriptions') fetchDescriptions?: string,
     @Query('descriptionLimit', new ParseIntPipe({ optional: true })) descriptionLimit?: number,
-  ): Promise<LinkedinScraperResult> {
-    return await this.linkedinScraperService.scrapeAllGeorgiaJobs({
-      keywords: keywords || '',
+  ): Promise<LinkedinDuplicateCheckResult> {
+    const searchTerms = keywords || query || '';
+    return await this.jobService.scrapeAndDeduplicateLinkedin({
+      keywords: searchTerms,
+      location,
+      startPage,
+      maxPages,
       maxPagesPerRegion: maxPagesPerRegion || 30,
+      delayBetweenRequests,
       fetchDescriptions: fetchDescriptions === 'true',
       descriptionLimit: descriptionLimit || undefined,
+      saveToDb: false,
     });
   }
 }

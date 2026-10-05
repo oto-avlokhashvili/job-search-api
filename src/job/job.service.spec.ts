@@ -31,6 +31,10 @@ describe('JobService', () => {
       getRawMany: jest.fn().mockResolvedValue([]),
       delete: jest.fn().mockReturnThis(),
       from: jest.fn().mockReturnThis(),
+      insert: jest.fn().mockReturnThis(),
+      into: jest.fn().mockReturnThis(),
+      values: jest.fn().mockReturnThis(),
+      orIgnore: jest.fn().mockReturnThis(),
       execute: jest.fn().mockResolvedValue({ affected: 0 }),
     };
 
@@ -239,6 +243,63 @@ describe('JobService', () => {
       expect(result).toEqual([
         { location: 'ბათუმი', count: 1 },
       ]);
+    });
+  });
+
+  describe('scrapeAndDeduplicateLinkedin', () => {
+    it('should compare scraped LinkedIn jobs against database and return non-duplicated jobs and counts', async () => {
+      // Mock LinkedIn scraper
+      const mockLinkedinJobs = [
+        {
+          vacancy: 'Senior Software Engineer',
+          company: 'TechCorp Georgia',
+          location: 'Tbilisi',
+          link: 'https://linkedin.com/jobs/view/111',
+        },
+        {
+          vacancy: 'Product Manager',
+          company: 'Innovate LLC',
+          location: 'Tbilisi',
+          link: 'https://linkedin.com/jobs/view/222',
+        },
+        {
+          vacancy: 'Senior Software Engineer', // duplicate within batch
+          company: 'TechCorp Georgia',
+          location: 'Tbilisi',
+          link: 'https://linkedin.com/jobs/view/333',
+        },
+      ];
+
+      (service as any).linkedinScraperService = {
+        scrapeAllGeorgiaJobs: jest.fn().mockResolvedValue({
+          jobs: mockLinkedinJobs,
+          totalJobs: mockLinkedinJobs.length,
+          lastPage: 1,
+        }),
+      };
+
+      // Mock DB containing Product Manager from Innovate LLC
+      jobRepoMock.find = jest.fn().mockResolvedValue([
+        {
+          id: 10,
+          vacancy: 'Product Manager',
+          company: 'Innovate LLC',
+          location: 'თბილისი',
+          link: 'https://jobs.ge/10',
+        },
+      ]);
+
+      const result = await service.scrapeAndDeduplicateLinkedin();
+
+      expect(result.totalScraped).toBe(3);
+      expect(result.comparedAgainstCount).toBe(1);
+      expect(result.nonDuplicatedCount).toBe(1);
+      expect(result.duplicatesCount).toBe(2);
+      expect(result.nonDuplicatedJobs.length).toBe(1);
+      expect(result.nonDuplicatedJobs[0].vacancy).toBe('Senior Software Engineer');
+      expect(result.duplicates.length).toBe(2);
+      expect(result.savedToDb).toBe(true);
+      expect(result.insertedToDbCount).toBe(1);
     });
   });
 });

@@ -31,6 +31,7 @@ export class StatsService {
       { id: 'hr-ge', name: 'HR.ge', active: true },
       { id: 'awork-ge', name: 'Awork.ge', active: true },
       { id: 'myjobs-ge', name: 'MyJobs.ge', active: true },
+      { id: 'linkedin', name: 'LinkedIn', active: true },
     ];
 
     const now = new Date();

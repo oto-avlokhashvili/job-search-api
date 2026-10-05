@@ -79,7 +79,7 @@ export class JobController {
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'query', required: false, type: String })
-  @ApiQuery({ name: 'source', required: false, type: String })
+  @ApiQuery({ name: 'source', required: false, type: String, description: 'Source filter (e.g. jobs.ge, hr.ge, awork.ge, myjobs.ge, linkedin)' })
   @ApiQuery({ name: 'company', required: false, type: String })
   @ApiQuery({ name: 'location', required: false, type: String })
   @ApiQuery({ name: 'publishDate', required: false, type: String })
@@ -107,6 +107,7 @@ export class JobController {
   async searchJobs(@Query('query') query: string | string[]) {
     return this.jobService.findAllByQuery(query);
   }
+
   @ApiBearerAuth('bearerAuth')
   @UseGuards(JwtAuthGuard)
   @Get('check-duplicates')
