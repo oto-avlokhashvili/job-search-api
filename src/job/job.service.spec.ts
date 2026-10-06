@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { JobService, buildWordBoundaryRegex } from './job.service';
 import { JobEntity } from 'src/Entities/job.entity';
+import { ScrapedJobEntity } from 'src/Entities/scraped-job.entity';
 import { JobsGeScraperService } from '../scrapers/jobs-ge.scraper';
 import { HrGeScraperService } from '../scrapers/hr-ge-scraper.service';
 import { AworkGeScraperService } from '../scrapers/awork-ge.scraper';
@@ -49,6 +50,10 @@ describe('JobService', () => {
         {
           provide: getRepositoryToken(JobEntity),
           useValue: jobRepoMock,
+        },
+        {
+          provide: getRepositoryToken(ScrapedJobEntity),
+          useValue: {},
         },
         {
           provide: JobsGeScraperService,

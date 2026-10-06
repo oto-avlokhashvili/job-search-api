@@ -1,6 +1,7 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ParseIntPipe, BadRequestException, ForbiddenException, UseGuards, Req, Logger } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ParseIntPipe, BadRequestException, ForbiddenException, NotFoundException, UseGuards, Req, Logger } from '@nestjs/common';
 import { ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiConflictResponse, ApiCreatedResponse, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { JobService } from './job.service';
+import { ScrapeQueueService } from './scrape-queue.service';
 import { CreateJobDto } from './dto/create-job.dto';
 import { UpdateJobDto } from './dto/update-job.dto';
 import { FilterJobDto } from './dto/filter-job.dto';
@@ -12,18 +13,35 @@ import { OptionalJwtAuthGuard } from 'src/auth/guards/optional-jwt-auth.guard';
 export class JobController {
   private readonly logger = new Logger(JobController.name);
 
-  constructor(private readonly jobService: JobService) { }
+  constructor(
+    private readonly jobService: JobService,
+    private readonly scrapeQueueService: ScrapeQueueService,
+  ) { }
 
-  @ApiOperation({ summary: 'Scrape all sources (jobs.ge, hr.ge, awork.ge, myjobs.ge), deduplicate, and upload to DB' })
+  @ApiOperation({ summary: 'Queue a full scrape of all sources (jobs.ge, hr.ge, awork.ge, myjobs.ge, linkedin) via BullMQ' })
   @Post('scrape-all')
   async scrapeAllPost() {
-    return await this.jobService.scrapeAndSaveAll();
+    return await this.scrapeQueueService.enqueueDailyScrape();
   }
 
-  @ApiOperation({ summary: 'Scrape all sources (jobs.ge, hr.ge, awork.ge, myjobs.ge), deduplicate, and upload to DB' })
+  @ApiOperation({ summary: 'Queue a full scrape of all sources (jobs.ge, hr.ge, awork.ge, myjobs.ge, linkedin) via BullMQ' })
   @Get('scrape-all')
   async scrapeAllGet() {
-    return await this.jobService.scrapeAndSaveAll();
+    return await this.scrapeQueueService.enqueueDailyScrape();
+  }
+
+  @ApiOperation({ summary: 'Get the state of a queued scrape flow' })
+  @Get('scrape-status/:flowId')
+  async scrapeStatus(@Param('flowId') flowId: string) {
+    const status = await this.scrapeQueueService.getFlowStatus(flowId);
+    if (!status) throw new NotFoundException(`Scrape flow ${flowId} not found`);
+    return status;
+  }
+
+  @ApiOperation({ summary: 'Queue description enrichment for all jobs missing a description' })
+  @Post('enrich-descriptions')
+  async enrichDescriptions() {
+    return await this.scrapeQueueService.enqueueEnrichment();
   }
 
   @Post('scrapper')

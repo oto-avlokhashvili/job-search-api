@@ -4,6 +4,7 @@ import { TelegramService } from 'src/telegram/telegram.service';
 import { JobService } from 'src/job/job.service';
 import { EmailService } from '../email/email.service';
 import { AiService } from '../ai/ai.service';
+import { ScrapeQueueService } from '../job/scrape-queue.service';
 
 @Injectable()
 export class ScheduleService {
@@ -14,14 +15,13 @@ export class ScheduleService {
     private readonly jobsService: JobService,
     private readonly emailService: EmailService,
     private readonly aiService: AiService,
+    private readonly scrapeQueueService: ScrapeQueueService,
   ) { }
   @Cron('10 23 * * *')
   async scrappper(): Promise<void> {
-    this.logger.log('🚀 Starting scheduled full scrape (jobs.ge + hr.ge + awork.ge + myjobs.ge + linkedin.com) with deduplication...');
-    const result = await this.jobsService.scrapeAndSaveAll();
-    this.logger.log(
-      `✅ Scheduled scrape completed: ${result.uniqueInsertedCount} total unique jobs saved into DB`,
-    );
+    this.logger.log('🚀 Queueing scheduled full scrape (jobs.ge + hr.ge + awork.ge + myjobs.ge + linkedin.com)...');
+    const { flowId } = await this.scrapeQueueService.enqueueDailyScrape();
+    this.logger.log(`✅ Scrape flow ${flowId} queued`);
   }
 
 

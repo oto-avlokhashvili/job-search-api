@@ -3,6 +3,10 @@ import { JobController } from './job.controller';
 import { JobService } from './job.service';
 import { ForbiddenException } from '@nestjs/common';
 import { FilterJobDto } from './dto/filter-job.dto';
+import { ScrapeQueueService } from './scrape-queue.service';
+
+// @nestjs/bullmq ships ESM that jest cannot load; the queue service is mocked below
+jest.mock('./scrape-queue.service', () => ({ ScrapeQueueService: class ScrapeQueueService {} }));
 
 describe('JobController', () => {
   let controller: JobController;
@@ -19,7 +23,6 @@ describe('JobController', () => {
     findOne: jest.fn(),
     update: jest.fn(),
     remove: jest.fn(),
-    scrapeAndSaveAll: jest.fn(),
     scrapper: jest.fn(),
     findAllByQuery: jest.fn(),
     findDuplicates: jest.fn(),
@@ -36,6 +39,14 @@ describe('JobController', () => {
         {
           provide: JobService,
           useValue: mockJobService,
+        },
+        {
+          provide: ScrapeQueueService,
+          useValue: {
+            enqueueDailyScrape: jest.fn(),
+            enqueueEnrichment: jest.fn(),
+            getFlowStatus: jest.fn(),
+          },
         },
       ],
     }).compile();

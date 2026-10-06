@@ -3,6 +3,7 @@ import { CreateJobDto } from './dto/create-job.dto';
 import { UpdateJobDto } from './dto/update-job.dto';
 import { Brackets, ILike, In, LessThan, Like, Repository } from 'typeorm';
 import { JobEntity } from 'src/Entities/job.entity';
+import { ScrapedJobEntity } from 'src/Entities/scraped-job.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { FilterJobDto } from './dto/filter-job.dto';
 import { JobsGeScraperService, JobData } from '../scrapers/jobs-ge.scraper';
@@ -28,6 +29,28 @@ export interface LinkedinDuplicateCheckResult {
   }[];
   jobs: JobData[];
   totalJobs: number;
+}
+
+export type ScrapeSource = 'hrge' | 'jobsge' | 'awork' | 'myjobs' | 'linkedin';
+
+export const SCRAPE_SOURCE_PRIORITY: ScrapeSource[] = ['hrge', 'jobsge', 'awork', 'myjobs', 'linkedin'];
+
+export interface ScrapeSourceResult {
+  source: ScrapeSource;
+  scraped: number;
+}
+
+export interface MergeSourceResult {
+  source: ScrapeSource;
+  staged: number;
+  duplicatesRemoved: number;
+  inserted: number;
+}
+
+export interface MergeResult {
+  runId: string;
+  totalInserted: number;
+  perSource: MergeSourceResult[];
 }
 
 export const CITY_MAPPING: { [city: string]: string[] } = {
@@ -109,7 +132,9 @@ export class JobService {
     private readonly myjobsGeScraperService: MyjobsGeScraperService,
     private readonly linkedinScraperService: LinkedinScraperService,
     @InjectRepository(JobEntity) 
-    private readonly jobRepo: Repository<JobEntity>
+    private readonly jobRepo: Repository<JobEntity>,
+    @InjectRepository(ScrapedJobEntity)
+    private readonly scrapedJobRepo: Repository<ScrapedJobEntity>
   ) {
 
   }
@@ -669,6 +694,33 @@ export class JobService {
     }
   }
 
+  /**
+   * Maps free-text location (any language, district names, "Tbilisi, Georgia") to a canonical city
+   * from CITY_MAPPING. Returns '' when no known city is found (e.g. "Georgia", "Remote", empty).
+   */
+  private canonicalCity(location?: string | null): string {
+    const text = this.normalizeText(location || '');
+    if (!text) return '';
+    for (const [city, keywords] of Object.entries(CITY_MAPPING)) {
+      if (keywords.some((k) => {
+        const kw = this.normalizeText(k);
+        return kw && text.includes(kw);
+      })) {
+        return city;
+      }
+    }
+    return '';
+  }
+
+  /**
+   * A job counts as already seen when the same vacancy|company exists in the same city. If either side
+   * has no recognizable city, the city can't distinguish them, so it counts as a match.
+   */
+  private isSeen(cities: Set<string> | undefined, city: string): boolean {
+    if (!cities) return false;
+    return !city || cities.has(city) || cities.has('');
+  }
+
   private normalizeText(text: string): string {
     return (text || '')
       .toLowerCase()
@@ -754,188 +806,142 @@ export class JobService {
     };
   }
 
-  async scrapeAndSaveAll() {
-    this.logger.log('Starting full multi-source scraping (jobs.ge + hr.ge + awork.ge + myjobs.ge) and database save...');
+  /**
+   * Scrapes a single source and stages the raw results in `scraped_job_entity` under the given run.
+   * Nothing is written to the job table here; `mergeStagedJobs` dedupes across sources and the DB
+   * once every source has finished, so sources can scrape in parallel.
+   * Re-running a source for the same run replaces its previously staged rows (safe for retries).
+   */
+  async scrapeSourceToStaging(source: ScrapeSource, runId: string): Promise<ScrapeSourceResult> {
+    this.logger.log(`Scraping source "${source}" (run ${runId})...`);
 
-    // 1. Scrape HR.ge fully (no descriptions)
-    this.logger.log('Step 1: Scraping HR.ge fully...');
-    const hrGeJobs = await this.hrGeScraperService.scrapeAllJobs(1, {
-      fetchDescriptions: false,
-      delayBetweenRequests: 250,
-    });
-
-    // 2. Scrape jobs.ge up to 17 pages (no descriptions)
-    this.logger.log('Step 2: Scraping jobs.ge up to 17 pages...');
-    const jobsGeResult = await this.scraperService.scrapeJobs('', 1, {
-      fetchDescriptions: false,
-    });
-    const jobsGeJobs = jobsGeResult?.jobs || [];
-
-    // 3. Scrape awork.ge fully
-    this.logger.log('Step 3: Scraping awork.ge fully...');
-    const aworkRes = await this.aworkGeScraperService.scrapeAllJobs({
-      delayBetweenRequests: 250,
-    });
-    const aworkJobs = aworkRes.jobs || [];
-
-    // 4. Scrape myjobs.ge fully
-    this.logger.log('Step 4: Scraping myjobs.ge fully...');
-    const myjobsRes = await this.myjobsGeScraperService.scrapeAllJobs({
-      delayBetweenRequests: 250,
-    });
-    const myjobsJobs = myjobsRes.jobs || [];
-
-    // Fetch existing DB records so DB listings are also checked for cross-source duplicates
-    const existingDbJobs = await this.jobRepo.find({
-      select: ['vacancy', 'company'],
-    });
-
-    // Deduplicate awork.ge and myjobs.ge jobs against jobs.ge, hr.ge, and existing DB listings
-    const existingSignatures = new Set<string>();
-
-    existingDbJobs.forEach(job => {
-      const v = this.normalizeText(job.vacancy);
-      const c = this.normalizeText(job.company);
-      if (v && c) {
-        existingSignatures.add(`${v}|${c}`);
-      }
-    });
-
-    [...jobsGeJobs, ...hrGeJobs].forEach(job => {
-      const v = this.normalizeText(job.vacancy);
-      const c = this.normalizeText(job.company);
-      if (v && c) {
-        existingSignatures.add(`${v}|${c}`);
-      }
-    });
-
-    let aworkDuplicatesRemoved = 0;
-    const uniqueAworkJobs = aworkJobs.filter(job => {
-      const v = this.normalizeText(job.vacancy);
-      const c = this.normalizeText(job.company);
-      const isDuplicate = existingSignatures.has(`${v}|${c}`);
-      if (isDuplicate) aworkDuplicatesRemoved++;
-      return !isDuplicate;
-    });
-
-    // Add unique awork signatures into set before filtering myjobs
-    uniqueAworkJobs.forEach(job => {
-      const v = this.normalizeText(job.vacancy);
-      const c = this.normalizeText(job.company);
-      if (v && c) {
-        existingSignatures.add(`${v}|${c}`);
-      }
-    });
-
-    let myjobsDuplicatesRemoved = 0;
-    const uniqueMyjobsJobs = myjobsJobs.filter(job => {
-      const v = this.normalizeText(job.vacancy);
-      const c = this.normalizeText(job.company);
-      const isDuplicate = existingSignatures.has(`${v}|${c}`);
-      if (isDuplicate) myjobsDuplicatesRemoved++;
-      return !isDuplicate;
-    });
-
-    this.logger.log(
-      `Multi-source deduplication:
-      - Jobs.ge: ${jobsGeJobs.length}
-      - HR.ge: ${hrGeJobs.length}
-      - Awork: ${aworkJobs.length} scraped (${aworkDuplicatesRemoved} duplicates removed, ${uniqueAworkJobs.length} unique)
-      - MyJobs: ${myjobsJobs.length} scraped (${myjobsDuplicatesRemoved} duplicates removed, ${uniqueMyjobsJobs.length} unique)`,
-    );
-
-    // 5. Scrape LinkedIn across Georgia
-    this.logger.log('Step 5: Scraping LinkedIn across Georgia...');
-    const linkedinRes = await this.linkedinScraperService.scrapeAllGeorgiaJobs({
-      fetchDescriptions: false,
-    });
-    const linkedinJobs = linkedinRes.jobs || [];
-
-    // Add unique myjobs signatures into set before filtering linkedin
-    uniqueMyjobsJobs.forEach(job => {
-      const v = this.normalizeText(job.vacancy);
-      const c = this.normalizeText(job.company);
-      if (v && c) {
-        existingSignatures.add(`${v}|${c}`);
-      }
-    });
-
-    let linkedinDuplicatesRemoved = 0;
-    const uniqueLinkedinJobs = linkedinJobs.filter(job => {
-      const v = this.normalizeText(job.vacancy);
-      const c = this.normalizeText(job.company);
-      const isDuplicate = existingSignatures.has(`${v}|${c}`);
-      if (isDuplicate) linkedinDuplicatesRemoved++;
-      return !isDuplicate;
-    });
-
-    this.logger.log(
-      `Final multi-source deduplication summary:
-      - Jobs.ge: ${jobsGeJobs.length}
-      - HR.ge: ${hrGeJobs.length}
-      - Awork: ${aworkJobs.length} scraped (${aworkDuplicatesRemoved} duplicates removed, ${uniqueAworkJobs.length} unique)
-      - MyJobs: ${myjobsJobs.length} scraped (${myjobsDuplicatesRemoved} duplicates removed, ${uniqueMyjobsJobs.length} unique)
-      - LinkedIn: ${linkedinJobs.length} scraped (${linkedinDuplicatesRemoved} duplicates removed, ${uniqueLinkedinJobs.length} unique)`,
-    );
-
-    const combined = [...jobsGeJobs, ...hrGeJobs, ...uniqueAworkJobs, ...uniqueMyjobsJobs, ...uniqueLinkedinJobs];
-
-    const uniqueMap = new Map<string, any>();
-
-    for (const job of combined) {
-      const normalizedVacancy = this.normalizeText(job.vacancy);
-      const normalizedCompany = this.normalizeText(job.company);
-      const normalizedLocation = this.normalizeText(job.location);
-
-      const sig = `${normalizedVacancy}|${normalizedCompany}|${normalizedLocation}`;
-      const fingerprint = crypto.createHash('md5').update(sig).digest('hex');
-
-      const jobWithFingerprint = {
-        ...job,
-        fingerprint,
-      };
-
-      const existing = uniqueMap.get(fingerprint);
-      if (!existing) {
-        uniqueMap.set(fingerprint, jobWithFingerprint);
-      } else {
-        const currentDescLen = (job.description || '').length;
-        const existingDescLen = (existing.description || '').length;
-        if (currentDescLen > existingDescLen) {
-          uniqueMap.set(fingerprint, jobWithFingerprint);
-        }
-      }
+    let jobs: JobData[] = [];
+    switch (source) {
+      case 'hrge':
+        jobs = await this.hrGeScraperService.scrapeAllJobs(1, {
+          fetchDescriptions: false,
+          delayBetweenRequests: 250,
+        });
+        break;
+      case 'jobsge':
+        jobs = (await this.scraperService.scrapeJobs('', 1, { fetchDescriptions: false }))?.jobs || [];
+        break;
+      case 'awork':
+        jobs = (await this.aworkGeScraperService.scrapeAllJobs({ delayBetweenRequests: 250 })).jobs || [];
+        break;
+      case 'myjobs':
+        jobs = (await this.myjobsGeScraperService.scrapeAllJobs({ delayBetweenRequests: 250 })).jobs || [];
+        break;
+      case 'linkedin':
+        jobs = (await this.linkedinScraperService.scrapeAllGeorgiaJobs({ fetchDescriptions: false })).jobs || [];
+        break;
+      default:
+        throw new Error(`Unknown scrape source "${source}"`);
     }
 
-    const uniqueJobs = Array.from(uniqueMap.values());
+    await this.scrapedJobRepo.delete({ runId, source });
 
-    this.logger.log(`Inserting ${uniqueJobs.length} unique jobs into the database...`);
-    await this.insertMany(uniqueJobs);
-    this.logger.log('Insertion completed successfully. Initial jobs are saved!');
+    const chunkSize = 500;
+    for (let i = 0; i < jobs.length; i += chunkSize) {
+      await this.scrapedJobRepo.insert(
+        jobs.slice(i, i + chunkSize).map((job) => ({
+          runId,
+          source,
+          vacancy: job.vacancy,
+          location: job.location,
+          company: job.company,
+          link: job.link,
+          publishDate: job.publishDate,
+          deadline: job.deadline,
+          page: job.page,
+          description: job.description || null,
+        })),
+      );
+    }
 
-    // Start background enrichment without awaiting
-    this.enrichMissingDescriptionsInBackground().catch(err => {
-      this.logger.error('Background description enrichment failed', err);
-    });
+    const result: ScrapeSourceResult = { source, scraped: jobs.length };
+    this.logger.log(`Source "${source}" staged: ${jobs.length} jobs`);
+    return result;
+  }
 
-    return {
-      jobsGeCount: jobsGeJobs.length,
-      hrGeCount: hrGeJobs.length,
-      aworkGeOriginalCount: aworkJobs.length,
-      aworkGeDuplicatesRemoved: aworkDuplicatesRemoved,
-      aworkGeUniqueCount: uniqueAworkJobs.length,
-      myjobsGeOriginalCount: myjobsJobs.length,
-      myjobsGeDuplicatesRemoved: myjobsDuplicatesRemoved,
-      myjobsGeUniqueCount: uniqueMyjobsJobs.length,
-      linkedinOriginalCount: linkedinJobs.length,
-      linkedinDuplicatesRemoved: linkedinDuplicatesRemoved,
-      linkedinUniqueCount: uniqueLinkedinJobs.length,
-      totalCombined: combined.length,
-      uniqueCount: uniqueJobs.length,
-      uniqueInsertedCount: uniqueJobs.length,
-      message: 'Successfully scraped from all 5 sources (jobs.ge, hr.ge, awork.ge, myjobs.ge, linkedin.com), deduplicated, and inserted unique jobs into database. Description enrichment is running in the background.',
-      jobs: uniqueJobs,
+  /**
+   * Merges all sources staged for a run into the job table.
+   * Sources are processed in priority order. Each source is deduped (vacancy|company|city) against the
+   * existing DB jobs and every higher-priority source, but not against itself, so multi-location
+   * postings inside one source are preserved. Same title and company in a different city is a new job. Within a source, duplicates are collapsed by fingerprint.
+   */
+  async mergeStagedJobs(runId: string): Promise<MergeResult> {
+    // Housekeeping: drop staging rows left behind by runs that never finished merging
+    await this.scrapedJobRepo.delete({ createdAt: LessThan(new Date(Date.now() - 3 * 24 * 3600 * 1000)) });
+
+    const existing = await this.jobRepo.find({ select: ['vacancy', 'company', 'location'] });
+    const seen = new Map<string, Set<string>>();
+    const markSeen = (signature: string, city: string) => {
+      const cities = seen.get(signature);
+      if (cities) cities.add(city);
+      else seen.set(signature, new Set([city]));
     };
+    for (const job of existing) {
+      const v = this.normalizeText(job.vacancy);
+      const c = this.normalizeText(job.company);
+      if (v && c) markSeen(`${v}|${c}`, this.canonicalCity(job.location));
+    }
+
+    const perSource: MergeSourceResult[] = [];
+    let totalInserted = 0;
+
+    for (const source of SCRAPE_SOURCE_PRIORITY) {
+      const staged = await this.scrapedJobRepo.find({ where: { runId, source } });
+      if (staged.length === 0) continue;
+
+      let duplicatesRemoved = 0;
+      const byFingerprint = new Map<string, CreateJobDto>();
+      const sourceSeen: { signature: string; city: string }[] = [];
+
+      for (const row of staged) {
+        const v = this.normalizeText(row.vacancy);
+        const c = this.normalizeText(row.company);
+        const signature = `${v}|${c}`;
+        const city = this.canonicalCity(row.location);
+        if (v && c && this.isSeen(seen.get(signature), city)) {
+          duplicatesRemoved++;
+          continue;
+        }
+
+        const fingerprint = crypto
+          .createHash('md5')
+          .update(`${v}|${c}|${this.normalizeText(row.location)}`)
+          .digest('hex');
+        const current = byFingerprint.get(fingerprint);
+        if (!current || (row.description || '').length > (current.description || '').length) {
+          byFingerprint.set(fingerprint, {
+            vacancy: row.vacancy,
+            location: row.location,
+            company: row.company,
+            link: row.link,
+            publishDate: row.publishDate,
+            deadline: row.deadline,
+            page: row.page,
+            description: row.description ?? undefined,
+            fingerprint,
+          } as CreateJobDto);
+        }
+        if (v && c) sourceSeen.push({ signature, city });
+      }
+
+      // Later sources must see this source's jobs, but this source must not dedupe against itself
+      for (const { signature, city } of sourceSeen) markSeen(signature, city);
+
+      const uniqueJobs = Array.from(byFingerprint.values());
+      if (uniqueJobs.length > 0) await this.insertMany(uniqueJobs);
+
+      totalInserted += uniqueJobs.length;
+      perSource.push({ source, staged: staged.length, duplicatesRemoved, inserted: uniqueJobs.length });
+    }
+
+    await this.scrapedJobRepo.delete({ runId });
+    this.logger.log(`Merge for run ${runId} done: ${JSON.stringify(perSource)}`);
+    return { runId, totalInserted, perSource };
   }
 
   /**
@@ -1120,11 +1126,6 @@ export class JobService {
       await this.insertMany(nonDuplicatedJobs);
       insertedToDbCount = nonDuplicatedJobs.length;
       this.logger.log(`Insertion completed successfully! Saved ${insertedToDbCount} LinkedIn jobs into the database.`);
-
-      // Trigger background description enrichment
-      this.enrichMissingDescriptionsInBackground().catch((err) => {
-        this.logger.error('Background description enrichment failed for LinkedIn jobs', err);
-      });
     }
 
     this.logger.log(
@@ -1150,77 +1151,69 @@ export class JobService {
     };
   }
 
-  async enrichMissingDescriptionsInBackground() {
-    this.logger.log('Starting background description enrichment...');
-    
-    // Find all jobs with empty/null descriptions or placeholder links
-    const jobsToEnrich = await this.jobRepo
+  /**
+   * Ids of jobs with empty/placeholder descriptions that still need enrichment (awork.ge excluded).
+   */
+  async getJobIdsNeedingEnrichment(): Promise<number[]> {
+    const rows = await this.jobRepo
       .createQueryBuilder('job')
-      .where('job.description IS NULL OR job.description = :empty OR job.description LIKE :shortDesc OR job.description LIKE :srLink', { 
+      .select('job.id', 'id')
+      .where('(job.description IS NULL OR job.description = :empty OR job.description LIKE :shortDesc OR job.description LIKE :srLink) AND job.link NOT LIKE :aworkLink', {
+        aworkLink: '%awork.ge%', // awork returns descriptions with the listing, nothing to fetch later
         empty: '',
         shortDesc: '%დეტალური ინფორმაციისთვის გადადით ბმულზე%',
-        srLink: '%smartrecruiters.com%'
+        srLink: '%smartrecruiters.com%',
       })
-      .getMany();
-    
-    this.logger.log(`Found ${jobsToEnrich.length} jobs requiring description enrichment.`);
+      .getRawMany<{ id: number }>();
+    return rows.map((r) => r.id);
+  }
 
-    const delayMs = 1500;
-    const batchSize = 10;
+  /**
+   * Fetches and stores the description for a single job. Returns true when a new description was saved.
+   * Throws on fetch errors so the queue can retry.
+   */
+  async enrichJobDescription(jobId: number): Promise<boolean> {
+    const job = await this.jobRepo.findOne({
+      where: { id: jobId },
+      select: ['id', 'link', 'description'],
+    });
+    if (!job) return false;
 
-    for (let i = 0; i < jobsToEnrich.length; i += batchSize) {
-      const batch = jobsToEnrich.slice(i, i + batchSize);
-
-      for (let j = 0; j < batch.length; j++) {
-        const job = batch[j];
-        try {
-          let desc = '';
-          if (job.link.includes('hr.ge') || job.link.includes('cv.ge') || job.link.includes('doctor.ge') || job.link.includes('chefs.ge')) {
-            const parts = job.link.split('/');
-            const id = parseInt(parts[parts.length - 1], 10);
-            if (!isNaN(id)) {
-              let tenantId = 1;
-              if (job.link.includes('cv.ge')) tenantId = 2;
-              else if (job.link.includes('doctor.ge')) tenantId = 4;
-              else if (job.link.includes('chefs.ge')) tenantId = 5;
-
-              desc = await this.hrGeScraperService.fetchDescription(tenantId, id);
-            }
-          } else if (job.link.includes('myjobs.ge') || job.link.includes('myjobs')) {
-            const parts = job.link.split('/');
-            const id = parseInt(parts[parts.length - 1], 10);
-            if (!isNaN(id)) {
-              desc = await this.myjobsGeScraperService.fetchDescription(id);
-            }
-          } else if (job.link.includes('jobs.ge')) {
-            desc = await this.scraperService.fetchDescription(job.link);
-          } else if (job.link.includes('linkedin.com') || job.link.includes('linkedin')) {
-            const match = job.link.match(/-(\d+)(?:\?|$)/) || job.link.match(/\/(\d+)(?:\?|$)/);
-            if (match) {
-              desc = await this.linkedinScraperService.fetchJobDescription(match[1]);
-            }
-          } else if (job.description && job.description.includes('smartrecruiters.com')) {
-            desc = await this.myjobsGeScraperService.fetchSmartRecruitersDescription(job.description);
-          }
-
-          if (desc && desc.trim().length > 0 && desc.trim() !== job.description) {
-            job.description = desc.trim();
-            await this.jobRepo.save(job);
-            const index = i + j + 1;
-            this.logger.log(`[Background Enrichment] [${index}/${jobsToEnrich.length}] Saved description for: ${job.vacancy}`);
-          }
-        } catch (error) {
-          this.logger.warn(`Failed to enrich description for job ${job.id}: ${error.message}`);
-        }
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-      }
-
-      if (i + batchSize < jobsToEnrich.length) {
-        const batchPause = delayMs * 2;
-        await new Promise((resolve) => setTimeout(resolve, batchPause));
-      }
+    const desc = await this.fetchDescriptionForJob(job);
+    if (desc && desc.trim().length > 0 && desc.trim() !== job.description) {
+      await this.jobRepo.update(job.id, { description: desc.trim() });
+      return true;
     }
+    return false;
+  }
 
-    this.logger.log('Background description enrichment completed.');
+  private async fetchDescriptionForJob(job: Pick<JobEntity, 'link' | 'description'>): Promise<string> {
+    const link = job.link || '';
+    if (link.includes('hr.ge') || link.includes('cv.ge') || link.includes('doctor.ge') || link.includes('chefs.ge')) {
+      const parts = link.split('/');
+      const id = parseInt(parts[parts.length - 1], 10);
+      if (isNaN(id)) return '';
+      let tenantId = 1;
+      if (link.includes('cv.ge')) tenantId = 2;
+      else if (link.includes('doctor.ge')) tenantId = 4;
+      else if (link.includes('chefs.ge')) tenantId = 5;
+      return this.hrGeScraperService.fetchDescription(tenantId, id);
+    }
+    if (link.includes('myjobs.ge') || link.includes('myjobs')) {
+      const parts = link.split('/');
+      const id = parseInt(parts[parts.length - 1], 10);
+      return isNaN(id) ? '' : this.myjobsGeScraperService.fetchDescription(id);
+    }
+    if (link.includes('jobs.ge')) {
+      return this.scraperService.fetchDescription(link);
+    }
+    if (link.includes('linkedin.com') || link.includes('linkedin')) {
+      const match = link.match(/-(\d+)(?:\?|$)/) || link.match(/\/(\d+)(?:\?|$)/);
+      return match ? this.linkedinScraperService.fetchJobDescription(match[1]) : '';
+    }
+    if (job.description && job.description.includes('smartrecruiters.com')) {
+      return this.myjobsGeScraperService.fetchSmartRecruitersDescription(job.description);
+    }
+    return '';
   }
 }
