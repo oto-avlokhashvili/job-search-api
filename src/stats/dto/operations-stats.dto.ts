@@ -14,6 +14,23 @@ export class AggregatorItemDto {
   iconUrl?: string;
 }
 
+export class PortalCountsDto {
+  @ApiProperty({ example: 3120 })
+  jobsGe: number;
+
+  @ApiProperty({ example: 2480 })
+  hrGe: number;
+
+  @ApiProperty({ example: 640 })
+  aworkGe: number;
+
+  @ApiProperty({ example: 1890 })
+  myjobsGe: number;
+
+  @ApiProperty({ example: 1280 })
+  linkedin: number;
+}
+
 export class OperationsStatsDto {
   @ApiProperty({
     description: 'Number of active Pro users (აქტიური აგენტები)',
@@ -68,4 +85,10 @@ export class OperationsStatsDto {
     type: [AggregatorItemDto],
   })
   aggregators: AggregatorItemDto[];
+
+  @ApiProperty({
+    description: 'Number of jobs per source portal',
+    type: PortalCountsDto,
+  })
+  portalCounts: PortalCountsDto;
 }

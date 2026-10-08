@@ -2,11 +2,15 @@ import { NestFactory } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
+import { NestExpressApplication } from '@nestjs/platform-express';
 
 import cookieParser from 'cookie-parser';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // Railway's edge proxy sits in front of the app; trust its X-Forwarded-For so req.ip
+  // is the real caller instead of the proxy (used for per-IP rate limits).
+  app.set('trust proxy', 1);
   app.use(cookieParser());
   app.useGlobalPipes(new ValidationPipe({
     transform: true,
@@ -31,6 +35,7 @@ app.enableCors({
         { type: 'http', scheme: 'bearer', bearerFormat: 'JWT', in: 'header' },
         'bearerAuth',
       )
+      .addApiKey({ type: 'apiKey', in: 'header', name: 'X-Internal-Key' }, 'internalKey')
       .build();
 
     const document = SwaggerModule.createDocument(app, config);

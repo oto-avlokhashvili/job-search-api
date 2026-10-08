@@ -26,8 +26,15 @@ describe('StatsService & StatsController', () => {
     count: jest.fn().mockResolvedValue(14204),
   };
 
+  const mockJobQueryBuilder = {
+    where: jest.fn().mockReturnThis(),
+    andWhere: jest.fn().mockReturnThis(),
+    getCount: jest.fn().mockResolvedValue(3120),
+  };
+
   const mockJobRepo = {
     count: jest.fn().mockResolvedValue(8551),
+    createQueryBuilder: jest.fn().mockReturnValue(mockJobQueryBuilder),
   };
 
   const mockCvRepo = {
@@ -70,6 +77,13 @@ describe('StatsService & StatsController', () => {
       }),
     );
     expect(result.aggregators).toHaveLength(5);
+    expect(result.portalCounts).toEqual({
+      jobsGe: 3120,
+      hrGe: 8551,
+      aworkGe: 8551,
+      myjobsGe: 8551,
+      linkedin: 8551,
+    });
     expect(result.avgCalculationTimeSeconds).toBeGreaterThan(0);
   });
 });

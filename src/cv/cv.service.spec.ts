@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { autoMock } from '../../test/auto-mock';
 import { CvService } from './cv.service';
 
 describe('CvService', () => {
@@ -7,7 +8,7 @@ describe('CvService', () => {
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [CvService],
-    }).compile();
+    }).useMocker(autoMock).compile();
 
     service = module.get<CvService>(CvService);
   });

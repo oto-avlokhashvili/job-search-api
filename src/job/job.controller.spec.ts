@@ -4,6 +4,7 @@ import { JobService } from './job.service';
 import { ForbiddenException } from '@nestjs/common';
 import { FilterJobDto } from './dto/filter-job.dto';
 import { ScrapeQueueService } from './scrape-queue.service';
+import { ThrottlerModule } from '@nestjs/throttler';
 
 // @nestjs/bullmq ships ESM that jest cannot load; the queue service is mocked below
 jest.mock('./scrape-queue.service', () => ({ ScrapeQueueService: class ScrapeQueueService {} }));
@@ -34,6 +35,7 @@ describe('JobController', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
+      imports: [ThrottlerModule.forRoot([{ ttl: 60000, limit: 60 }])],
       controllers: [JobController],
       providers: [
         {

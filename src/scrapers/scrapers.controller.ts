@@ -1,5 +1,6 @@
-import { Controller, Get, Query, ParseIntPipe, Inject, forwardRef } from '@nestjs/common';
-import { ApiQuery, ApiTags } from '@nestjs/swagger';
+import { Controller, Post, Query, ParseIntPipe, Inject, forwardRef, UseGuards } from '@nestjs/common';
+import { ApiQuery, ApiSecurity, ApiTags } from '@nestjs/swagger';
+import { InternalKeyGuard } from '../auth/guards/internal-key.guard';
 import { HrGeScraperService } from './hr-ge-scraper.service';
 import { JobsGeScraperService, ScraperResult, JobData } from './jobs-ge.scraper';
 import { AworkGeScraperService, AworkScraperResult } from './awork-ge.scraper';
@@ -7,7 +8,11 @@ import { MyjobsGeScraperService, MyjobsScraperResult } from './myjobs-ge.scraper
 import { LinkedinScraperService, LinkedinScraperResult } from './linkedin.scraper';
 import { JobService, LinkedinDuplicateCheckResult } from '../job/job.service';
 
+// Every route here starts a scrape against an external portal, so all of them are
+// internal only and POST (a GET could be triggered by a crawler following a link).
 @ApiTags('scraper')
+@ApiSecurity('internalKey')
+@UseGuards(InternalKeyGuard)
 @Controller('scraper')
 export class ScrapersController {
   constructor(
@@ -20,7 +25,7 @@ export class ScrapersController {
     private readonly jobService: JobService,
   ) {}
 
-  @Get('sync-all')
+  @Post('sync-all')
   @ApiQuery({ name: 'tenantId', required: false, type: Number })
   @ApiQuery({ name: 'delayBetweenRequests', required: false, type: Number })
   @ApiQuery({ name: 'fetchDescriptions', required: false, type: Boolean })
@@ -42,7 +47,7 @@ export class ScrapersController {
     });
   }
 
-  @Get('sync-jobs-ge')
+  @Post('sync-jobs-ge')
   @ApiQuery({ name: 'query', required: false, type: String })
   @ApiQuery({ name: 'startPage', required: false, type: Number })
   @ApiQuery({ name: 'maxPages', required: false, type: Number })
@@ -57,7 +62,7 @@ export class ScrapersController {
     });
   }
 
-  @Get('sync-awork')
+  @Post('sync-awork')
   @ApiQuery({ name: 'delayBetweenRequests', required: false, type: Number })
   @ApiQuery({ name: 'maxPages', required: false, type: Number })
   @ApiQuery({ name: 'pageSize', required: false, type: Number })
@@ -73,7 +78,7 @@ export class ScrapersController {
     });
   }
 
-  @Get('sync-myjobs')
+  @Post('sync-myjobs')
   @ApiQuery({ name: 'delayBetweenRequests', required: false, type: Number })
   @ApiQuery({ name: 'maxPages', required: false, type: Number })
   @ApiQuery({ name: 'pageSize', required: false, type: Number })
@@ -89,7 +94,7 @@ export class ScrapersController {
     });
   }
 
-  @Get('sync-linkedin')
+  @Post('sync-linkedin')
   @ApiQuery({ name: 'query', required: false, type: String, description: 'Alias for keywords filter' })
   @ApiQuery({ name: 'keywords', required: false, type: String, description: 'Search keywords' })
   @ApiQuery({ name: 'location', required: false, type: String, description: 'Location (e.g. Tbilisi, Batumi, Georgia)' })

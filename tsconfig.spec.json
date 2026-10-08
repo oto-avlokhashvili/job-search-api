@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Lets ts-jest compile the ESM-only @nestjs/bullmq packages to CommonJS for Jest.
+    "allowJs": true
+  }
+}

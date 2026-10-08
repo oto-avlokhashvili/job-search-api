@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException, Logger, ConflictException } from '@nestjs/common';
 import { CreateJobDto } from './dto/create-job.dto';
 import { UpdateJobDto } from './dto/update-job.dto';
-import { Brackets, ILike, In, LessThan, Like, Repository } from 'typeorm';
+import { Brackets, ILike, In, LessThan, Repository } from 'typeorm';
 import { JobEntity } from 'src/Entities/job.entity';
 import { ScrapedJobEntity } from 'src/Entities/scraped-job.entity';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -11,6 +11,7 @@ import { HrGeScraperService } from '../scrapers/hr-ge-scraper.service';
 import { AworkGeScraperService } from '../scrapers/awork-ge.scraper';
 import { MyjobsGeScraperService } from '../scrapers/myjobs-ge.scraper';
 import { LinkedinScraperService, LinkedinScraperOptions } from '../scrapers/linkedin.scraper';
+import { countJobsByPortal } from './portal-counts';
 import * as crypto from 'crypto';
 
 export interface LinkedinDuplicateCheckResult {
@@ -365,55 +366,31 @@ export class JobService {
     }
 
     const [jobs, filteredRecords] = await qb.take(limit).skip(skip).getManyAndCount();
-    const totalRecords = await this.jobRepo.count();
-
-    const totalJobsGe = await this.jobRepo
-      .createQueryBuilder('job')
-      .where('job.link LIKE :jobsGe', { jobsGe: '%jobs.ge%' })
-      .andWhere('job.link NOT LIKE :myjobs', { myjobs: '%myjobs%' })
-      .getCount();
-
-    const totalHrGe = await this.jobRepo.count({
-      where: [
-        { link: Like('%hr.ge%') },
-        { link: Like('%cv.ge%') },
-        { link: Like('%doctor.ge%') },
-        { link: Like('%chefs.ge%') },
-      ],
-    });
-
-    const totalAworkGe = await this.jobRepo.count({
-      where: [
-        { link: Like('%awork.ge%') },
-        { link: Like('%awork%') },
-      ],
-    });
-
-    const totalMyjobsGe = await this.jobRepo.count({
-      where: [
-        { link: Like('%myjobs.ge%') },
-        { link: Like('%myjobs%') },
-      ],
-    });
-
-    const totalLinkedin = await this.jobRepo.count({
-      where: { link: Like('%linkedin%') },
-    });
+    const [totalRecords, portalCounts] = await Promise.all([
+      this.jobRepo.count(),
+      countJobsByPortal(this.jobRepo),
+    ]);
 
     return {
       jobs,
       counts: {
         totalRecords,
         filteredRecords: hasFilter ? filteredRecords : totalRecords,
-        jobsGe: totalJobsGe,
-        hrGe: totalHrGe,
-        aworkGe: totalAworkGe,
-        myjobsGe: totalMyjobsGe,
-        linkedin: totalLinkedin,
+        ...portalCounts,
       },
       page,
       limit,
     };
+  }
+
+  /** Only the fields the sitemap and indexing notifier need, newest first. */
+  async findForSitemap(limit?: number) {
+    const qb = this.jobRepo
+      .createQueryBuilder('job')
+      .select(['job.id', 'job.vacancy', 'job.company', 'job.publishDate', 'job.deadline'])
+      .orderBy('job.id', 'DESC');
+    if (limit) qb.take(limit);
+    return { jobs: await qb.getMany() };
   }
 
   async findAllByQuery(query: string | string[]) {

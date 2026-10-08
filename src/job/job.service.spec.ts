@@ -28,6 +28,7 @@ describe('JobService', () => {
       skip: jest.fn().mockReturnThis(),
       limit: jest.fn().mockReturnThis(),
       getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+      getCount: jest.fn().mockResolvedValue(0),
       getMany: jest.fn().mockResolvedValue([]),
       getRawMany: jest.fn().mockResolvedValue([]),
       delete: jest.fn().mockReturnThis(),

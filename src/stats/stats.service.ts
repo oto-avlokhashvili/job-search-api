@@ -7,6 +7,7 @@ import { JobEntity } from 'src/Entities/job.entity';
 import { Cv } from 'src/Entities/cv.entity';
 import { SubscriptionPlan, SubscriptionStatus } from 'src/enums/subscriptions.enum';
 import { OperationsStatsDto } from './dto/operations-stats.dto';
+import { countJobsByPortal } from 'src/job/portal-counts';
 
 @Injectable()
 export class StatsService {
@@ -41,6 +42,7 @@ export class StatsService {
       activeUsers,
       activeVacancies,
       uploadedCvs,
+      portalCounts,
     ] = await Promise.all([
       // Count Pro users (აქტიური აგენტები)
       this.userRepository
@@ -65,6 +67,9 @@ export class StatsService {
 
       // Count uploaded CVs (შესაბამისობის სიზუსტე / ატვირთული CV-ები)
       this.cvRepository.count(),
+
+      // Jobs per source portal (portal cards on the home & vacancy pages)
+      countJobsByPortal(this.jobRepository),
     ]);
 
     const calculationDurationSeconds = Number(((Date.now() - startTime) / 1000).toFixed(2));
@@ -79,6 +84,7 @@ export class StatsService {
       syncedPortals: aggregatorsList.filter((a) => a.active).length,
       avgCalculationTimeSeconds: calculationDurationSeconds > 0 ? calculationDurationSeconds : 1.2,
       aggregators: aggregatorsList,
+      portalCounts,
     };
   }
 }

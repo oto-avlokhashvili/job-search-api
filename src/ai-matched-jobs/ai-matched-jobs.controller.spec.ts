@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { autoMock } from '../../test/auto-mock';
 import { AiMatchedJobsController } from './ai-matched-jobs.controller';
 import { AiMatchedJobsService } from './ai-matched-jobs.service';
 
@@ -9,7 +10,7 @@ describe('AiMatchedJobsController', () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AiMatchedJobsController],
       providers: [AiMatchedJobsService],
-    }).compile();
+    }).useMocker(autoMock).compile();
 
     controller = module.get<AiMatchedJobsController>(AiMatchedJobsController);
   });

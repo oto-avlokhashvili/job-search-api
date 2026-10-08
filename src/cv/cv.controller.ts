@@ -12,7 +12,8 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Public } from '../auth/decorators/public.decorator';
-import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { Throttle } from '@nestjs/throttler';
+import { ClientIpThrottlerGuard } from 'src/auth/guards/client-ip-throttler.guard';
 import { CvService } from './cv.service';
 import { CvFileValidationPipe } from './cv-file-validation.pipe';
 import { UpdateCvSummaryDto } from './dto/update-cv.dto';
@@ -32,7 +33,7 @@ export class CvController {
 
   @Public()
   @Post('public-submit')
-  @UseGuards(ThrottlerGuard)
+  @UseGuards(ClientIpThrottlerGuard)
   @Throttle({ default: { limit: 5, ttl: 600000 } }) // Limit to max 5 submissions per 10 minutes per IP
   @ApiOperation({ summary: 'Landing page public CV upload (Leave CV for HRs to contact you)' })
   @ApiConsumes('multipart/form-data')
