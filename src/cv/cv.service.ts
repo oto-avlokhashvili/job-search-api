@@ -73,9 +73,13 @@ export class CvService {
   }
 
   /**
-   * Submit CV from landing page for public candidates (without login / registration / AI evaluation)
+   * Submit CV from landing page for public candidates (without login / registration).
+   * The CV is summarized by AI during submission, same as registered uploads.
    */
-  async submitPublicCv(dto: PublicCvUploadDto, file: Express.Multer.File): Promise<{ success: boolean; message: string }> {
+  async submitPublicCv(
+    dto: PublicCvUploadDto,
+    file: Express.Multer.File,
+  ): Promise<{ success: boolean; message: string; summary: CvSummaryDetails | null }> {
     if (!dto.consent) {
       throw new BadRequestException('Consent is required to submit your CV');
     }
@@ -89,7 +93,15 @@ export class CvService {
 
     const email = dto.email.trim().toLowerCase();
 
-    // 2. Check if a public CV for this email already exists
+    // 2. Summarize the CV with AI
+    let summary: CvSummaryDetails | null = null;
+    try {
+      summary = await this.aiService.summarizeCv(file);
+    } catch (e: any) {
+      this.logger.warn(`Could not summarize public CV for ${email}: ${e.message}`);
+    }
+
+    // 3. Check if a public CV for this email already exists
     const existing = await this.cvRepository.findOne({
       where: { email, userId: IsNull() },
     });
@@ -107,12 +119,13 @@ export class CvService {
       existing.phoneNumber = dto.phoneNumber || existing.phoneNumber || null;
       existing.consentGiven = true;
       existing.consentGivenAt = new Date();
+      existing.summary = summary;
       await this.cvRepository.save(existing);
 
-      return { success: true, message: 'თქვენი CV წარმატებით განახლდა' };
+      return { success: true, message: 'თქვენი CV წარმატებით განახლდა', summary };
     }
 
-    // 3. Create new candidate record
+    // 4. Create new candidate record
     const cv = this.cvRepository.create({
       userId: null,
       email,
@@ -123,14 +136,14 @@ export class CvService {
       mimeType: file.mimetype,
       size: file.size,
       storagePath,
-      summary: null,
+      summary,
       consentGiven: true,
       consentGivenAt: new Date(),
     });
 
     await this.cvRepository.save(cv);
 
-    return { success: true, message: 'თქვენი CV წარმატებით აიტვირთა' };
+    return { success: true, message: 'თქვენი CV წარმატებით აიტვირთა', summary };
   }
 
   async getCvByUser(userId: number): Promise<Cv> {
