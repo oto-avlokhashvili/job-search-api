@@ -3,13 +3,24 @@ import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef,
 import { UpdateCvSummaryDto } from './dto/update-cv.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Cv } from 'src/Entities/cv.entity';
-import { IsNull, Repository } from 'typeorm';
-import { randomUUID } from 'crypto';
+import { IsNull, Not, Repository } from 'typeorm';
+import { createHash, randomBytes, randomUUID } from 'crypto';
 import { CvParserService } from './cv-parser.service';
 import { R2StorageService } from './r2-storage.service';
 import { AiService } from 'src/ai/ai.service';
 import { CvSummaryDetails } from './dto/cv-summary.dto';
 import { PublicCvUploadDto } from './dto/public-cv-upload.dto';
+import { PublicCvLimitsService } from './public-cv-limits.service';
+import { hashSearchToken } from './public-cv-search.service';
+
+const DAY_SEC = 24 * 60 * 60;
+const envInt = (name: string, fallback: number) => Number(process.env[name]) || fallback;
+const PUBLIC_CV_UPLOADS_PER_IP_PER_DAY = envInt('PUBLIC_CV_UPLOADS_PER_IP_PER_DAY', 10);
+const PUBLIC_CV_UPLOADS_PER_EMAIL_PER_DAY = envInt('PUBLIC_CV_UPLOADS_PER_EMAIL_PER_DAY', 3);
+// Hard ceiling on AI summaries for anonymous uploads across the whole site, per UTC day.
+const PUBLIC_CV_AI_DAILY_BUDGET = envInt('PUBLIC_CV_AI_DAILY_BUDGET', 300);
+
+const sha256 = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 
 @Injectable()
 export class CvService {
@@ -22,6 +33,7 @@ export class CvService {
     private readonly r2StorageService: R2StorageService,
     @Inject(forwardRef(() => AiService))
     private readonly aiService: AiService,
+    private readonly limits: PublicCvLimitsService,
   ) {}
 
   /**
@@ -74,34 +86,62 @@ export class CvService {
 
   /**
    * Submit CV from landing page for public candidates (without login / registration).
-   * The CV is summarized by AI during submission, same as registered uploads.
+   * The CV is summarized by AI during submission, same as registered uploads, and the
+   * response carries a fresh search token for anonymous CV search (see PublicCvSearchService).
    */
   async submitPublicCv(
     dto: PublicCvUploadDto,
     file: Express.Multer.File,
-  ): Promise<{ success: boolean; message: string; summary: CvSummaryDetails | null }> {
+    clientIp: string,
+  ): Promise<{
+    success: boolean;
+    message: string;
+    summary: CvSummaryDetails | null;
+    searchToken: string;
+    searchAvailable: boolean;
+  }> {
     if (!dto.consent) {
       throw new BadRequestException('Consent is required to submit your CV');
     }
 
+    const email = dto.email.trim().toLowerCase();
+    const tooMany = 'ატვირთვების ლიმიტი ამოიწურა, სცადეთ ხვალ';
+
+    // 1. Daily limits, checked before any storage or AI work. Keys hold hashes, not raw PII.
+    await this.limits.consume(`upload:ip:${sha256(clientIp)}`, PUBLIC_CV_UPLOADS_PER_IP_PER_DAY, DAY_SEC, tooMany);
+    await this.limits.consume(`upload:email:${sha256(email)}`, PUBLIC_CV_UPLOADS_PER_EMAIL_PER_DAY, DAY_SEC, tooMany);
+
     const ext = file.originalname.split('.').pop();
     const fileName = `${randomUUID()}.${ext}`;
     const storagePath = `cvs/public/${fileName}`;
+    const fileHash = sha256(file.buffer);
 
-    // 1. Upload file to Cloudflare R2
+    // 2. Upload file to Cloudflare R2
     await this.r2StorageService.uploadFile(file.buffer, storagePath, file.mimetype);
 
-    const email = dto.email.trim().toLowerCase();
-
-    // 2. Summarize the CV with AI
+    // 3. Summarize the CV: reuse the summary of an identical file, otherwise call the AI
+    //    while the site-wide daily budget lasts. Without a summary the CV is still saved
+    //    for HRs, only CV search is unavailable.
     let summary: CvSummaryDetails | null = null;
-    try {
-      summary = await this.aiService.summarizeCv(file);
-    } catch (e: any) {
-      this.logger.warn(`Could not summarize public CV for ${email}: ${e.message}`);
+    const sameFile = await this.cvRepository.findOne({ where: { fileHash, summary: Not(IsNull()) } });
+    if (sameFile?.summary) {
+      summary = sameFile.summary;
+    } else if (await this.limits.tryConsume(`ai-budget:${new Date().toISOString().slice(0, 10)}`, PUBLIC_CV_AI_DAILY_BUDGET, DAY_SEC)) {
+      try {
+        summary = await this.aiService.summarizeCv(file);
+      } catch (e: any) {
+        this.logger.warn(`Could not summarize public CV for ${email}: ${e.message}`);
+      }
+    } else {
+      this.logger.warn('Public CV AI budget exhausted for today; saving CV without a summary');
     }
 
-    // 3. Check if a public CV for this email already exists
+    // 4. New token on every upload; only its hash is stored.
+    const searchToken = randomBytes(32).toString('base64url');
+    const searchTokenHash = hashSearchToken(searchToken);
+    const searchAvailable = !!summary?.searchQueries?.length;
+
+    // 5. Check if a public CV for this email already exists
     const existing = await this.cvRepository.findOne({
       where: { email, userId: IsNull() },
     });
@@ -120,12 +160,14 @@ export class CvService {
       existing.consentGiven = true;
       existing.consentGivenAt = new Date();
       existing.summary = summary;
+      existing.fileHash = fileHash;
+      existing.searchTokenHash = searchTokenHash;
       await this.cvRepository.save(existing);
 
-      return { success: true, message: 'თქვენი CV წარმატებით განახლდა', summary };
+      return { success: true, message: 'თქვენი CV წარმატებით განახლდა', summary, searchToken, searchAvailable };
     }
 
-    // 4. Create new candidate record
+    // 6. Create new candidate record
     const cv = this.cvRepository.create({
       userId: null,
       email,
@@ -137,13 +179,15 @@ export class CvService {
       size: file.size,
       storagePath,
       summary,
+      fileHash,
+      searchTokenHash,
       consentGiven: true,
       consentGivenAt: new Date(),
     });
 
     await this.cvRepository.save(cv);
 
-    return { success: true, message: 'თქვენი CV წარმატებით აიტვირთა', summary };
+    return { success: true, message: 'თქვენი CV წარმატებით აიტვირთა', summary, searchToken, searchAvailable };
   }
 
   async getCvByUser(userId: number): Promise<Cv> {

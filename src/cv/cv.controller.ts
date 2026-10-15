@@ -2,24 +2,26 @@
 import {
   Controller, Post, Get, Delete, Patch,
   UseGuards, UseInterceptors, UploadedFile,
-  Req, Res, HttpCode, HttpStatus, Body,
+  Req, Res, HttpCode, HttpStatus, Body, Headers,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import {
   ApiTags, ApiConsumes, ApiBody, ApiOperation,
-  ApiOkResponse, ApiNoContentResponse, ApiBearerAuth,
+  ApiOkResponse, ApiNoContentResponse, ApiBearerAuth, ApiHeader,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Public } from '../auth/decorators/public.decorator';
 import { Throttle } from '@nestjs/throttler';
-import { ClientIpThrottlerGuard } from 'src/auth/guards/client-ip-throttler.guard';
+import { ClientIpThrottlerGuard, resolveClientIp } from 'src/auth/guards/client-ip-throttler.guard';
 import { CvService } from './cv.service';
 import { CvFileValidationPipe } from './cv-file-validation.pipe';
 import { UpdateCvSummaryDto } from './dto/update-cv.dto';
 import { CreateCvDto } from './dto/create-cv.dto';
 import { PublicCvUploadDto } from './dto/public-cv-upload.dto';
 import { CvParserService } from './cv-parser.service';
+import { PublicCvSearchService } from './public-cv-search.service';
+import { TurnstileService } from './turnstile.service';
 
 @ApiTags('CV')
 @ApiBearerAuth('bearerAuth')
@@ -29,6 +31,8 @@ export class CvController {
   constructor(
     private readonly cvService: CvService,
     private readonly cvParserService: CvParserService,
+    private readonly publicCvSearchService: PublicCvSearchService,
+    private readonly turnstileService: TurnstileService,
   ) {}
 
   @Public()
@@ -54,8 +58,21 @@ export class CvController {
   async publicSubmit(
     @UploadedFile(CvFileValidationPipe) file: Express.Multer.File,
     @Body() dto: PublicCvUploadDto,
+    @Req() req,
   ) {
-    return this.cvService.submitPublicCv(dto, file);
+    const clientIp = resolveClientIp(req);
+    await this.turnstileService.verify(dto.turnstileToken, clientIp);
+    return this.cvService.submitPublicCv(dto, file, clientIp);
+  }
+
+  @Public()
+  @Get('public-search')
+  @UseGuards(ClientIpThrottlerGuard)
+  @Throttle({ default: { limit: 60, ttl: 3600000 } }) // 60 searches per hour per IP (plus 30/hour per CV token)
+  @ApiOperation({ summary: 'Anonymous CV search: vacancies matching the CV behind the X-CV-Token header' })
+  @ApiHeader({ name: 'X-CV-Token', required: true, description: 'searchToken returned by POST /cv/public-submit' })
+  async publicSearch(@Headers('x-cv-token') token: string | undefined) {
+    return this.publicCvSearchService.search(token);
   }
 
   @Post('upload')

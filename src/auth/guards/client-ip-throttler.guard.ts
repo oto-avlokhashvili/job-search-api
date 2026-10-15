@@ -8,14 +8,18 @@ import { isTrustedProxy } from './secret-matches';
  * X-Client-IP together with X-Proxy-Key; only then is X-Client-IP trusted, otherwise a
  * direct caller could pick any IP it likes.
  */
+export function resolveClientIp(req: Record<string, any>): string {
+  const clientIp = req.headers['x-client-ip'];
+  if (isTrustedProxy(req) && typeof clientIp === 'string' && clientIp) {
+    return clientIp;
+  }
+  return req.ip;
+}
+
 @Injectable()
 export class ClientIpThrottlerGuard extends ThrottlerGuard {
   protected async getTracker(req: Record<string, any>): Promise<string> {
-    const clientIp = req.headers['x-client-ip'];
-    if (isTrustedProxy(req) && typeof clientIp === 'string' && clientIp) {
-      return clientIp;
-    }
-    return req.ip;
+    return resolveClientIp(req);
   }
 
   // Server-side renders come from the frontend server itself, with no browser behind

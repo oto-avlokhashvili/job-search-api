@@ -22,4 +22,9 @@ export class PublicCvUploadDto {
   @Transform(({ value }) => value === 'true' || value === true || value === 1 || value === '1')
   @IsBoolean({ message: 'Consent must be a boolean' })
   consent: boolean;
+
+  @ApiPropertyOptional({ description: 'Cloudflare Turnstile token (required when TURNSTILE_SECRET_KEY is set)' })
+  @IsOptional()
+  @IsString()
+  turnstileToken?: string;
 }

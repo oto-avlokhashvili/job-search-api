@@ -39,6 +39,16 @@ export class Cv {
   @Column({ type: 'jsonb', nullable: true, default: null })
   summary: CvSummaryDetails | null;
 
+  // SHA-256 of the file bytes: an identical re-upload reuses the stored summary instead of a new AI call.
+  @Column({ type: 'varchar', length: 64, nullable: true, default: null })
+  @Index()
+  fileHash: string | null;
+
+  // SHA-256 of the anonymous CV-search token; the raw token is only ever held by the browser.
+  @Column({ type: 'varchar', length: 64, nullable: true, default: null })
+  @Index()
+  searchTokenHash: string | null;
+
   // Column default of true backfills existing rows as consented when this field is added to the table.
   @Column({ type: 'boolean', default: true })
   consentGiven: boolean;
