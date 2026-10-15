@@ -16,7 +16,7 @@ import { hashSearchToken } from './public-cv-search.service';
 const DAY_SEC = 24 * 60 * 60;
 const envInt = (name: string, fallback: number) => Number(process.env[name]) || fallback;
 const PUBLIC_CV_UPLOADS_PER_IP_PER_DAY = envInt('PUBLIC_CV_UPLOADS_PER_IP_PER_DAY', 10);
-const PUBLIC_CV_UPLOADS_PER_EMAIL_PER_DAY = envInt('PUBLIC_CV_UPLOADS_PER_EMAIL_PER_DAY', 3);
+const PUBLIC_CV_UPLOADS_PER_EMAIL_PER_DAY = envInt('PUBLIC_CV_UPLOADS_PER_EMAIL_PER_DAY', 7);
 // Hard ceiling on AI summaries for anonymous uploads across the whole site, per UTC day.
 const PUBLIC_CV_AI_DAILY_BUDGET = envInt('PUBLIC_CV_AI_DAILY_BUDGET', 300);
 
@@ -105,11 +105,21 @@ export class CvService {
     }
 
     const email = dto.email.trim().toLowerCase();
-    const tooMany = 'ატვირთვების ლიმიტი ამოიწურა, სცადეთ ხვალ';
 
     // 1. Daily limits, checked before any storage or AI work. Keys hold hashes, not raw PII.
-    await this.limits.consume(`upload:ip:${sha256(clientIp)}`, PUBLIC_CV_UPLOADS_PER_IP_PER_DAY, DAY_SEC, tooMany);
-    await this.limits.consume(`upload:email:${sha256(email)}`, PUBLIC_CV_UPLOADS_PER_EMAIL_PER_DAY, DAY_SEC, tooMany);
+    //    Distinct messages, so a user (and support) can tell which limit was hit.
+    await this.limits.consume(
+      `upload:ip:${sha256(clientIp)}`,
+      PUBLIC_CV_UPLOADS_PER_IP_PER_DAY,
+      DAY_SEC,
+      'ამ ქსელიდან დღევანდელი ატვირთვების ლიმიტი ამოიწურა, სცადეთ ხვალ',
+    );
+    await this.limits.consume(
+      `upload:email:${sha256(email)}`,
+      PUBLIC_CV_UPLOADS_PER_EMAIL_PER_DAY,
+      DAY_SEC,
+      `ამ ელ-ფოსტით დღეს მაქსიმუმ ${PUBLIC_CV_UPLOADS_PER_EMAIL_PER_DAY}-ჯერ შეიძლება CV-ის ატვირთვა, სცადეთ ხვალ`,
+    );
 
     const ext = file.originalname.split('.').pop();
     const fileName = `${randomUUID()}.${ext}`;
