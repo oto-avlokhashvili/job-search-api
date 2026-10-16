@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { JobService, buildWordBoundaryRegex } from './job.service';
+import { JobService, buildWordBoundaryRegex, buildPhraseRegex, buildSalaryRegex, parseSearchQuery, getCityNameVariants } from './job.service';
 import { JobEntity } from 'src/Entities/job.entity';
 import { ScrapedJobEntity } from 'src/Entities/scraped-job.entity';
 import { JobsGeScraperService } from '../scrapers/jobs-ge.scraper';
@@ -116,44 +116,110 @@ describe('JobService', () => {
     });
   });
 
+  describe('buildPhraseRegex', () => {
+    const matches = (query: string, text: string) => new RegExp(buildPhraseRegex(query), 'i').test(text);
+
+    it('should require multi-word queries to match together as a phrase', () => {
+      expect(matches('financial analyst', 'Senior Financial Analyst')).toBe(true);
+      expect(matches('financial analyst', 'Financial Analysts')).toBe(true);
+      expect(matches('financial analyst', 'Financial / Analyst')).toBe(true);
+
+      expect(matches('financial analyst', 'Data Analyst')).toBe(false);
+      expect(matches('financial analyst', 'Financial Manager')).toBe(false);
+      expect(matches('financial analyst', 'Analyst, financial department')).toBe(false);
+      expect(matches('financial analyst', 'Financial reporting and analyst support')).toBe(false);
+    });
+
+    it('should keep stem variants and word boundaries for Georgian phrases', () => {
+      expect(matches('ფინანსური ანალიტიკოსი', 'უფროსი ფინანსური ანალიტიკოსი')).toBe(true);
+      expect(matches('ფინანსური ანალიტიკოსი', 'ანალიტიკოსი')).toBe(false);
+      expect(matches('ფინანსები', 'დაფინანსება')).toBe(false);
+    });
+  });
+
+  describe('parseSearchQuery', () => {
+    it('should split text from salary amounts and drop currency words', () => {
+      expect(parseSearchQuery('Financial Analyst')).toEqual({ text: 'financial analyst', amounts: [] });
+      expect(parseSearchQuery('accountant 1500 ლარი')).toEqual({ text: 'accountant', amounts: ['1500'] });
+      expect(parseSearchQuery('$2,000')).toEqual({ text: '', amounts: ['2000'] });
+      expect(parseSearchQuery('1500-2000 gel')).toEqual({ text: '', amounts: ['1500', '2000'] });
+    });
+  });
+
+  describe('buildSalaryRegex', () => {
+    const matches = (amount: string, text: string) => new RegExp(buildSalaryRegex(amount), 'i').test(text);
+
+    it('should match amounts written as salaries', () => {
+      expect(matches('1500', 'ანაზღაურება: 1500 ლარი')).toBe(true);
+      expect(matches('1500', 'ხელფასი: 1 500 - 2 000')).toBe(true);
+      expect(matches('2000', 'ანაზღაურება: 1800-2000 ლარი')).toBe(true);
+      expect(matches('2000', 'Salary: 2,000')).toBe(true);
+      expect(matches('2000', 'up to 2000 GEL')).toBe(true);
+      expect(matches('2000', 'from $2000')).toBe(true);
+    });
+
+    it('should not match numbers that are not salaries', () => {
+      expect(matches('2000', 'კომპანია დაარსდა 2000 წელს')).toBe(false);
+      expect(matches('2000', 'ანაზღაურება: 12000 ლარი')).toBe(false);
+      expect(matches('500', 'ანაზღაურება: 1500 ლარი')).toBe(false);
+      expect(matches('2000', 'ანაზღაურება: შეთანხმებით\n\nდაარსდა 2000 წელს')).toBe(false);
+    });
+  });
+
+  describe('getCityNameVariants', () => {
+    it('should map a city name to both spellings', () => {
+      expect(getCityNameVariants('Batumi')).toEqual(['ბათუმი', 'batumi']);
+      expect(getCityNameVariants('თბილისი')).toEqual(['თბილისი', 'tbilisi']);
+      expect(getCityNameVariants('developer')).toEqual([]);
+    });
+  });
+
   describe('findAll', () => {
-    it('should build query with correct hierarchical priority: Title (1,000,000) > Company (10,000) > Description (100)', async () => {
+    it('should match the text phrase in title, company and location only, ranked Title > Company > Location', async () => {
       await service.findAll({
         query: 'ანგულარ დეველოპერი',
         page: 1,
         limit: 10,
       });
 
-      // Verify that queryBuilder was created
       expect(jobRepoMock.createQueryBuilder).toHaveBeenCalledWith('job');
+      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('phraseRegex', buildPhraseRegex('ანგულარ დეველოპერი'));
 
-      // Verify parameters
-      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('phraseRegex', expect.any(String));
-      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('wholePhraseLike', '%ანგულარ დეველოპერი%');
-      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('termRegex0', expect.any(String));
-      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('termRegex1', expect.any(String));
+      const whereSql = queryBuilderMock.andWhere.mock.calls.map((c: any[]) => c[0]).join(' ');
+      expect(whereSql).toContain('job.vacancy ~* :phraseRegex');
+      expect(whereSql).toContain('job.company ~* :phraseRegex');
+      expect(whereSql).toContain('job.location ~* :phraseRegex');
+      expect(whereSql).not.toContain('description');
 
-      // Verify hierarchical ordering: 1000000 for title, 10000 for company, 100 for description
       const orderByCall = queryBuilderMock.orderBy.mock.calls[0][0];
-      expect(orderByCall).toContain('1000000');
-      expect(orderByCall).toContain('10000');
-      expect(orderByCall).toContain('100');
+      expect(orderByCall).toContain('WHEN job.vacancy ~* :phraseRegex THEN 3');
+      expect(orderByCall).toContain('WHEN job.company ~* :phraseRegex THEN 2');
+      expect(orderByCall).toContain('ELSE 1');
       expect(queryBuilderMock.addOrderBy).toHaveBeenCalledWith('job.id', 'DESC');
     });
 
-    it('should build query with correct ordering when searching with a single term', async () => {
+    it('should search the description only for salary amounts', async () => {
       await service.findAll({
-        query: 'ფინანსები',
+        query: 'გაყიდვების მენეჯერი 1500',
         page: 1,
         limit: 10,
       });
 
-      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('termRegex0', expect.any(String));
+      expect(queryBuilderMock.andWhere).toHaveBeenCalledWith('job.description ~* :salaryRegex0', {
+        salaryRegex0: buildSalaryRegex('1500'),
+      });
+      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('phraseRegex', buildPhraseRegex('გაყიდვების მენეჯერი'));
+    });
 
-      const orderByCall = queryBuilderMock.orderBy.mock.calls[0][0];
-      expect(orderByCall).toContain('WHEN (job.vacancy ~* :termRegex0) THEN 1000000');
-      expect(orderByCall).toContain('WHEN (job.company ~* :termRegex0) THEN 10000');
-      expect(queryBuilderMock.addOrderBy).toHaveBeenCalledWith('job.id', 'DESC');
+    it('should also match the other spelling of a city in location', async () => {
+      await service.findAll({
+        query: 'batumi',
+        page: 1,
+        limit: 10,
+      });
+
+      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('cityName0', '%ბათუმი%');
+      expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('cityName1', '%batumi%');
     });
   });
 

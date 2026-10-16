@@ -121,6 +121,73 @@ export function buildWordBoundaryRegex(term: string): string {
   return `(^|[^a-zA-Z0-9\u10A0-\u10FF])(${escaped})`;
 }
 
+/**
+ * Builds a regex that matches the query words together, in order, as a phrase.
+ * Each word keeps its stem variants and may carry a word ending (e.g. "financial
+ * analyst" matches "Financial Analysts" and "Financial / Analyst"), but the words
+ * must be adjacent \u2014 "analyst" alone or "financial ... manager ... analyst" won't match.
+ */
+export function buildPhraseRegex(query: string): string {
+  const words = query.trim().toLowerCase().split(/\s+/).filter((w) => w.length > 0);
+  const wordChar = 'a-zA-Z0-9\u10A0-\u10FF';
+  const parts = words.map((word, i) => {
+    const group = `(${getSearchVariants(word).map(escapeRegex).join('|')})`;
+    return i < words.length - 1 ? `${group}[${wordChar}]*` : group;
+  });
+  return `(^|[^${wordChar}])${parts.join(`[^${wordChar}]+`)}`;
+}
+
+const CURRENCY_WORDS = ['ლარი', 'ლარს', 'ლარამდე', 'ლარ', 'gel', 'lari', '₾', '$', 'usd', 'eur', '€'];
+const SALARY_KEYWORDS = ['ხელფას', 'ანაზღაურებ', 'salary', 'wage', 'compensation'];
+
+/**
+ * Splits a search query into a text part (matched against title/company/location)
+ * and salary amounts (matched against salary mentions in the description).
+ * "accountant 1500 ლარი" → { text: 'accountant', amounts: ['1500'] }
+ */
+export function parseSearchQuery(query: string): { text: string; amounts: string[] } {
+  const normalized = query.trim().toLowerCase().replace(/(\d)\s*[-–—]\s*(\d)/g, '$1 $2');
+  const amounts: string[] = [];
+  const textWords: string[] = [];
+  for (const token of normalized.split(/\s+/).filter((t) => t.length > 0)) {
+    const stripped = token.replace(/^[$₾€]+|[$₾€]+$/g, '');
+    if (/^\d[\d.,]*$/.test(stripped)) {
+      amounts.push(stripped.replace(/[.,]/g, ''));
+    } else if (!CURRENCY_WORDS.includes(token)) {
+      textWords.push(token);
+    }
+  }
+  return { text: textWords.join(' '), amounts };
+}
+
+/**
+ * Matches a salary amount only where it appears as a salary in the description:
+ * shortly after a salary keyword ("ანაზღაურება: 1 500 ლარი") or next to a currency
+ * ("2,000 GEL", "$2000"). Thousands may be written as 1500, 1 500, 1,500 or 1.500.
+ */
+export function buildSalaryRegex(amount: string): string {
+  const digits = amount.replace(/\D/g, '');
+  const num = digits.length > 3 ? `${digits.slice(0, -3)}[ ,.]?${digits.slice(-3)}` : digits;
+  const bounded = `(^|[^0-9])${num}([^0-9]|$)`;
+  const keywords = SALARY_KEYWORDS.map(escapeRegex).join('|');
+  const currencies = CURRENCY_WORDS.map(escapeRegex).join('|');
+  return [
+    `(${keywords})[^\n]{0,80}${bounded}`,
+    `(^|[^0-9])${num}[ ]?(${currencies})`,
+    `[$₾€][ ]?${num}([^0-9]|$)`,
+  ].join('|');
+}
+
+/** If the query is a city name (Georgian or English), returns both spellings so "batumi" finds "ბათუმი". */
+export function getCityNameVariants(text: string): string[] {
+  const t = text.trim().toLowerCase();
+  for (const [city, aliases] of Object.entries(CITY_MAPPING)) {
+    const names = [city, ...aliases.slice(0, 2)].map((n) => n.toLowerCase());
+    if (names.includes(t)) return Array.from(new Set(names));
+  }
+  return [];
+}
+
 @Injectable()
 export class JobService {
   private readonly logger = new Logger(JobService.name);
@@ -222,73 +289,40 @@ export class JobService {
     if (query && query.trim().length > 0) {
       hasFilter = true;
 
-      const trimmedQuery = query.trim().toLowerCase();
-      const rawTerms = trimmedQuery.split(/\s+/).filter((t) => t.length > 0);
+      // Text is searched only in title, company and location; the description is
+      // searched only for salary amounts ("developer 2000" = developer jobs paying 2000)
+      const { text, amounts } = parseSearchQuery(query);
 
-      const termRegexParams: string[] = [];
-      rawTerms.forEach((term, i) => {
-        const param = `termRegex${i}`;
-        qb.setParameter(param, buildWordBoundaryRegex(term));
-        termRegexParams.push(param);
+      amounts.forEach((amount, i) => {
+        qb.andWhere(`job.description ~* :salaryRegex${i}`, { [`salaryRegex${i}`]: buildSalaryRegex(amount) });
       });
 
-      const hasPhrase = rawTerms.length > 1;
-      if (hasPhrase) {
-        qb.setParameter('phraseRegex', `(^|[^a-zA-Z0-9\u10A0-\u10FF])(${escapeRegex(trimmedQuery)})`);
-        qb.setParameter('wholePhraseLike', `%${trimmedQuery}%`);
-      }
+      if (text) {
+        // The whole text must appear together as a phrase \u2014 words are not matched separately
+        qb.setParameter('phraseRegex', buildPhraseRegex(text));
 
-      // WHERE clause ensures at least one term matches with word boundary
-      qb.andWhere(
-        new Brackets((qb2) => {
-          termRegexParams.forEach((param, i) => {
-            const cond = `(job.vacancy ~* :${param} OR job.company ~* :${param} OR job.description ~* :${param})`;
-            if (i === 0) {
-              qb2.where(cond);
-            } else {
-              qb2.orWhere(cond);
-            }
-          });
-        })
-      );
+        const locationConds = ['job.location ~* :phraseRegex'];
+        getCityNameVariants(text).forEach((name, i) => {
+          locationConds.push(`LOWER(job.location) LIKE :cityName${i}`);
+          qb.setParameter(`cityName${i}`, `%${name}%`);
+        });
+        const locationMatch = `(${locationConds.join(' OR ')})`;
 
-      // Conditions for determining tier membership
-      const titleConds = termRegexParams.map((p) => `job.vacancy ~* :${p}`).join(' OR ');
-      const companyConds = termRegexParams.map((p) => `job.company ~* :${p}`).join(' OR ');
+        qb.andWhere(`(job.vacancy ~* :phraseRegex OR job.company ~* :phraseRegex OR ${locationMatch})`);
 
-      // Boost clauses
-      const boostClauses: string[] = [];
-
-      if (hasPhrase) {
-        boostClauses.push(
-          `CASE WHEN job.vacancy ~* :phraseRegex OR LOWER(job.vacancy) LIKE :wholePhraseLike THEN 50000 ELSE 0 END`,
-          `CASE WHEN job.company ~* :phraseRegex OR LOWER(job.company) LIKE :wholePhraseLike THEN 500 ELSE 0 END`,
-          `CASE WHEN job.description ~* :phraseRegex OR LOWER(job.description) LIKE :wholePhraseLike THEN 10 ELSE 0 END`
+        // Strict tiers: title > company > location, newest first within a tier
+        qb.orderBy(
+          `CASE
+            WHEN job.vacancy ~* :phraseRegex THEN 3
+            WHEN job.company ~* :phraseRegex THEN 2
+            ELSE 1
+          END`,
+          'DESC'
         );
+        qb.addOrderBy('job.id', 'DESC');
+      } else {
+        qb.orderBy('job.id', 'DESC');
       }
-
-      termRegexParams.forEach((param) => {
-        boostClauses.push(
-          `CASE WHEN job.vacancy ~* :${param} THEN 5000 ELSE 0 END`,
-          `CASE WHEN job.company ~* :${param} THEN 50 ELSE 0 END`,
-          `CASE WHEN job.description ~* :${param} THEN 1 ELSE 0 END`
-        );
-      });
-
-      // Priority ordering:
-      // 1. Vacancy Title Match (Base 1,000,000 pts)
-      // 2. Company Name Match (Base 10,000 pts)
-      // 3. Description Match (Base 100 pts)
-      const orderScoreSql = `(
-        CASE 
-          WHEN (${titleConds}) THEN 1000000
-          WHEN (${companyConds}) THEN 10000
-          ELSE 100
-        END + (${boostClauses.join(' + ')})
-      )`;
-
-      qb.orderBy(orderScoreSql, 'DESC');
-      qb.addOrderBy('job.id', 'DESC');
     } else {
       qb.orderBy('job.id', 'DESC');
     }
