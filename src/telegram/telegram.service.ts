@@ -28,9 +28,6 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     private bot: TelegramBot | null = null;
     private userSessions: Map<number, UserSession> = new Map();
     private isRunning = false;
-
-    // Default search query
-    private readonly DEFAULT_SEARCH_QUERY = 'angular';
     private token = process.env.TELEGRAM_TOKEN!;
 
     constructor(
@@ -229,7 +226,8 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         try {
             // 1. Fetch user's stored CV and search queries
             const cv = await this.cvService.getCvByUser(user.id).catch(() => null);
-            const searchQueries: string[] = cv?.summary?.searchQueries ?? [];
+            const summary = cv ? await this.aiService.getUsableCvSummary(user.id, cv) : null;
+            const searchQueries: string[] = summary?.searchQueries ?? [];
 
             if (searchQueries.length === 0) {
                 this.logger.warn(`No search queries found for user ${user.id}`);

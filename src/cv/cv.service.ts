@@ -8,7 +8,7 @@ import { createHash, randomBytes, randomUUID } from 'crypto';
 import { CvParserService } from './cv-parser.service';
 import { R2StorageService } from './r2-storage.service';
 import { AiService } from 'src/ai/ai.service';
-import { CvSummaryDetails } from './dto/cv-summary.dto';
+import { CV_SUMMARY_PROMPT_VERSION, CvSummaryDetails } from './dto/cv-summary.dto';
 import { PublicCvUploadDto } from './dto/public-cv-upload.dto';
 import { PublicCvLimitsService } from './public-cv-limits.service';
 import { hashSearchToken } from './public-cv-search.service';
@@ -231,7 +231,8 @@ export class CvService {
   async updateSummary(userId: number, dto: UpdateCvSummaryDto | null): Promise<Cv> {
     const cv = await this.cvRepository.findOne({ where: { userId } });
     if (!cv) throw new NotFoundException('No CV found for this user');
-    cv.summary = dto ? { ...(cv.summary || {}), ...dto } : null;
+    // Stamped as current so a manually edited summary isn't regenerated over the user's edits
+    cv.summary = dto ? { ...(cv.summary || {}), ...dto, promptVersion: CV_SUMMARY_PROMPT_VERSION } : null;
     return this.cvRepository.save(cv);
   }
 }

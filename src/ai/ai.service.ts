@@ -8,7 +8,7 @@ import { CvService } from 'src/cv/cv.service';
 import { JobService } from 'src/job/job.service';
 import { UserService } from 'src/user/user.service';
 import { jsonrepair } from 'jsonrepair';
-import { CvSummaryDetails } from 'src/cv/dto/cv-summary.dto';
+import { CV_SUMMARY_PROMPT_VERSION, CvSummaryDetails } from 'src/cv/dto/cv-summary.dto';
 import { AiMatchedJobsService } from 'src/ai-matched-jobs/ai-matched-jobs.service';
 import mammoth from 'mammoth';
 import { CvParserService } from 'src/cv/cv-parser.service';
@@ -163,11 +163,12 @@ export class AiService {
 
 
 
-async summarizeCv(
-  cvFile: Express.Multer.File,
-  retries = 1,
-  delayMs = 2000,
-): Promise<CvSummaryDetails | null> {
+async summarizeCv(cvFile: Express.Multer.File): Promise<CvSummaryDetails | null> {
+  const summary = await this.requestCvSummary(cvFile);
+  return summary ? { ...summary, promptVersion: CV_SUMMARY_PROMPT_VERSION } : null;
+}
+
+private async requestCvSummary(cvFile: Express.Multer.File): Promise<CvSummaryDetails | null> {
 const CV_SUMMARY_PROMPT = `
 Analyze the attached CV and extract a structured candidate profile.
 
@@ -200,30 +201,34 @@ STEP 4 — Cross-check: if STEP 1 and STEP 2 conflict, trust STEP 2 (years) over
   (candidates often inflate titles on CVs)
 
 ## OTHER RULES:
+- The candidate can be from ANY profession or industry (IT, finance, accounting, sales, marketing, healthcare, logistics, hospitality, engineering, law, education, etc.). Never assume an IT background.
+- detectedRole: the candidate's actual professional role as it would appear in a job title (e.g. "Financial Analyst", "Accountant", "Sales Manager", "Angular Developer")
 - Lowercase stems for skills, English only
-- Max 8 primary skills (most-used/core technologies)
-- Max 6 secondary skills (supporting tools, methodologies)
+- Max 8 primary skills (core professional skills, tools or technologies of their field — e.g. "ifrs", "financial modeling", "sap" for finance; "angular", "typescript" for frontend)
+- Max 6 secondary skills (supporting tools, methodologies, soft/domain skills)
+- domains: the professional field(s) and industries they work in (e.g. ["finance", "banking"], ["web development"], ["retail sales"])
 - Ignore formatting artifacts: font names, colors, bullet styles (Arial, Calibri, bold, etc.)
 - locationPreference: extract city if mentioned, otherwise "Not specified"
 - careerDirection: infer the direction they are heading, not just current role
 
-## SEARCH QUERIES — highly specific technology matches only (NO seniority prefixes, NO generic domain names):
+## SEARCH QUERIES — role titles and distinctive specializations (NO seniority prefixes):
 
-Generate precise search queries combining only the primary core technology and the role.
+These queries are matched against vacancy titles on Georgian job portals (jobs.ge, hr.ge, myjobs.ge, LinkedIn).
+Generate 6–12 queries that would find vacancies this candidate is qualified for.
 
 ### STRICT RULES:
-- NEVER include seniority levels (e.g., Do NOT use "Senior", "Mid", "Junior", "Lead", "უფროსი", "უმცროსი").
-- Do NOT output generic domains or domain-roles (e.g., avoid "Frontend", "Backend", "Full Stack", "Frontend Developer", "ბექენდ დეველოპერი").
-- Include both standalone core tech terms and compound [Tech] + [Role] phrases.
-- Provide both English terms and their standard Georgian job portal equivalents.
-- Do NOT output standalone generic role nouns (e.g., avoid isolated "developer", "ინჟინერი", "დეველოპერი").
-- Keep technology names in English when combined with Georgian nouns (e.g., "Angular დეველოპერი", not "ანგულარ დეველოპერი").
+- NEVER include seniority levels (e.g., Do NOT use "Senior", "Mid", "Junior", "Lead", "Head", "უფროსი", "უმცროსი").
+- Include the candidate's role title and its close equivalents/synonyms they are qualified for (e.g. "Financial Analyst", "FP&A Analyst", "Finance Specialist").
+- Provide both English terms and their standard Georgian job portal equivalents (e.g. "Financial Analyst" + "ფინანსური ანალიტიკოსი", "Accountant" + "ბუღალტერი").
+- Add 1–4 distinctive core skills, tools or specializations that appear in vacancy titles of this field (e.g. "Angular", "Cypress", "IFRS", "SAP", "1C").
+- Do NOT output standalone generic nouns that match unrelated jobs (e.g. avoid isolated "developer", "manager", "specialist", "analyst", "ინჟინერი", "დეველოპერი", "მენეჯერი", "სპეციალისტი") — always combine them with the field (e.g. "Finance Manager", "ფინანსური მენეჯერი").
+- Keep tool/technology names in English when combined with Georgian nouns (e.g., "Angular დეველოპერი", not "ანგულარ დეველოპერი").
 
 ---
 
-### QUERY EXAMPLES BY SPECIALIZATION:
+### QUERY EXAMPLES BY SPECIALIZATION (follow the pattern, not the field):
 
-#### Example 1: Angular Specialist
+#### Example 1: Angular Developer
 [
   "Angular",
   "Angular Developer",
@@ -232,33 +237,43 @@ Generate precise search queries combining only the primary core technology and t
   "Frontend"
 ]
 
-#### Example 2: Python / Django Specialist
+#### Example 2: Financial Analyst / Finance Team Lead
 [
-  "Python",
-  "Python Developer",
-  "Python დეველოპერი",
-  "Django",
-  "Back-end",
-  "Backend"
+  "Financial Analyst",
+  "ფინანსური ანალიტიკოსი",
+  "Finance Manager",
+  "ფინანსური მენეჯერი",
+  "FP&A",
+  "Financial Controller",
+  "Finance",
+  "ფინანსების"
 ]
 
-
-#### Example 3: QA / Automation Engineer
+#### Example 3: Accountant
 [
-  "QA",
-  "QA Engineer",
-  "QA ინჟინერი",
-  "Automation QA",
-  "Cypress",
-  "Cypress QA",
-  "Selenium"
+  "Accountant",
+  "ბუღალტერი",
+  "Accounting",
+  "ბუღალტრული აღრიცხვის",
+  "IFRS",
+  "1C"
+]
+
+#### Example 4: Sales Manager
+[
+  "Sales Manager",
+  "გაყიდვების მენეჯერი",
+  "Sales Representative",
+  "გაყიდვების წარმომადგენელი",
+  "B2B Sales",
+  "Account Manager"
 ]
 
 ## SALARY ESTIMATES — infer realistic market rates for this candidate:
 
 ### Inputs to consider (in order of priority):
   1. seniorityLevel (already detected above)
-  2. detectedRole and primarySkills (some stacks pay more than others)
+  2. detectedRole and primarySkills (some fields and specializations pay more than others)
   3. locationPreference — if the candidate is explicitly local, weight the local market more
   4. Any salary expectations mentioned in the CV (use as a signal, not a hard constraint)
 
@@ -400,6 +415,65 @@ Return ONLY valid raw JSON, no markdown, no backticks:
 
 }
 
+  /**
+   * Returns the user's CV summary, regenerating it from the stored CV file when it is
+   * missing, incomplete, or was built by an older version of the summary prompt.
+   * Falls back to the stored summary's searchQueries if regeneration fails.
+   */
+  async getUsableCvSummary(
+    userId: number,
+    storedCv: { summary: CvSummaryDetails | null; storagePath?: string | null },
+  ): Promise<CvSummaryDetails | null> {
+    const stored = storedCv.summary && typeof storedCv.summary === 'object' ? storedCv.summary : null;
+    const hasQueries = Array.isArray(stored?.searchQueries) && stored.searchQueries.length > 0;
+
+    if (stored && hasQueries && stored.detectedRole && stored.promptVersion === CV_SUMMARY_PROMPT_VERSION) {
+      return stored;
+    }
+
+    if (storedCv.storagePath) {
+      try {
+        this.logger.log(`Summary missing, incomplete or outdated for user ${userId}. Analyzing CV...`);
+        const { buffer, mimeType, originalName } = await this.cvService.downloadCv(userId);
+        const cvFile = {
+          buffer,
+          mimetype: mimeType,
+          originalname: originalName,
+          size: buffer.length,
+        } as Express.Multer.File;
+
+        const fresh = await this.summarizeCv(cvFile);
+        if (fresh) {
+          await this.cvService.updateSummary(userId, fresh);
+          this.logger.log(`CV summary generated and saved for user ${userId}`);
+          return fresh;
+        }
+      } catch (e: any) {
+        this.logger.warn(
+          `Could not summarize CV for user ${userId}: ${e.message}`,
+          JSON.stringify(e.response?.data, null, 2),
+        );
+      }
+    }
+
+    // Fallback: keep using the stored summary if it at least has searchQueries
+    if (stored && hasQueries) {
+      this.logger.log(`Using fallback summary with existing searchQueries for user ${userId}`);
+      return {
+        ...stored,
+        detectedRole: stored.detectedRole || 'Specialist',
+        seniorityLevel: stored.seniorityLevel || 'Mid',
+        primarySkills: stored.primarySkills || [],
+        secondarySkills: stored.secondarySkills || [],
+        domains: stored.domains || [],
+        locationPreference: stored.locationPreference || 'Tbilisi',
+        careerDirection: stored.careerDirection || stored.detectedRole || 'Specialist',
+      };
+    }
+
+    return null;
+  }
+
   async jobsearchWithCv(
   userId: number,
 ): Promise<{ response: any; comment: string }> {
@@ -414,69 +488,13 @@ Return ONLY valid raw JSON, no markdown, no backticks:
         };
       }
 
-      // ── 2. Check if valid summary with searchQueries exists ───────────────────
-      let summary: CvSummaryDetails | null =
-        storedCv.summary &&
-        typeof storedCv.summary === 'object' &&
-        Array.isArray(storedCv.summary.searchQueries) &&
-        storedCv.summary.searchQueries.length > 0 &&
-        storedCv.summary.detectedRole
-          ? (storedCv.summary as CvSummaryDetails)
-          : null;
-
-      // ── 3. If summary missing or incomplete, summarize CV now ─────────────────
+      // ── 2–3. Load summary, regenerating it if missing, incomplete or outdated ──
+      const summary = await this.getUsableCvSummary(userId, storedCv);
       if (!summary) {
-        if (storedCv.storagePath) {
-          try {
-            this.logger.log(`Summary missing or incomplete for user ${userId}. Analyzing CV...`);
-            const { buffer, mimeType, originalName } = await this.cvService.downloadCv(userId);
-            const cvFile = {
-              buffer,
-              mimetype: mimeType,
-              originalname: originalName,
-              size: buffer.length,
-            } as Express.Multer.File;
-
-            summary = await this.summarizeCv(cvFile);
-
-            if (summary) {
-              await this.cvService.updateSummary(userId, summary);
-              this.logger.log(`CV summary generated and saved for user ${userId}`);
-            }
-          } catch (e: any) {
-            this.logger.warn(
-              `Could not summarize CV for user ${userId}: ${e.message}`,
-              JSON.stringify(e.response?.data, null, 2),
-            );
-          }
-        }
-
-        // Fallback: If we still don't have a full summary but searchQueries exist in storedCv.summary
-        if (
-          !summary &&
-          storedCv.summary &&
-          Array.isArray(storedCv.summary.searchQueries) &&
-          storedCv.summary.searchQueries.length > 0
-        ) {
-          this.logger.log(`Using fallback summary with existing searchQueries for user ${userId}`);
-          summary = {
-            detectedRole: storedCv.summary.detectedRole || 'Specialist',
-            seniorityLevel: storedCv.summary.seniorityLevel || 'Mid',
-            primarySkills: storedCv.summary.primarySkills || [],
-            secondarySkills: storedCv.summary.secondarySkills || [],
-            domains: storedCv.summary.domains || [],
-            locationPreference: storedCv.summary.locationPreference || 'Tbilisi',
-            careerDirection: storedCv.summary.careerDirection || storedCv.summary.detectedRole || 'Specialist',
-            searchQueries: storedCv.summary.searchQueries,
-          };
-        }
-
-        if (!summary) {
-          return {
-            response: { candidateProfile: null, summary: null, strengths: [], skillGaps: [], topJobs: [] },
-            comment: 'გთხოვთ ხელახლა ატვირთოთ თქვენი CV',
-          };
-        }
+        return {
+          response: { candidateProfile: null, summary: null, strengths: [], skillGaps: [], topJobs: [] },
+          comment: 'გთხოვთ ხელახლა ატვირთოთ თქვენი CV',
+        };
       }
 
       // ── 4. Use searchQueries from summary to find jobs ───────────────────────
@@ -524,37 +542,47 @@ Return ONLY valid raw JSON, no markdown, no backticks:
 
       // ── 4. Rank & filter jobs via Gemini ─────────────────────────────────────
     const prompt = `
-    You are an expert Technical Recruiter and Career Matching AI.
+    You are an expert Recruiter and Career Matching AI covering every profession and industry
+    (IT, finance, accounting, sales, marketing, healthcare, logistics, hospitality, engineering, law, education, etc.).
 
     ## YOUR TASK
     Evaluate job vacancies against the candidate profile and return ONLY relevant matches.
+    Vacancies may be written in English or Georgian — judge them by meaning, not exact wording.
 
     ---
 
     ## CRITICAL RULE — ROLE RELEVANCE FILTER
-    **Before scoring, apply a hard filter. If the candidate is not qualified for a vacancy, SKIP it entirely — do not score it, do not include it in the output:**
-    - The candidate's detected role is: "${summary.detectedRole}" in "${summary.careerDirection}"
-    - EXCLUDE any vacancy that is NOT in ${summary.domains}
-    - EXCLUDE any vacancy that is NOT in secondarySkills or primary skills ${summary.secondarySkills}
+    The candidate's detected role is "${summary.detectedRole}", heading towards "${summary.careerDirection}",
+    working in: ${JSON.stringify(summary.domains ?? [])}.
+
+    **SKIP a vacancy entirely (do not score or output it) only if it belongs to a clearly different profession
+    that the candidate's experience does not qualify them for** (e.g. a nurse vacancy for a software developer,
+    a cashier vacancy for a financial analyst, a driver vacancy for an accountant).
+
+    Do NOT skip a vacancy just because:
+    - its title is worded differently or is in Georgian (e.g. "ფინანსური ანალიტიკოსი" = "Financial Analyst")
+    - it is in a different industry while the job function is the same (e.g. a financial analyst at a retail company is still a financial analyst job)
+    - it is one seniority level above or below the candidate (e.g. "Finance Team Lead" for a senior financial analyst)
 
     ---
 
     ## STEP 1 — SCORE EACH REMAINING VACANCY (0–100)
 
-    ### Primary role match (0–60 points)
-    - **+60** if vacancy matches detectedRole exactly: "${summary.detectedRole}"
-    - **+40–50** if vacancy is in the same domain: "${summary.careerDirection}" (e.g. frontend, web dev)
-    - **+20–35** if vacancy is adjacent (full-stack, closely related tech)
-    - **+10–20** if vacancy is in a different dev domain (backend, mobile) but candidate has secondary skills
+    ### Role / function match (0–60 points)
+    - **+60** same role as detectedRole "${summary.detectedRole}" (including synonyms and Georgian equivalents)
+    - **+40–50** same professional field/function as "${summary.careerDirection}" but a different specialization
+    - **+20–35** adjacent role that uses a large part of the candidate's skill set
+    - **+0–15** different function with only partial skill overlap
 
     ### Seniority alignment (0–20 points)
-    - Candidate seniority: "${summary.seniorityLevel}"
+    - Candidate seniority: "${summary.seniorityLevel}" (levels: Junior → Mid → Senior → Lead → Principal)
+    - Treat "Team Lead", "Head of", "Manager of a team", "უფროსი" titles as Lead level
     - **+20** exact match (Junior→Junior)
-    - **+10** one level apart (Junior→Mid)
+    - **+10** one level apart (Senior→Lead)
     - **+0** two+ levels apart (Junior→Senior) — do not exclude, but penalize heavily
 
-    ### Tech stack overlap (0–15 points)
-    - Count how many required technologies match primarySkills: ${JSON.stringify(summary.primarySkills)}
+    ### Skills overlap (0–15 points)
+    - Count how many required skills/tools match primarySkills: ${JSON.stringify(summary.primarySkills)}
     - Count secondary matches from: ${JSON.stringify(summary.secondarySkills)}
     - Award proportionally
 
@@ -569,16 +597,13 @@ Return ONLY valid raw JSON, no markdown, no backticks:
     - **Hard rule: NEVER include a vacancy scoring below 60. Do not pad the results to reach a minimum count — if fewer than 5 (or even zero) vacancies reach 60, return only those that do.**
     - Return up to 10 of the top-ranked vacancies that score 60 or above.
     - Sort descending by score
-    - **No marketing, no retail, no non-IT roles — ever**
 
     ---
 
     ## SALARY ESTIMATION (if not provided)
-    - Intern → "₾500 – ₾1,000/mo (est.)"
-    - Junior → "₾1,000 – ₾2,000/mo (est.)"
-    - Mid → "₾2,500 – ₾4,000/mo (est.)"
-    - Senior → "₾4,000 – ₾7,000/mo (est.)"
-    - Lead/Principal → "₾7,000 – ₾12,000/mo (est.)"
+    - Estimate a realistic gross monthly range for that specific role, seniority and market
+      (salaries differ a lot between professions — do not apply IT salary levels to other fields)
+    - Format: "₾2,500 – ₾4,000/mo (est.)"
     - Use ₾ for Georgian roles, $ for international/remote
 
     ---
@@ -598,7 +623,7 @@ Return ONLY valid raw JSON, no markdown, no backticks:
       },
       "summary": "string",
       "strengths": ["string"],
-      "searchQueries": ${summary.searchQueries},
+      "searchQueries": ${JSON.stringify(summary.searchQueries ?? [])},
       "topJobs": [
         {
           "id": number,
@@ -821,9 +846,9 @@ When the user asks career-related questions:
 ${cvContext ? `- Use the user's CV context below when relevant` : ''}
 
 ## Job listing / job search questions — IMPORTANT
-If the user asks to browse, list, search, or find specific job vacancies or roles (e.g. "find me a React developer job", "show vacancies in Tbilisi", "look up DevOps jobs"):
+If the user asks to browse, list, search, or find specific job vacancies or roles (e.g. "find me a React developer job", "show financial analyst vacancies", "show vacancies in Tbilisi", "look up accountant jobs"):
   1. Set the JSON field "searchTriggered" to true.
-  2. Extract 1 to 5 relevant query terms. For each query term, ALWAYS include both its English term and its Georgian translation/transliteration as separate elements in the "searchQueries" array (e.g., if the search is for Angular, return ["angular", "ანგულარ"]; if for React, return ["react", "რეაქტ"]; if for developer, return ["developer", "დეველოპერი"]).
+  2. Extract 1 to 5 relevant query terms. For each query term, ALWAYS include both its English term and its Georgian translation/transliteration as separate elements in the "searchQueries" array (e.g., if the search is for Angular, return ["angular", "ანგულარ"]; if for React, return ["react", "რეაქტ"]; if for financial analyst, return ["financial analyst", "ფინანსური ანალიტიკოსი"]; if for accountant, return ["accountant", "ბუღალტერი"]).
   3. Keep the response text conversational (e.g., "I have searched our database for React Developer vacancies. Here is what I found:") and place it in the "response" field.
 
 For general questions, career advice, CV review, or other messages where job search is NOT required:
