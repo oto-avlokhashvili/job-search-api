@@ -50,6 +50,8 @@ import { StatsModule } from './stats/stats.module';
                 password: parsed.password ? decodeURIComponent(parsed.password) : undefined,
                 tls: parsed.protocol === 'rediss:' ? {} : undefined,
                 maxRetriesPerRequest: null,
+                // Railway's private network can be IPv6-only; 0 lets DNS return either family.
+                family: 0,
               },
             };
           } catch {
@@ -57,6 +59,7 @@ import { StatsModule } from './stats/stats.module';
               connection: {
                 url: redisUrl,
                 maxRetriesPerRequest: null,
+                family: 0,
               },
             };
           }

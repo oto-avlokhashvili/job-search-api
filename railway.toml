@@ -1,0 +1,7 @@
+[build]
+buildCommand = "npm run build"
+
+[deploy]
+# Run the compiled app directly. `npm start` (nest start) keeps npm and the Nest CLI alive
+# as extra parent processes, each holding RAM that Railway bills for.
+startCommand = "node dist/src/main"

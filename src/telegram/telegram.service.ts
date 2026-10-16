@@ -72,7 +72,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
                 interval: 2000,
                 autoStart: true,
                 params: {
-                    timeout: 10,
+                    timeout: 50, // Telegram's max long-poll; updates still arrive instantly, idle polling drops 5x
                 },
             },
         });
@@ -176,7 +176,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
                 attempts: 3,
                 backoff: { type: 'exponential', delay: 2000 },
                 removeOnComplete: true,
-                removeOnFail: false,
+                removeOnFail: { age: 7 * 24 * 3600 },
             },
         );
     }
@@ -202,7 +202,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
                     attempts: 3,
                     backoff: { type: 'exponential', delay: 3000 },
                     removeOnComplete: true,
-                    removeOnFail: false,
+                    removeOnFail: { age: 7 * 24 * 3600 },
                 },
             );
             queuedCount++;

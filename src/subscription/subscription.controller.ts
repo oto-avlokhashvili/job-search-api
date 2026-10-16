@@ -67,7 +67,7 @@ export class SubscriptionController {
           attempts: 3,
           backoff: { type: 'exponential', delay: 2000 },
           removeOnComplete: true,
-          removeOnFail: false,
+          removeOnFail: { age: 7 * 24 * 3600 },
         },
       );
       this.logger.log(`Enqueued immediate Telegram alerts for user ${userId} following plan assignment.`);

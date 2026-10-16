@@ -735,7 +735,7 @@ Return ONLY valid raw JSON, no markdown, no backticks:
           attempts: 3,
           backoff: { type: 'exponential', delay: 5000 },
           removeOnComplete: true,
-          removeOnFail: false,
+          removeOnFail: { age: 7 * 24 * 3600 },
         },
       );
       queuedCount++;

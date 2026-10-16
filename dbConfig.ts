@@ -18,7 +18,7 @@ export const pgConfig: PostgresConnectionOptions = {
   synchronize: true,
   ssl: isLocal ? false : { rejectUnauthorized: false },
   extra: {
-    max: 20,
+    max: 10,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000,
     keepAlive: true,

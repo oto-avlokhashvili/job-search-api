@@ -18,8 +18,8 @@ export class PublicCvLimitsService implements OnModuleDestroy {
       config.get<string>('REDIS_PUBLIC_URL') ||
       config.get<string>('REDIS_PRIVATE_URL');
     // No offline queue: while Redis is down, commands fail fast (and the limits fail open)
-    // instead of hanging the request.
-    const options = { maxRetriesPerRequest: 1, enableOfflineQueue: false };
+    // instead of hanging the request. family 0: Railway's private network can be IPv6-only.
+    const options = { maxRetriesPerRequest: 1, enableOfflineQueue: false, family: 0 };
     this.redis = url
       ? new Redis(url, options)
       : new Redis({
