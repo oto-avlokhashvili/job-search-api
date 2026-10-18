@@ -169,18 +169,6 @@ export class EmailService {
     const effectivePlan = this.entitlementService.getEffectivePlan(user);
     this.logger.log(`Sending ${jobsToSend.length} jobs to user ${user.email} (${effectivePlan})`);
 
-    // Mark them as sent in database using bulk upsert
-    const sentJobDtos = jobsToSend.map((job) => ({
-      userId: user.id,
-      jobId: job.id,
-      vacancy: job.vacancy,
-      location: job.location,
-      company: job.company,
-      match: job.match,
-      salaryRange: job.salaryRange,
-    }));
-    await this.sentJobsService.createBulk(sentJobDtos);
-
     // Build HTML
     const htmlBody = this.buildJobsEmailHtml(
       user.firstName,
@@ -192,6 +180,24 @@ export class EmailService {
     // Send direct transactional email via Brevo
     const subject = `🔔 Job Up ${jobsToSend.length} ახალი ვაკანსია თქვენთვის!`;
     const response = await this.sendDirectEmail(user.email, subject, htmlBody);
+
+    // Mark as sent only after delivery succeeded, so a failed send is retried with the same jobs.
+    // match is a float in top_jobs but an integer in sent_job, so round it.
+    const sentJobDtos = jobsToSend.map((job) => ({
+      userId: user.id,
+      jobId: job.id,
+      vacancy: job.vacancy,
+      location: job.location,
+      company: job.company,
+      match: Math.round(job.match ?? 0),
+      salaryRange: job.salaryRange,
+    }));
+    try {
+      await this.sentJobsService.createBulk(sentJobDtos);
+    } catch (err: any) {
+      // Email is already delivered; throwing would trigger a retry and a duplicate email.
+      this.logger.error(`Email sent to ${user.email} but failed to mark jobs as sent: ${err.message}`);
+    }
 
     return { status: 'sent', recipient: user.email, jobsCount: jobsToSend.length, response };
   }
