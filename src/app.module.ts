@@ -20,6 +20,7 @@ import { SubscriptionModule } from './subscription/subscription.module';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { BullModule } from '@nestjs/bullmq';
 import { StatsModule } from './stats/stats.module';
+import { LinkedinSearchModule } from './linkedin-search/linkedin-search.module';
 
 @Module({
   imports: [
@@ -98,6 +99,7 @@ import { StatsModule } from './stats/stats.module';
     ScrapersModule,
     EmailModule,
     StatsModule,
+    LinkedinSearchModule,
   ],
   controllers: [AppController],
   providers: [AppService, ScheduleService],
