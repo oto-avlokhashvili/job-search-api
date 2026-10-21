@@ -19,6 +19,7 @@ import { CvFileValidationPipe } from './cv-file-validation.pipe';
 import { UpdateCvSummaryDto } from './dto/update-cv.dto';
 import { CreateCvDto } from './dto/create-cv.dto';
 import { PublicCvUploadDto } from './dto/public-cv-upload.dto';
+import { PublicCvReconnectDto } from './dto/public-cv-reconnect.dto';
 import { CvParserService } from './cv-parser.service';
 import { PublicCvSearchService } from './public-cv-search.service';
 import { TurnstileService } from './turnstile.service';
@@ -66,6 +67,17 @@ export class CvController {
   }
 
   @Public()
+  @Post('public-reconnect')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(ClientIpThrottlerGuard)
+  @Throttle({ default: { limit: 20, ttl: 3600000 } })
+  @ApiOperation({ summary: 'New search token for a public CV, matched by the email + file name the browser saved at upload' })
+  @ApiBody({ type: PublicCvReconnectDto })
+  async publicReconnect(@Body() dto: PublicCvReconnectDto, @Req() req) {
+    return this.cvService.reconnectPublicCv(dto, resolveClientIp(req));
+  }
+
+  @Public()
   @Get('public-search')
   @UseGuards(ClientIpThrottlerGuard)
   @Throttle({ default: { limit: 60, ttl: 3600000 } }) // 60 searches per hour per IP (plus 30/hour per CV token)
@@ -73,6 +85,12 @@ export class CvController {
   @ApiHeader({ name: 'X-CV-Token', required: true, description: 'searchToken returned by POST /cv/public-submit' })
   async publicSearch(@Headers('x-cv-token') token: string | undefined) {
     return this.publicCvSearchService.search(token);
+  }
+
+  @Get('search')
+  @ApiOperation({ summary: 'CV search for the signed-in user: vacancies matching their own CV' })
+  async searchMyCv(@Req() req) {
+    return this.publicCvSearchService.searchForUser(req.user.id);
   }
 
   @Post('upload')

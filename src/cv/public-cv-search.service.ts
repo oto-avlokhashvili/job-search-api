@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import { createHash } from 'crypto';
@@ -129,6 +129,17 @@ export class PublicCvSearchService {
     });
     if (!cv) throw new UnauthorizedException('CV ვერ მოიძებნა, ატვირთეთ თავიდან');
 
+    return this.searchByCv(cv);
+  }
+
+  /** Same search for a signed-in user's own CV (uploaded from the profile or dashboard). */
+  async searchForUser(userId: number): Promise<PublicCvSearchResult> {
+    const cv = await this.cvRepository.findOne({ where: { userId } });
+    if (!cv) throw new NotFoundException('CV ვერ მოიძებნა, ატვირთეთ CV');
+    return this.searchByCv(cv);
+  }
+
+  private async searchByCv(cv: Cv): Promise<PublicCvSearchResult> {
     await this.limits.consume(
       `search:cv:${cv.id}`,
       PUBLIC_CV_SEARCHES_PER_HOUR,

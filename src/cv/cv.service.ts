@@ -10,6 +10,7 @@ import { R2StorageService } from './r2-storage.service';
 import { AiService } from 'src/ai/ai.service';
 import { CV_SUMMARY_PROMPT_VERSION, CvSummaryDetails } from './dto/cv-summary.dto';
 import { PublicCvUploadDto } from './dto/public-cv-upload.dto';
+import { PublicCvReconnectDto } from './dto/public-cv-reconnect.dto';
 import { PublicCvLimitsService } from './public-cv-limits.service';
 import { hashSearchToken } from './public-cv-search.service';
 
@@ -19,6 +20,7 @@ const PUBLIC_CV_UPLOADS_PER_IP_PER_DAY = envInt('PUBLIC_CV_UPLOADS_PER_IP_PER_DA
 const PUBLIC_CV_UPLOADS_PER_EMAIL_PER_DAY = envInt('PUBLIC_CV_UPLOADS_PER_EMAIL_PER_DAY', 7);
 // Hard ceiling on AI summaries for anonymous uploads across the whole site, per UTC day.
 const PUBLIC_CV_AI_DAILY_BUDGET = envInt('PUBLIC_CV_AI_DAILY_BUDGET', 300);
+const PUBLIC_CV_RECONNECTS_PER_IP_PER_HOUR = envInt('PUBLIC_CV_RECONNECTS_PER_IP_PER_HOUR', 20);
 
 const sha256 = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 
@@ -136,7 +138,7 @@ export class CvService {
     const sameFile = await this.cvRepository.findOne({ where: { fileHash, summary: Not(IsNull()) } });
     if (sameFile?.summary) {
       summary = sameFile.summary;
-    } else if (await this.limits.tryConsume(`ai-budget:${new Date().toISOString().slice(0, 10)}`, PUBLIC_CV_AI_DAILY_BUDGET, DAY_SEC)) {
+    } else if (await this.tryConsumeAiBudget()) {
       try {
         summary = await this.aiService.summarizeCv(file);
       } catch (e: any) {
@@ -198,6 +200,54 @@ export class CvService {
     await this.cvRepository.save(cv);
 
     return { success: true, message: 'თქვენი CV წარმატებით აიტვირთა', summary, searchToken, searchAvailable };
+  }
+
+  /**
+   * Re-issues a search token for a public CV, so a browser that uploaded before CV search
+   * existed (or whose token was replaced from another device) can search without uploading
+   * again. The browser proves itself with the email + original file name it saved at upload.
+   * A CV saved without a summary is summarized once from storage, within the AI budget.
+   */
+  async reconnectPublicCv(
+    dto: PublicCvReconnectDto,
+    clientIp: string,
+  ): Promise<{ searchToken: string; searchAvailable: boolean }> {
+    await this.limits.consume(
+      `reconnect:ip:${sha256(clientIp)}`,
+      PUBLIC_CV_RECONNECTS_PER_IP_PER_HOUR,
+      3600,
+      'ძალიან ბევრი მცდელობა, სცადეთ მოგვიანებით',
+    );
+
+    const email = dto.email.trim().toLowerCase();
+    const cv = await this.cvRepository.findOne({ where: { email, userId: IsNull() } });
+    if (!cv || cv.originalName !== dto.fileName) {
+      throw new NotFoundException('CV ვერ მოიძებნა, ატვირთეთ თავიდან');
+    }
+
+    if (!cv.summary?.searchQueries?.length && cv.storagePath && (await this.tryConsumeAiBudget())) {
+      try {
+        const buffer = await this.r2StorageService.downloadFile(cv.storagePath);
+        cv.summary = await this.aiService.summarizeCv({
+          buffer,
+          mimetype: cv.mimeType,
+          originalname: cv.originalName,
+          size: buffer.length,
+        } as Express.Multer.File);
+      } catch (e: any) {
+        this.logger.warn(`Could not summarize public CV ${cv.id} on reconnect: ${e.message}`);
+      }
+    }
+
+    const searchToken = randomBytes(32).toString('base64url');
+    cv.searchTokenHash = hashSearchToken(searchToken);
+    await this.cvRepository.save(cv);
+
+    return { searchToken, searchAvailable: !!cv.summary?.searchQueries?.length };
+  }
+
+  private tryConsumeAiBudget(): Promise<boolean> {
+    return this.limits.tryConsume(`ai-budget:${new Date().toISOString().slice(0, 10)}`, PUBLIC_CV_AI_DAILY_BUDGET, DAY_SEC);
   }
 
   async getCvByUser(userId: number): Promise<Cv> {
