@@ -10,6 +10,8 @@ import { JobService } from 'src/job/job.service';
 import { SentJobsService } from 'src/sent-jobs/sent-jobs.service';
 import { UserService } from 'src/user/user.service';
 import { EntitlementService } from 'src/subscription/entitlement.service';
+import { SubscriptionService } from 'src/subscription/subscription.service';
+import { User } from 'src/Entities/user.entity';
 
 interface UserSession {
     chatId: string;
@@ -40,6 +42,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         @Inject(forwardRef(() => AiService))
         private aiService: AiService,
         private readonly entitlementService: EntitlementService,
+        private readonly subscriptionService: SubscriptionService,
         @InjectQueue('telegram') private readonly telegramQueue: Queue,
     ) { }
 
@@ -88,10 +91,11 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         this.bot?.onText(/\/start(?: (.+))?/, async (msg, match) => {
             const chatId = msg.chat.id.toString();
             const user$ = from(this.userService.findByTelegramId(chatId));
-            const linkedUser = await lastValueFrom(user$);
-            console.log(linkedUser);
+            let linkedUser = await lastValueFrom(user$);
 
             if (linkedUser) {
+                linkedUser = await this.withTelegramPlan(linkedUser);
+
                 if (!this.entitlementService.canReceiveTelegramAlerts(linkedUser)) {
                     await this.sendDirectMessage(
                         chatId,
@@ -113,11 +117,12 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
                     return;
                 }
 
-                const user = await this.userService.linkTelegramToken(token, chatId);
-                if (!user) {
+                const linked = await this.userService.linkTelegramToken(token, chatId);
+                if (!linked) {
                     await this.sendDirectMessage(chatId, '❌ ტოკენი არ არის ვალიდური.');
                     return;
                 }
+                const user = await this.withTelegramPlan(linked);
 
                 if (!this.entitlementService.canReceiveTelegramAlerts(user)) {
                     await this.sendDirectMessage(
@@ -135,6 +140,17 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
                 }
             }
         });
+    }
+
+    /** Connecting Telegram comes with free BASIC (no end date); returns the user with that plan loaded. */
+    private async withTelegramPlan(user: User): Promise<User> {
+        try {
+            await this.subscriptionService.grantTelegramBasic(user.id);
+            return (await this.userService.findOne(user.id)) ?? user;
+        } catch (error: any) {
+            this.logger.error(`Could not grant Telegram BASIC to user ${user.id}: ${error.message}`);
+            return user;
+        }
     }
 
     /**

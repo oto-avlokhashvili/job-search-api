@@ -42,7 +42,11 @@ export class SubscriptionService {
 
     const durationDays = dto.durationDays ?? 30;
     const now = new Date();
-    const periodEnd = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+    // BASIC stays open-ended for Telegram users (see grantTelegramBasic).
+    const periodEnd =
+      dto.plan === SubscriptionPlan.BASIC && user.telegramChatId
+        ? null
+        : new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
 
     let subscription = await this.subscriptionRepo.findOne({ where: { userId } });
 
@@ -72,6 +76,30 @@ export class SubscriptionService {
     }
 
     return this.subscriptionRepo.save(subscription);
+  }
+
+  /**
+   * Free BASIC with no end date for connecting Telegram (the entitlement check treats a null
+   * currentPeriodEnd as never expiring). An active PRO subscription is left untouched.
+   */
+  async grantTelegramBasic(userId: number): Promise<void> {
+    const now = new Date();
+    const existing = await this.subscriptionRepo.findOne({ where: { userId } });
+    const isActive =
+      !!existing &&
+      (existing.status === SubscriptionStatus.ACTIVE || existing.status === SubscriptionStatus.TRIALING) &&
+      (!existing.currentPeriodEnd || new Date(existing.currentPeriodEnd) > now);
+
+    if (isActive && existing.plan === SubscriptionPlan.PRO) return;
+    if (isActive && existing.plan === SubscriptionPlan.BASIC && !existing.currentPeriodEnd) return;
+
+    const subscription = existing ?? this.subscriptionRepo.create({ userId, providerCustomerId: null, providerSubscriptionId: null });
+    subscription.plan = SubscriptionPlan.BASIC;
+    subscription.status = SubscriptionStatus.ACTIVE;
+    subscription.currentPeriodStart = now;
+    subscription.currentPeriodEnd = null;
+    subscription.cancelAtPeriodEnd = false;
+    await this.subscriptionRepo.save(subscription);
   }
 
   /**

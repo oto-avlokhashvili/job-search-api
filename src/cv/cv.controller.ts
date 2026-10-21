@@ -87,6 +87,14 @@ export class CvController {
     return this.publicCvSearchService.search(token);
   }
 
+  @Post('claim-public')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Attach a CV uploaded before signing in (proven by X-CV-Token or the verified account email) to this account' })
+  @ApiHeader({ name: 'X-CV-Token', required: false, description: 'searchToken the browser saved at public upload' })
+  async claimPublicCv(@Req() req, @Headers('x-cv-token') token: string | undefined) {
+    return this.cvService.claimPublicCv(req.user, token || undefined);
+  }
+
   @Get('search')
   @ApiOperation({ summary: 'CV search for the signed-in user: vacancies matching their own CV' })
   async searchMyCv(@Req() req) {

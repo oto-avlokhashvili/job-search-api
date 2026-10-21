@@ -39,8 +39,9 @@ export class Subscription {
   @Column({ type: 'timestamp', nullable: true })
   currentPeriodStart: Date;
 
+  // null = no end date (e.g. the free BASIC granted for connecting Telegram).
   @Column({ type: 'timestamp', nullable: true })
-  currentPeriodEnd: Date;
+  currentPeriodEnd: Date | null;
 
   @Column({ default: false })
   cancelAtPeriodEnd: boolean;

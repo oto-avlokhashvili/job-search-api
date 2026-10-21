@@ -1,8 +1,9 @@
 // src/cv/cv.service.ts
-import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, GoneException, Inject, forwardRef, Logger } from '@nestjs/common';
 import { UpdateCvSummaryDto } from './dto/update-cv.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Cv } from 'src/Entities/cv.entity';
+import { User } from 'src/Entities/user.entity';
 import { IsNull, Not, Repository } from 'typeorm';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import { CvParserService } from './cv-parser.service';
@@ -222,7 +223,7 @@ export class CvService {
     const email = dto.email.trim().toLowerCase();
     const cv = await this.cvRepository.findOne({ where: { email, userId: IsNull() } });
     if (!cv || cv.originalName !== dto.fileName) {
-      throw new NotFoundException('CV ვერ მოიძებნა, ატვირთეთ თავიდან');
+      throw new GoneException('CV ვერ მოიძებნა, ატვირთეთ თავიდან');
     }
 
     if (!cv.summary?.searchQueries?.length && cv.storagePath && (await this.tryConsumeAiBudget())) {
@@ -244,6 +245,30 @@ export class CvService {
     await this.cvRepository.save(cv);
 
     return { searchToken, searchAvailable: !!cv.summary?.searchQueries?.length };
+  }
+
+  /**
+   * Moves a public CV onto a signed-in account that has none, so a CV uploaded before signing in
+   * isn't lost. Ownership is proven by the browser's search token or, failing that, by a verified
+   * account email equal to the one given at upload. An existing account CV is never replaced.
+   */
+  async claimPublicCv(user: User, token?: string): Promise<{ claimed: boolean }> {
+    if (await this.cvRepository.exists({ where: { userId: user.id } })) return { claimed: false };
+
+    let cv: Cv | null = null;
+    if (token) {
+      cv = await this.cvRepository.findOne({ where: { searchTokenHash: hashSearchToken(token), userId: IsNull() } });
+    }
+    if (!cv && user.isEmailVerified && user.email) {
+      cv = await this.cvRepository.findOne({ where: { email: user.email.trim().toLowerCase(), userId: IsNull() } });
+    }
+    if (!cv) return { claimed: false };
+
+    cv.userId = user.id;
+    // The anonymous token stops working: the account's own CV search takes over.
+    cv.searchTokenHash = null;
+    await this.cvRepository.save(cv);
+    return { claimed: true };
   }
 
   private tryConsumeAiBudget(): Promise<boolean> {

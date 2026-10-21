@@ -132,7 +132,7 @@ export class PublicCvSearchService {
     return this.searchByCv(cv);
   }
 
-  /** Same search for a signed-in user's own CV (uploaded from the profile or dashboard). */
+  /** Same search for a signed-in user's own CV (uploaded on the profile page). */
   async searchForUser(userId: number): Promise<PublicCvSearchResult> {
     const cv = await this.cvRepository.findOne({ where: { userId } });
     if (!cv) throw new NotFoundException('CV ვერ მოიძებნა, ატვირთეთ CV');
