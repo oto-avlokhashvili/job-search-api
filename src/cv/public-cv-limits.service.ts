@@ -70,6 +70,15 @@ export class PublicCvLimitsService implements OnModuleDestroy {
     }
   }
 
+  /** Current count of a consume() window without incrementing it (0 when unset or Redis is down). */
+  async peek(key: string): Promise<number> {
+    try {
+      return Number(await this.redis.get(`public-cv:limit:${key}`)) || 0;
+    } catch {
+      return 0;
+    }
+  }
+
   async getJson<T>(key: string): Promise<T | null> {
     try {
       const raw = await this.redis.get(`public-cv:cache:${key}`);

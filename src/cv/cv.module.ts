@@ -15,6 +15,6 @@ import { TurnstileService } from './turnstile.service';
   imports: [TypeOrmModule.forFeature([Cv]), forwardRef(() => AiModule), forwardRef(() => JobModule)],
   controllers: [CvController],
   providers: [CvService, R2StorageService, CvParserService, PublicCvLimitsService, PublicCvSearchService, TurnstileService],
-  exports: [CvService, R2StorageService, CvParserService],
+  exports: [CvService, R2StorageService, CvParserService, PublicCvLimitsService],
 })
 export class CvModule {}

@@ -24,7 +24,15 @@ export class User {
         default: UserRole.USER
     })
     role: UserRole;
-    
+
+    // HR only: the company the recruiter signed up for.
+    @Column({ type: 'varchar', length: 150, nullable: true })
+    companyName?: string | null;
+
+    // HR only: set by an admin; RolesGuard blocks HR routes until true.
+    @Column({ default: false })
+    hrApproved: boolean;
+
     @Column({
         type: 'varchar',
         nullable: true,

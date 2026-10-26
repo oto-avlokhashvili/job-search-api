@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, Inject, forwardRef, OnModuleInit } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
+import { CreateHrUserDto } from './dto/create-hr-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Not, Repository } from 'typeorm';
@@ -7,6 +8,10 @@ import { User } from 'src/Entities/user.entity';
 import { Subscription } from 'src/Entities/subscription.entity';
 import { SubscriptionPlan, SubscriptionStatus } from 'src/enums/subscriptions.enum';
 import { EmailService } from '../email/email.service';
+import { UserRole } from 'src/enums/user-role.enum';
+
+// Fields safe to return to clients (never the password hash or verification code).
+const PUBLIC_USER_FIELDS: (keyof User)[] = ['id', 'firstName', 'lastName', 'email', 'role', 'companyName', 'hrApproved', 'createdAt', 'subscription', 'telegramChatId', 'isEmailVerified', 'receiveMessages'];
 
 @Injectable()
 export class UserService implements OnModuleInit {
@@ -43,8 +48,10 @@ export class UserService implements OnModuleInit {
     }
   }
 
-  async create(createUserDto: CreateUserDto, isEmailVerified = false) {
-    const user = await this.userRepo.create(createUserDto);
+  async create(createUserDto: CreateUserDto, isEmailVerified = false, extra: Pick<Partial<User>, 'role' | 'companyName'> = {}) {
+    // Copy fields explicitly: the request body must never set role, hrApproved, subscription, etc.
+    const { firstName, lastName, email, password, receiveMessages } = createUserDto;
+    const user = this.userRepo.create({ firstName, lastName, email, password, receiveMessages, ...extra });
     user.isEmailVerified = isEmailVerified;
 
     if (!isEmailVerified) {
@@ -68,6 +75,26 @@ export class UserService implements OnModuleInit {
     }
 
     return savedUser;
+  }
+
+  async createHr(dto: CreateHrUserDto) {
+    const user = await this.create(dto, false, { role: UserRole.HR, companyName: dto.companyName.trim() });
+    return this.findOne(user.id);
+  }
+
+  async findHrUsers(approved?: boolean) {
+    return this.userRepo.find({
+      where: { role: UserRole.HR, ...(approved === undefined ? {} : { hrApproved: approved }) },
+      select: PUBLIC_USER_FIELDS,
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  async setHrApproval(id: number, approved: boolean) {
+    const user = await this.userRepo.findOne({ where: { id, role: UserRole.HR } });
+    if (!user) throw new NotFoundException(`HR user with ID ${id} not found`);
+    await this.userRepo.update(id, { hrApproved: approved });
+    return this.findOne(id);
   }
 
   async verifyEmail(email: string, code: string): Promise<boolean> {
@@ -104,7 +131,7 @@ export class UserService implements OnModuleInit {
   }
 
   async findAll() {
-    const users = await this.userRepo.find()
+    const users = await this.userRepo.find({ select: PUBLIC_USER_FIELDS })
     return users;
   }
 
@@ -114,7 +141,7 @@ export class UserService implements OnModuleInit {
         id,
       },
       relations: ['subscriptionDetails'],
-      select: ['id', 'firstName', 'lastName', 'email', 'role', 'createdAt', 'subscription', 'telegramChatId', 'isEmailVerified', 'receiveMessages']
+      select: PUBLIC_USER_FIELDS
     });
   }
 
@@ -125,15 +152,18 @@ export class UserService implements OnModuleInit {
     throw new NotFoundException(`User with ID ${id} not found`);
   }
 
-  const updated = Object.assign(user, updateUserDto);
-  await this.userRepo.save(updated);
+  // Only profile fields are user-editable; telegramChatId can only be cleared (disconnect).
+  const { firstName, lastName, receiveMessages, telegramChatId } = updateUserDto;
+  const changes: Partial<User> = {};
+  if (firstName !== undefined) changes.firstName = firstName;
+  if (lastName !== undefined) changes.lastName = lastName;
+  if (receiveMessages !== undefined) changes.receiveMessages = receiveMessages;
+  if (telegramChatId === '') changes.telegramChatId = '';
 
-  return updated;
+  if (Object.keys(changes).length) await this.userRepo.update(id, changes);
+  return this.findOne(id);
 }
 
-  remove() {
-    return this.userRepo.clear();
-  }
   async findByEmail(email: string) {
     return await this.userRepo.findOne({
       where: {

@@ -1,8 +1,9 @@
 import { LinkedinSearchService } from './linkedin-search.service';
 import { GoogleBrowserService } from './google-browser.service';
+import { PublicCvLimitsService } from 'src/cv/public-cv-limits.service';
 
 describe('LinkedinSearchService.buildQuery', () => {
-  const service = new LinkedinSearchService({} as GoogleBrowserService);
+  const service = new LinkedinSearchService({} as GoogleBrowserService, {} as PublicCvLimitsService);
   const openToWork = '("open to work" OR "#opentowork" OR "looking for new opportunities")';
 
   it('builds a query with keyword and location', () => {

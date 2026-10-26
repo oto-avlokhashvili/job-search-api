@@ -1,10 +1,12 @@
 import { Module } from '@nestjs/common';
-import { LinkedinSearchController } from './linkedin-search.controller';
 import { LinkedinSearchService } from './linkedin-search.service';
 import { GoogleBrowserService } from './google-browser.service';
+import { CvModule } from 'src/cv/cv.module';
 
+// Served to HRs through /hr/candidates/linkedin (HrModule), which adds the per-HR quota.
 @Module({
-  controllers: [LinkedinSearchController],
+  imports: [CvModule],
   providers: [LinkedinSearchService, GoogleBrowserService],
+  exports: [LinkedinSearchService],
 })
 export class LinkedinSearchModule {}

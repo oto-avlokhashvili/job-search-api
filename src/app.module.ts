@@ -21,6 +21,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { BullModule } from '@nestjs/bullmq';
 import { StatsModule } from './stats/stats.module';
 import { LinkedinSearchModule } from './linkedin-search/linkedin-search.module';
+import { HrModule } from './hr/hr.module';
 
 @Module({
   imports: [
@@ -100,6 +101,7 @@ import { LinkedinSearchModule } from './linkedin-search/linkedin-search.module';
     EmailModule,
     StatsModule,
     LinkedinSearchModule,
+    HrModule,
   ],
   controllers: [AppController],
   providers: [AppService, ScheduleService],

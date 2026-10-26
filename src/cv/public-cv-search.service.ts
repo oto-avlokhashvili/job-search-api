@@ -39,7 +39,7 @@ export function hashSearchToken(token: string): string {
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** Whole-word match that also treats Georgian letters as word characters. */
-function containsWord(text: string, term: string): boolean {
+export function containsWord(text: string, term: string): boolean {
   const t = term.trim().toLowerCase();
   if (!t) return false;
   return new RegExp(`(^|[^a-z0-9\\u10A0-\\u10FF])${escapeRegex(t)}($|[^a-z0-9\\u10A0-\\u10FF])`, 'i').test(text);
@@ -52,7 +52,7 @@ const SENIORITY_WORDS: Record<string, string[]> = {
   Lead: ['lead', 'head of', 'principal', 'architect', 'ხელმძღვანელი'],
   Principal: ['principal', 'architect', 'head of'],
 };
-const LEVEL_ORDER = ['Junior', 'Mid', 'Senior', 'Lead', 'Principal'];
+export const LEVEL_ORDER = ['Junior', 'Mid', 'Senior', 'Lead', 'Principal'];
 
 /**
  * Deterministic CV-to-job score (0-100), no AI call: role/title fit (50), skills (35),
