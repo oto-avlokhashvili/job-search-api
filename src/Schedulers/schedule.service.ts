@@ -49,7 +49,7 @@ export class ScheduleService {
     await this.telegramService.dispatchDailyTelegramAlerts();
   }
 
-  @Cron('20 15 * * *')
+  @Cron('00 10 * * *')
   async sendDailyEmails() {
     this.logger.log('✉️ Starting daily job alerts email dispatch...');
     await this.emailService.sendDailyEmailAlerts();
