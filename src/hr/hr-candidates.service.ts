@@ -11,6 +11,7 @@ import { LinkedinSearchService } from 'src/linkedin-search/linkedin-search.servi
 import { LinkedinSearchDto } from 'src/linkedin-search/dto/linkedin-search.dto';
 import { HrCandidateSearchDto } from './dto/hr-candidate-search.dto';
 import { scoreCvForCriteria } from './candidate-score';
+import { HrPipelineService, PipelineView } from './hr-pipeline.service';
 
 const DAY_SEC = 24 * 60 * 60;
 const envInt = (name: string, fallback: number) => Number(process.env[name]) || fallback;
@@ -62,6 +63,7 @@ export class HrCandidatesService {
     private readonly r2StorageService: R2StorageService,
     private readonly limits: PublicCvLimitsService,
     private readonly linkedinSearchService: LinkedinSearchService,
+    private readonly pipelineService: HrPipelineService,
   ) {}
 
   /** Ranked, anonymized CVs (every CV with an AI summary is searchable). */
@@ -144,8 +146,8 @@ export class HrCandidatesService {
     return { buffer, mimeType: cv.mimeType, originalName: cv.originalName };
   }
 
-  /** CVs this HR has unlocked, most recent first. CVs deleted since then drop out. */
-  async listUnlocked(hr: User): Promise<HrCandidate[]> {
+  /** CVs this HR has unlocked, most recent first, with their board state. CVs deleted since then drop out. */
+  async listUnlocked(hr: User): Promise<(HrCandidate & { pipeline: PipelineView })[]> {
     const rows: { cvId: number }[] = await this.accessRepository
       .createQueryBuilder('a')
       .select('a.cvId', 'cvId')
@@ -160,7 +162,8 @@ export class HrCandidatesService {
     const ids = rows.map((r) => Number(r.cvId));
     const cvs = await this.cvRepository.find({ where: { id: In(ids) } });
     const byId = new Map(cvs.map((cv) => [cv.id, cv]));
-    return this.toCards(hr.id, ids.map((id) => byId.get(id)).filter((cv): cv is Cv => !!cv));
+    const cards = await this.toCards(hr.id, ids.map((id) => byId.get(id)).filter((cv): cv is Cv => !!cv));
+    return this.pipelineService.attach(hr.id, cards);
   }
 
   async searchLinkedin(hr: User, dto: LinkedinSearchDto) {

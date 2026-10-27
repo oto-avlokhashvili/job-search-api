@@ -1,4 +1,19 @@
-import { Controller, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  Query,
+  Req,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
@@ -9,6 +24,8 @@ import { UserRole } from 'src/enums/user-role.enum';
 import { LinkedinSearchDto } from 'src/linkedin-search/dto/linkedin-search.dto';
 import { HrCandidatesService } from './hr-candidates.service';
 import { HrCandidateSearchDto } from './dto/hr-candidate-search.dto';
+import { HrPipelineService } from './hr-pipeline.service';
+import { CreateNoteDto, UpdatePipelineDto } from './dto/hr-pipeline.dto';
 
 @ApiTags('HR')
 @ApiBearerAuth('bearerAuth')
@@ -16,7 +33,35 @@ import { HrCandidateSearchDto } from './dto/hr-candidate-search.dto';
 @UseGuards(JwtAuthGuard, RolesGuard, ClientIpThrottlerGuard)
 @Roles(UserRole.HR, UserRole.ADMIN)
 export class HrController {
-  constructor(private readonly hrCandidatesService: HrCandidatesService) {}
+  constructor(
+    private readonly hrCandidatesService: HrCandidatesService,
+    private readonly hrPipelineService: HrPipelineService,
+  ) {}
+
+  @Patch('candidates/:cvId/pipeline')
+  @ApiOperation({ summary: 'Move an unlocked candidate on your board, or set its rating/tags' })
+  updatePipeline(@Req() req, @Param('cvId', ParseIntPipe) cvId: number, @Body() dto: UpdatePipelineDto) {
+    return this.hrPipelineService.update(req.user, cvId, dto);
+  }
+
+  @Get('candidates/:cvId/activity')
+  @ApiOperation({ summary: 'Notes and board history of an unlocked candidate, newest first' })
+  activity(@Req() req, @Param('cvId', ParseIntPipe) cvId: number) {
+    return this.hrPipelineService.activity(req.user, cvId);
+  }
+
+  @Post('candidates/:cvId/notes')
+  @ApiOperation({ summary: 'Add a note to an unlocked candidate' })
+  addNote(@Req() req, @Param('cvId', ParseIntPipe) cvId: number, @Body() dto: CreateNoteDto) {
+    return this.hrPipelineService.addNote(req.user, cvId, dto.body);
+  }
+
+  @Delete('candidates/notes/:noteId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Delete one of your notes' })
+  deleteNote(@Req() req, @Param('noteId', ParseIntPipe) noteId: number) {
+    return this.hrPipelineService.deleteNote(req.user, noteId);
+  }
 
   @Get('candidates/cvs')
   @ApiOperation({ summary: 'Search all CVs (anonymized; contacts after unlock)' })

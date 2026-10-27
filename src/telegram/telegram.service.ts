@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleInit, OnModuleDestroy, Inject, forwardRef }
 import TelegramBot from 'node-telegram-bot-api';
 import { from, lastValueFrom } from 'rxjs';
 import { InjectQueue } from '@nestjs/bullmq';
-import { Queue } from 'bullmq';
+import { Queue, UnrecoverableError } from 'bullmq';
 import { AiMatchedJobsService } from 'src/ai-matched-jobs/ai-matched-jobs.service';
 import { AiService } from 'src/ai/ai.service';
 import { CvService } from 'src/cv/cv.service';
@@ -12,6 +12,18 @@ import { UserService } from 'src/user/user.service';
 import { EntitlementService } from 'src/subscription/entitlement.service';
 import { SubscriptionService } from 'src/subscription/subscription.service';
 import { User } from 'src/Entities/user.entity';
+
+/**
+ * Telegram errors a retry can't fix: the bot can't reach the chat (never started, blocked,
+ * deleted account) or the chat id doesn't belong to this bot's token. Jobs failing with these
+ * are not retried.
+ */
+export function isPermanentTelegramError(error: any): boolean {
+    if (error?.code !== 'ETELEGRAM') return false;
+    const status = error.response?.body?.error_code ?? error.response?.statusCode;
+    const description: string = error.response?.body?.description ?? error.message ?? '';
+    return status === 403 || (status === 400 && /chat not found|user not found|PEER_ID_INVALID/i.test(description));
+}
 
 interface UserSession {
     chatId: string;
@@ -169,6 +181,12 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         try {
             return await this.bot.sendMessage(chatId, text, options);
         } catch (error: any) {
+            if (isPermanentTelegramError(error)) {
+                // One short line: these repeat daily for every unreachable chat
+                this.logger.warn(`Telegram chat ${chatId} is unreachable: ${error.message}`);
+                // BullMQ fails the job right away instead of retrying it
+                throw new UnrecoverableError(error.message);
+            }
             this.logger.error(`Failed to send direct message to Telegram chat ${chatId}:`, error.message || error);
             throw error;
         }
@@ -290,15 +308,6 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
             // Send jobs with a small pacing delay between each message for the same chat
             for (const job of newJobs) {
                 try {
-                    await this.sentJobsService.create({
-                        userId: user.id,
-                        jobId: job.id,
-                        vacancy: job.vacancy,
-                        location: job.location,
-                        company: job.company,
-                        match: 0,
-                    });
-
                     await this.sendDirectMessage(
                         user.telegramChatId,
                         `━━━━━━━━━━━━━━━━━━━\n` +
@@ -313,9 +322,21 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
                         { parse_mode: 'Markdown' }
                     );
 
+                    // Recorded only once delivered, so a failed send is retried on the next run
+                    await this.sentJobsService.create({
+                        userId: user.id,
+                        jobId: job.id,
+                        vacancy: job.vacancy,
+                        location: job.location,
+                        company: job.company,
+                        match: 0,
+                    });
+
                     // Small 300ms pacing delay per chat
                     await new Promise((resolve) => setTimeout(resolve, 300));
                 } catch (jobError: any) {
+                    // The chat is gone: the remaining jobs would fail the same way
+                    if (jobError instanceof UnrecoverableError) throw jobError;
                     this.logger.error(`Failed to send job ${job.id} to user ${user.telegramChatId}:`, jobError.message || jobError);
                 }
             }
@@ -327,7 +348,10 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
 
             return { status: 'sent', recipient: user.telegramChatId, jobsCount: newJobs.length };
         } catch (error: any) {
-            this.logger.error(`Failed processing Telegram alert for user ${user.telegramChatId}:`, error.message || error);
+            // Unreachable chats were already logged once by sendDirectMessage
+            if (!(error instanceof UnrecoverableError)) {
+                this.logger.error(`Failed processing Telegram alert for user ${user.telegramChatId}:`, error.message || error);
+            }
             throw error;
         }
     }
