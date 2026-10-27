@@ -1,21 +1,33 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, IsNull, Not, Repository } from 'typeorm';
 import { User } from 'src/Entities/user.entity';
 import { HrCvAccess, HrCvAccessAction } from 'src/Entities/hr-cv-access.entity';
 import { HrPipelineEntry, PipelineStage } from 'src/Entities/hr-pipeline-entry.entity';
 import { HrPipelineEvent, PipelineEventType } from 'src/Entities/hr-pipeline-event.entity';
 import { HrCandidateNote } from 'src/Entities/hr-candidate-note.entity';
 import { UpdatePipelineDto } from './dto/hr-pipeline.dto';
-import { applyPipelineChange, DEFAULT_PIPELINE_STATE } from './pipeline';
+import { applyPipelineChange } from './pipeline';
 
 export interface PipelineView {
+  id: number;
+  vacancyId: number | null;
   stage: PipelineStage;
   rejectionReason: string | null;
   rating: number | null;
   tags: string[];
   position: number | null;
 }
+
+/** Which of this HR's vacancies a CV is in, shown on search cards. */
+export interface VacancyMembership {
+  entryId: number;
+  vacancyId: number;
+  stage: PipelineStage;
+}
+
+/** Board filter: every entry, only one vacancy's, or only the ones not in any vacancy. */
+export type BoardFilter = number | 'none' | undefined;
 
 export interface ActivityItem {
   id: string;
@@ -24,29 +36,34 @@ export interface ActivityItem {
   author: { id: number; name: string };
   noteId?: number;
   body?: string;
+  vacancyId?: number | null;
   fromStage?: PipelineStage | null;
   toStage?: PipelineStage | null;
   rejectionReason?: string | null;
   rating?: number | null;
 }
 
-const toView = (entry?: HrPipelineEntry | null): PipelineView =>
-  entry
-    ? {
-        stage: entry.stage,
-        rejectionReason: entry.rejectionReason,
-        rating: entry.rating,
-        tags: entry.tags ?? [],
-        position: entry.position,
-      }
-    : { ...DEFAULT_PIPELINE_STATE, position: null };
+const MAX_BOARD_ENTRIES = 500;
+
+export const toView = (entry: HrPipelineEntry): PipelineView => ({
+  id: entry.id,
+  vacancyId: entry.vacancyId,
+  stage: entry.stage,
+  rejectionReason: entry.rejectionReason,
+  rating: entry.rating,
+  tags: entry.tags ?? [],
+  position: entry.position,
+});
 
 /**
- * "My candidates" board: stage, order, rating, tags, notes and history of the CVs this HR unlocked.
- * Everything is per HR user and only for unlocked CVs. Nothing here touches the unlock quota.
+ * "My candidates" boards: the entries (cards) of the CVs this HR unlocked, one per vacancy the CV is in,
+ * or a single no-vacancy entry. Notes are per candidate and shared by all of its entries.
+ * Everything is per HR user. Nothing here touches the unlock quota.
  */
 @Injectable()
-export class HrPipelineService {
+export class HrPipelineService implements OnModuleInit {
+  private readonly logger = new Logger(HrPipelineService.name);
+
   constructor(
     @InjectRepository(HrPipelineEntry) private readonly entryRepository: Repository<HrPipelineEntry>,
     @InjectRepository(HrPipelineEvent) private readonly eventRepository: Repository<HrPipelineEvent>,
@@ -55,31 +72,123 @@ export class HrPipelineService {
     @InjectRepository(User) private readonly userRepository: Repository<User>,
   ) {}
 
-  /** Board state for each card, keyed by CV id; candidates never moved get the default. */
-  async attach<T extends { id: number }>(hrUserId: number, cards: T[]): Promise<(T & { pipeline: PipelineView })[]> {
-    if (!cards.length) return [];
-    const entries = await this.entryRepository.find({ where: { hrUserId, cvId: In(cards.map((c) => c.id)) } });
-    const byCv = new Map(entries.map((e) => [e.cvId, e]));
-    return cards.map((card) => ({ ...card, pipeline: toView(byCv.get(card.id)) }));
+  /**
+   * Entries used to be created lazily, on the first move. Give every unlocked CV without one
+   * its no-vacancy entry, so each card has an id. Safe to run on every boot.
+   */
+  async onModuleInit() {
+    try {
+      const result: { id: number }[] = await this.entryRepository.query(`
+        INSERT INTO hr_pipeline_entries ("hrUserId", "cvId")
+        SELECT DISTINCT a."hrUserId", a."cvId" FROM hr_cv_access a
+        WHERE a.action = 'UNLOCK'
+          AND NOT EXISTS (SELECT 1 FROM hr_pipeline_entries e WHERE e."hrUserId" = a."hrUserId" AND e."cvId" = a."cvId")
+        ON CONFLICT DO NOTHING
+        RETURNING id
+      `);
+      if (result.length) this.logger.log(`Created ${result.length} board entries for previously unlocked CVs`);
+    } catch (error) {
+      this.logger.error(`Board entry backfill failed: ${error.message}`);
+    }
   }
 
-  async update(hr: User, cvId: number, dto: UpdatePipelineDto): Promise<PipelineView> {
-    await this.assertUnlocked(hr.id, cvId);
+  /** Called on unlock: the CV gets its no-vacancy card unless it's already on a board. */
+  async ensureEntry(hrUserId: number, cvId: number): Promise<void> {
+    if (await this.entryRepository.exists({ where: { hrUserId, cvId } })) return;
+    await this.entryRepository.createQueryBuilder().insert().values({ hrUserId, cvId }).orIgnore().execute();
+  }
 
-    const existing = await this.entryRepository.findOne({ where: { hrUserId: hr.id, cvId } });
-    const { state, events } = applyPipelineChange(existing ?? DEFAULT_PIPELINE_STATE, dto);
+  /** Entries for a board, newest first; the client orders each column by position. */
+  board(hrUserId: number, filter: BoardFilter): Promise<HrPipelineEntry[]> {
+    const vacancyId = filter === 'none' ? IsNull() : filter;
+    return this.entryRepository.find({
+      where: { hrUserId, ...(vacancyId !== undefined && { vacancyId }) },
+      order: { id: 'DESC' },
+      take: MAX_BOARD_ENTRIES,
+    });
+  }
 
-    // Upsert: two quick moves of a never-moved card must not race into a duplicate row.
-    await this.entryRepository.upsert({ hrUserId: hr.id, cvId, ...state }, ['hrUserId', 'cvId']);
+  async memberships(hrUserId: number, cvIds: number[]): Promise<Map<number, VacancyMembership[]>> {
+    const map = new Map<number, VacancyMembership[]>();
+    if (!cvIds.length) return map;
+    const entries = await this.entryRepository.find({
+      where: { hrUserId, cvId: In(cvIds), vacancyId: Not(IsNull()) },
+      order: { id: 'ASC' },
+    });
+    for (const e of entries) {
+      const list = map.get(e.cvId) ?? [];
+      list.push({ entryId: e.id, vacancyId: e.vacancyId!, stage: e.stage });
+      map.set(e.cvId, list);
+    }
+    return map;
+  }
+
+  /** Candidate count per stage for each vacancy (key null = not in any vacancy). */
+  async counts(hrUserId: number): Promise<{ vacancyId: number | null; stage: PipelineStage; count: number }[]> {
+    const rows: { vacancyId: number | null; stage: PipelineStage; count: string }[] = await this.entryRepository
+      .createQueryBuilder('e')
+      .select('e.vacancyId', 'vacancyId')
+      .addSelect('e.stage', 'stage')
+      .addSelect('COUNT(*)', 'count')
+      .where('e.hrUserId = :hrUserId', { hrUserId })
+      .groupBy('e.vacancyId')
+      .addGroupBy('e.stage')
+      .getRawMany();
+    return rows.map((r) => ({ vacancyId: r.vacancyId === null ? null : Number(r.vacancyId), stage: r.stage, count: Number(r.count) }));
+  }
+
+  /**
+   * Puts an unlocked CV into a vacancy. A no-vacancy card moves there with its stage, rating and tags;
+   * otherwise a new card starts as SOURCED. Already in the vacancy: returns that card.
+   */
+  async addToVacancy(hrUserId: number, vacancyId: number, cvId: number): Promise<HrPipelineEntry> {
+    const existing = await this.entryRepository.findOne({ where: { vacancyId, cvId } });
+    if (existing) return existing;
+
+    const unassigned = await this.entryRepository.findOne({ where: { hrUserId, cvId, vacancyId: IsNull() } });
+    if (unassigned) {
+      await this.entryRepository.update(unassigned.id, { vacancyId, position: null });
+    } else {
+      // orIgnore: a double click must not fail on the unique index
+      await this.entryRepository.createQueryBuilder().insert().values({ hrUserId, cvId, vacancyId }).orIgnore().execute();
+    }
+    return this.entryRepository.findOneOrFail({ where: { vacancyId, cvId } });
+  }
+
+  /**
+   * Takes a card off its vacancy's board. The unlock stays: a CV with no other card goes back
+   * to "no vacancy" (keeping its stage); otherwise the card is deleted. Returns the kept card, if any.
+   */
+  async removeFromVacancy(hr: User, entryId: number): Promise<PipelineView | null> {
+    const entry = await this.findOwned(hr.id, entryId);
+    if (entry.vacancyId === null) throw new BadRequestException('The candidate is not in a vacancy');
+    const kept = await this.detach(entry);
+    return kept && toView(kept);
+  }
+
+  /** Before a vacancy is deleted: every card leaves it the same way as removeFromVacancy. */
+  async detachVacancy(hrUserId: number, vacancyId: number): Promise<void> {
+    const entries = await this.entryRepository.find({ where: { hrUserId, vacancyId } });
+    for (const entry of entries) await this.detach(entry);
+  }
+
+  async update(hr: User, entryId: number, dto: UpdatePipelineDto): Promise<PipelineView> {
+    const entry = await this.findOwned(hr.id, entryId);
+    const { stage, rejectionReason, rating, tags } = entry;
+    const { state, events } = applyPipelineChange({ stage, rejectionReason, rating, tags }, dto);
+
+    await this.entryRepository.update(entry.id, state);
     if (events.length) {
-      await this.eventRepository.insert(events.map((e) => ({ ...e, hrUserId: hr.id, cvId })));
+      await this.eventRepository.insert(
+        events.map((e) => ({ ...e, hrUserId: hr.id, cvId: entry.cvId, vacancyId: entry.vacancyId })),
+      );
     }
     if (dto.order) await this.setOrder(hr.id, dto.order);
 
-    return toView(await this.entryRepository.findOne({ where: { hrUserId: hr.id, cvId } }));
+    return toView(await this.entryRepository.findOneByOrFail({ id: entry.id }));
   }
 
-  /** Notes and history of one candidate, newest first. */
+  /** Notes and history of one candidate across all of its cards, newest first. */
   async activity(hr: User, cvId: number): Promise<ActivityItem[]> {
     await this.assertUnlocked(hr.id, cvId);
 
@@ -97,6 +206,7 @@ export class HrPipelineService {
           kind: e.type,
           createdAt: e.createdAt,
           author: { id: e.hrUserId, name: authors.get(e.hrUserId) ?? '' },
+          vacancyId: e.vacancyId,
           fromStage: e.fromStage,
           toStage: e.toStage,
           rejectionReason: e.rejectionReason,
@@ -122,27 +232,37 @@ export class HrPipelineService {
     await this.noteRepository.delete(noteId);
   }
 
-  /** Positions for a column after a drop; ids this HR hasn't unlocked are skipped. */
-  private async setOrder(hrUserId: number, cvIds: number[]) {
-    const ids = Array.from(new Set(cvIds));
-    const unlocked = await this.unlockedIds(hrUserId, ids);
-    const rows = ids.filter((id) => unlocked.has(id)).map((cvId, position) => ({ hrUserId, cvId, position }));
-    if (rows.length) await this.entryRepository.upsert(rows, ['hrUserId', 'cvId']);
+  private async detach(entry: HrPipelineEntry): Promise<HrPipelineEntry | null> {
+    const others = await this.entryRepository.count({
+      where: { hrUserId: entry.hrUserId, cvId: entry.cvId, id: Not(entry.id) },
+    });
+    if (others) {
+      await this.entryRepository.delete(entry.id);
+      return null;
+    }
+    await this.entryRepository.update(entry.id, { vacancyId: null, position: null });
+    return { ...entry, vacancyId: null, position: null };
+  }
+
+  private async findOwned(hrUserId: number, entryId: number): Promise<HrPipelineEntry> {
+    const entry = await this.entryRepository.findOne({ where: { id: entryId, hrUserId } });
+    if (!entry) throw new NotFoundException('Candidate is not on your board');
+    return entry;
+  }
+
+  /** Positions for a column after a drop (entry ids, top to bottom); other HRs' entries are skipped. */
+  private async setOrder(hrUserId: number, entryIds: number[]) {
+    const ids = Array.from(new Set(entryIds));
+    if (!ids.length) return;
+    await this.entryRepository.query(
+      'UPDATE hr_pipeline_entries SET position = array_position($2::int[], id) - 1 WHERE "hrUserId" = $1 AND id = ANY($2::int[])',
+      [hrUserId, ids],
+    );
   }
 
   private async assertUnlocked(hrUserId: number, cvId: number) {
-    if (!(await this.unlockedIds(hrUserId, [cvId])).has(cvId)) {
-      throw new ForbiddenException('Open the candidate\'s contacts first');
-    }
-  }
-
-  private async unlockedIds(hrUserId: number, cvIds: number[]): Promise<Set<number>> {
-    if (!cvIds.length) return new Set();
-    const rows = await this.accessRepository.find({
-      where: { hrUserId, cvId: In(cvIds), action: HrCvAccessAction.UNLOCK },
-      select: ['cvId'],
-    });
-    return new Set(rows.map((r) => r.cvId));
+    const unlocked = await this.accessRepository.exists({ where: { hrUserId, cvId, action: HrCvAccessAction.UNLOCK } });
+    if (!unlocked) throw new ForbiddenException('Open the candidate\'s contacts first');
   }
 
   private async authorNames(ids: number[]): Promise<Map<number, string>> {

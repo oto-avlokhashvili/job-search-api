@@ -10,11 +10,13 @@ export enum PipelineStage {
 }
 
 /**
- * Where an unlocked candidate sits on this HR's "My candidates" board, plus rating and tags.
- * Created lazily: a candidate without a row is SOURCED with no rating/tags.
+ * One card on an HR's boards: an unlocked candidate in one vacancy (or in none), with its stage,
+ * rating and tags. A CV has at most one entry without a vacancy and one per vacancy.
+ * Unlocking creates the no-vacancy entry; adding to a vacancy moves it there.
  */
 @Entity('hr_pipeline_entries')
-@Index(['hrUserId', 'cvId'], { unique: true })
+@Index(['hrUserId', 'cvId'], { unique: true, where: '"vacancyId" IS NULL' })
+@Index(['vacancyId', 'cvId'], { unique: true, where: '"vacancyId" IS NOT NULL' })
 export class HrPipelineEntry {
   @PrimaryGeneratedColumn()
   id: number;
@@ -24,6 +26,10 @@ export class HrPipelineEntry {
 
   @Column()
   cvId: number;
+
+  // Null: unlocked but not in any vacancy yet (shown on the main board only).
+  @Column({ type: 'int', nullable: true, default: null })
+  vacancyId: number | null;
 
   @Column({ type: 'enum', enum: PipelineStage, default: PipelineStage.SOURCED })
   stage: PipelineStage;

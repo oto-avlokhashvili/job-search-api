@@ -26,6 +26,8 @@ import { HrCandidatesService } from './hr-candidates.service';
 import { HrCandidateSearchDto } from './dto/hr-candidate-search.dto';
 import { HrPipelineService } from './hr-pipeline.service';
 import { CreateNoteDto, UpdatePipelineDto } from './dto/hr-pipeline.dto';
+import { HrVacancyService } from './hr-vacancy.service';
+import { BoardQueryDto, CreateVacancyDto, UpdateVacancyDto } from './dto/hr-vacancy.dto';
 
 @ApiTags('HR')
 @ApiBearerAuth('bearerAuth')
@@ -36,12 +38,58 @@ export class HrController {
   constructor(
     private readonly hrCandidatesService: HrCandidatesService,
     private readonly hrPipelineService: HrPipelineService,
+    private readonly hrVacancyService: HrVacancyService,
   ) {}
 
-  @Patch('candidates/:cvId/pipeline')
-  @ApiOperation({ summary: 'Move an unlocked candidate on your board, or set its rating/tags' })
-  updatePipeline(@Req() req, @Param('cvId', ParseIntPipe) cvId: number, @Body() dto: UpdatePipelineDto) {
-    return this.hrPipelineService.update(req.user, cvId, dto);
+  @Get('vacancies')
+  @ApiOperation({ summary: 'Your vacancies with candidate counts per stage, plus the count not in any vacancy' })
+  listVacancies(@Req() req) {
+    return this.hrVacancyService.list(req.user);
+  }
+
+  @Post('vacancies')
+  @ApiOperation({ summary: 'Create a vacancy (a separate candidate board)' })
+  createVacancy(@Req() req, @Body() dto: CreateVacancyDto) {
+    return this.hrVacancyService.create(req.user, dto);
+  }
+
+  @Patch('vacancies/:id')
+  @ApiOperation({ summary: 'Rename, close or reopen a vacancy' })
+  updateVacancy(@Req() req, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateVacancyDto) {
+    return this.hrVacancyService.update(req.user, id, dto);
+  }
+
+  @Delete('vacancies/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Delete a vacancy; its candidates stay unlocked' })
+  deleteVacancy(@Req() req, @Param('id', ParseIntPipe) id: number) {
+    return this.hrVacancyService.remove(req.user, id);
+  }
+
+  @Post('vacancies/:id/candidates/:cvId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Add a candidate to a vacancy, opening the contacts if needed (counts toward the quota once per CV)' })
+  addToVacancy(@Req() req, @Param('id', ParseIntPipe) id: number, @Param('cvId', ParseIntPipe) cvId: number) {
+    return this.hrCandidatesService.addToVacancy(req.user, id, cvId);
+  }
+
+  @Get('board')
+  @ApiOperation({ summary: 'Board cards: all, one vacancy (?vacancyId=) or not in any vacancy (?vacancyId=none)' })
+  board(@Req() req, @Query() query: BoardQueryDto) {
+    const filter = query.vacancyId === undefined ? undefined : query.vacancyId === 'none' ? 'none' : Number(query.vacancyId);
+    return this.hrCandidatesService.board(req.user, filter);
+  }
+
+  @Patch('board/:entryId')
+  @ApiOperation({ summary: 'Move a board card, or set its rating/tags' })
+  updatePipeline(@Req() req, @Param('entryId', ParseIntPipe) entryId: number, @Body() dto: UpdatePipelineDto) {
+    return this.hrPipelineService.update(req.user, entryId, dto);
+  }
+
+  @Delete('board/:entryId')
+  @ApiOperation({ summary: 'Take a card off its vacancy; returns the card kept without a vacancy, if any' })
+  removeFromVacancy(@Req() req, @Param('entryId', ParseIntPipe) entryId: number) {
+    return this.hrPipelineService.removeFromVacancy(req.user, entryId);
   }
 
   @Get('candidates/:cvId/activity')
@@ -74,12 +122,6 @@ export class HrController {
   @ApiOperation({ summary: 'Search open-to-work LinkedIn profiles via Google (daily quota per HR)' })
   searchLinkedin(@Req() req, @Query() dto: LinkedinSearchDto) {
     return this.hrCandidatesService.searchLinkedin(req.user, dto);
-  }
-
-  @Get('candidates/unlocked')
-  @ApiOperation({ summary: 'Candidates whose contacts you have opened' })
-  listUnlocked(@Req() req) {
-    return this.hrCandidatesService.listUnlocked(req.user);
   }
 
   @Post('candidates/:cvId/unlock')

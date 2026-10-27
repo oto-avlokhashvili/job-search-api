@@ -5,13 +5,15 @@ import { Cv } from 'src/Entities/cv.entity';
 import { User } from 'src/Entities/user.entity';
 import { HrCvAccess, HrCvAccessAction } from 'src/Entities/hr-cv-access.entity';
 import { UserRole } from 'src/enums/user-role.enum';
+import { HrVacancyStatus } from 'src/Entities/hr-vacancy.entity';
 import { R2StorageService } from 'src/cv/r2-storage.service';
 import { PublicCvLimitsService } from 'src/cv/public-cv-limits.service';
 import { LinkedinSearchService } from 'src/linkedin-search/linkedin-search.service';
 import { LinkedinSearchDto } from 'src/linkedin-search/dto/linkedin-search.dto';
 import { HrCandidateSearchDto } from './dto/hr-candidate-search.dto';
 import { scoreCvForCriteria } from './candidate-score';
-import { HrPipelineService, PipelineView } from './hr-pipeline.service';
+import { BoardFilter, HrPipelineService, PipelineView, toView, VacancyMembership } from './hr-pipeline.service';
+import { HrVacancyService } from './hr-vacancy.service';
 
 const DAY_SEC = 24 * 60 * 60;
 const envInt = (name: string, fallback: number) => Number(process.env[name]) || fallback;
@@ -43,6 +45,8 @@ export interface HrCandidate {
   matchedKeywords?: string[];
   unlocked: boolean;
   contact: CandidateContact | null;
+  /** This HR's vacancies the CV is in (unlocked CVs only). */
+  vacancies: VacancyMembership[];
 }
 
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, '\\$&');
@@ -64,6 +68,7 @@ export class HrCandidatesService {
     private readonly limits: PublicCvLimitsService,
     private readonly linkedinSearchService: LinkedinSearchService,
     private readonly pipelineService: HrPipelineService,
+    private readonly vacancyService: HrVacancyService,
   ) {}
 
   /** Ranked, anonymized CVs (every CV with an AI summary is searchable). */
@@ -129,9 +134,23 @@ export class HrCandidatesService {
       }
       await this.accessRepository.insert({ hrUserId: hr.id, cvId, action: HrCvAccessAction.UNLOCK });
     }
+    await this.pipelineService.ensureEntry(hr.id, cvId);
 
     const [card] = await this.toCards(hr.id, [cv]);
     return card;
+  }
+
+  /** Unlocks the CV if needed (same quota as unlock) and puts it on the vacancy's board. */
+  async addToVacancy(hr: User, vacancyId: number, cvId: number): Promise<HrCandidate & { pipeline: PipelineView }> {
+    const vacancy = await this.vacancyService.findOwned(hr.id, vacancyId);
+    if (vacancy.status !== HrVacancyStatus.OPEN) throw new BadRequestException('ვაკანსია დახურულია');
+
+    await this.unlock(hr, cvId);
+    const entry = await this.pipelineService.addToVacancy(hr.id, vacancyId, cvId);
+    await this.vacancyService.touch(vacancyId);
+
+    const [card] = await this.toCards(hr.id, [await this.findCv(cvId)]);
+    return { ...card, pipeline: toView(entry) };
   }
 
   async download(hr: User, cvId: number): Promise<{ buffer: Buffer; mimeType: string; originalName: string }> {
@@ -146,24 +165,20 @@ export class HrCandidatesService {
     return { buffer, mimeType: cv.mimeType, originalName: cv.originalName };
   }
 
-  /** CVs this HR has unlocked, most recent first, with their board state. CVs deleted since then drop out. */
-  async listUnlocked(hr: User): Promise<(HrCandidate & { pipeline: PipelineView })[]> {
-    const rows: { cvId: number }[] = await this.accessRepository
-      .createQueryBuilder('a')
-      .select('a.cvId', 'cvId')
-      .where('a.hrUserId = :hrUserId', { hrUserId: hr.id })
-      .andWhere('a.action = :action', { action: HrCvAccessAction.UNLOCK })
-      .groupBy('a.cvId')
-      .orderBy('MAX(a.createdAt)', 'DESC')
-      .limit(MAX_RANKED)
-      .getRawMany();
-    if (!rows.length) return [];
+  /**
+   * Cards of a board, newest first: every entry, one vacancy's, or the ones not in any vacancy.
+   * A CV in two vacancies gives two cards. CVs deleted since the unlock drop out.
+   */
+  async board(hr: User, filter: BoardFilter): Promise<(HrCandidate & { pipeline: PipelineView })[]> {
+    if (typeof filter === 'number') await this.vacancyService.findOwned(hr.id, filter);
 
-    const ids = rows.map((r) => Number(r.cvId));
-    const cvs = await this.cvRepository.find({ where: { id: In(ids) } });
-    const byId = new Map(cvs.map((cv) => [cv.id, cv]));
-    const cards = await this.toCards(hr.id, ids.map((id) => byId.get(id)).filter((cv): cv is Cv => !!cv));
-    return this.pipelineService.attach(hr.id, cards);
+    const entries = await this.pipelineService.board(hr.id, filter);
+    if (!entries.length) return [];
+
+    const ids = Array.from(new Set(entries.map((e) => e.cvId)));
+    const cards = await this.toCards(hr.id, await this.cvRepository.find({ where: { id: In(ids) } }));
+    const byId = new Map(cards.map((c) => [c.id, c]));
+    return entries.filter((e) => byId.has(e.cvId)).map((e) => ({ ...byId.get(e.cvId)!, pipeline: toView(e) }));
   }
 
   async searchLinkedin(hr: User, dto: LinkedinSearchDto) {
@@ -223,6 +238,7 @@ export class HrCandidatesService {
       ? await this.userRepository.find({ where: { id: In(userIds) }, select: ['id', 'firstName', 'lastName', 'email'] })
       : [];
     const usersById = new Map(users.map((u) => [u.id, u]));
+    const memberships = await this.pipelineService.memberships(hrUserId, Array.from(unlocked));
 
     return cvs.map((cv) => {
       const s = cv.summary;
@@ -246,6 +262,7 @@ export class HrCandidatesService {
               phoneNumber: cv.phoneNumber,
             }
           : null,
+        vacancies: memberships.get(cv.id) ?? [],
       };
     });
   }

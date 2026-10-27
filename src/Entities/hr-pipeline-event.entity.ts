@@ -19,6 +19,10 @@ export class HrPipelineEvent {
   @Column()
   cvId: number;
 
+  // The vacancy whose board the change happened on; null for the no-vacancy card.
+  @Column({ type: 'int', nullable: true, default: null })
+  vacancyId: number | null;
+
   @Column({ type: 'enum', enum: PipelineEventType })
   type: PipelineEventType;
 
