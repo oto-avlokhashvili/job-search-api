@@ -9,6 +9,7 @@ import { LoginDto } from './dto/login.dto';
 import { ApiBearerAuth, ApiExcludeEndpoint } from '@nestjs/swagger';
 import { GoogleAuthGuard } from './guards/google-auth.guard';
 import { Public } from './decorators/public.decorator';
+import { frontendUrl } from 'src/hr/interview';
 
 
 @Controller('auth')
@@ -82,8 +83,9 @@ async googleCallback(@Req() req, @Res() res: Response) {
     sameSite: 'lax',
   });
 
-  // ✅ Redirect without token in URL — frontend reads it from a follow-up /profile call
-  res.redirect(`${process.env.FRONTEND_URL}?token=${loginData.token}`);
+  // /profile's guard stores the token and drops it from the address bar.
+  // Only FRONTEND_URL's origin: it may or may not carry a path.
+  res.redirect(`${frontendUrl()}/profile?token=${loginData.token}`);
 }
 
 }

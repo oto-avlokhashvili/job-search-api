@@ -33,7 +33,14 @@ export function tokenMatches(token: string, id: number, nonce: string): boolean 
   return expected.length === given.length && timingSafeEqual(expected, given);
 }
 
-export const frontendUrl = () => (process.env.FRONTEND_URL || 'https://jobup.ge').replace(/\/+$/, '');
+/** The site's origin. FRONTEND_URL may carry a path (it used to point at /profile for the Google login); only the origin counts. */
+export const frontendUrl = () => {
+  try {
+    return new URL(process.env.FRONTEND_URL || '').origin;
+  } catch {
+    return 'https://jobup.ge';
+  }
+};
 export const interviewLink = (id: number, nonce: string) => `${frontendUrl()}/interview/${linkToken(id, nonce)}`;
 
 // ─── Times ─────────────────────────────────────────────────────
