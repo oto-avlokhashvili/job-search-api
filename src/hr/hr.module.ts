@@ -9,6 +9,7 @@ import { HrPipelineEvent } from 'src/Entities/hr-pipeline-event.entity';
 import { HrCandidateNote } from 'src/Entities/hr-candidate-note.entity';
 import { HrVacancy } from 'src/Entities/hr-vacancy.entity';
 import { HrInterview } from 'src/Entities/hr-interview.entity';
+import { HrGoogleAccount } from 'src/Entities/hr-google-account.entity';
 import { EmailModule } from 'src/email/email.module';
 import { CvModule } from 'src/cv/cv.module';
 import { LinkedinSearchModule } from 'src/linkedin-search/linkedin-search.module';
@@ -19,16 +20,27 @@ import { HrVacancyService } from './hr-vacancy.service';
 import { HrInterviewService, INTERVIEW_QUEUE } from './hr-interview.service';
 import { HrInterviewProcessor } from './hr-interview.processor';
 import { InterviewPublicController } from './interview-public.controller';
+import { GoogleCalendarService } from './google-calendar.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Cv, User, HrCvAccess, HrPipelineEntry, HrPipelineEvent, HrCandidateNote, HrVacancy, HrInterview]),
+    TypeOrmModule.forFeature([
+      Cv,
+      User,
+      HrCvAccess,
+      HrPipelineEntry,
+      HrPipelineEvent,
+      HrCandidateNote,
+      HrVacancy,
+      HrInterview,
+      HrGoogleAccount,
+    ]),
     BullModule.registerQueue({ name: INTERVIEW_QUEUE }),
     EmailModule,
     CvModule,
     LinkedinSearchModule,
   ],
   controllers: [HrController, InterviewPublicController],
-  providers: [HrCandidatesService, HrPipelineService, HrVacancyService, HrInterviewService, HrInterviewProcessor],
+  providers: [HrCandidatesService, HrPipelineService, HrVacancyService, HrInterviewService, HrInterviewProcessor, GoogleCalendarService],
 })
 export class HrModule {}

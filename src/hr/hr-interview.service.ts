@@ -6,16 +6,18 @@ import { In, MoreThanOrEqual, Not, Repository } from 'typeorm';
 import { User } from 'src/Entities/user.entity';
 import { Cv } from 'src/Entities/cv.entity';
 import { HrVacancy } from 'src/Entities/hr-vacancy.entity';
-import { HrInterview, InterviewStatus } from 'src/Entities/hr-interview.entity';
+import { HrInterview, InterviewFormat, InterviewStatus } from 'src/Entities/hr-interview.entity';
 import { PipelineStage } from 'src/Entities/hr-pipeline-entry.entity';
 import { PipelineEventType } from 'src/Entities/hr-pipeline-event.entity';
 import { EmailService } from 'src/email/email.service';
 import { HrPipelineService, PipelineView, toView } from './hr-pipeline.service';
+import { CalendarEvent, GoogleCalendarService } from './google-calendar.service';
 import { InterviewAnswerDto, ScheduleInterviewDto, UpdateInterviewDto } from './dto/hr-interview.dto';
 import {
   AnswerError,
   applyAnswer,
   cleanTimes,
+  frontendUrl,
   interviewLink,
   isValidStart,
   newLinkNonce,
@@ -61,6 +63,8 @@ export interface InterviewView {
   sentTo: string | null;
   respondedAt: Date | null;
   createdAt: Date;
+  /** `location` is a Google Meet link generated in the HR's calendar */
+  googleMeet: boolean;
   /** The candidate's answer page, for sharing it another way (phone, messenger) */
   link: string;
 }
@@ -105,6 +109,7 @@ export class HrInterviewService {
     @InjectRepository(HrVacancy) private readonly vacancyRepository: Repository<HrVacancy>,
     private readonly pipelineService: HrPipelineService,
     private readonly emailService: EmailService,
+    private readonly googleCalendar: GoogleCalendarService,
     @InjectQueue(INTERVIEW_QUEUE) private readonly queue: Queue,
   ) {}
 
@@ -119,7 +124,10 @@ export class HrInterviewService {
     return rows.map((iv) => this.toView(iv));
   }
 
-  /** Schedules an interview for a card, moves it to INTERVIEW and (by default) emails the invitation. */
+  /**
+   * Schedules an interview for a card, moves it to INTERVIEW and (by default) emails the invitation.
+   * With googleMeet, each interview gets its own Meet link (candidates never share a meeting).
+   */
   async schedule(hr: User, entryId: number, dto: ScheduleInterviewDto): Promise<{ interview: InterviewView; pipeline: PipelineView }> {
     const entry = await this.pipelineService.findOwned(hr.id, entryId);
     const now = new Date();
@@ -135,7 +143,7 @@ export class HrInterviewService {
     const candidate = await this.candidate(entry.cvId);
     if (send && !candidate.email) throw new BadRequestException('კანდიდატს ელ-ფოსტა არ აქვს: შეინახეთ გაგზავნის გარეშე');
 
-    const interview = await this.interviewRepository.save(
+    let interview = await this.interviewRepository.save(
       this.interviewRepository.create({
         hrUserId: hr.id,
         entryId,
@@ -152,14 +160,17 @@ export class HrInterviewService {
       }),
     );
 
+    // Don't leave an interview (or calendar event) the HR was told failed: retrying would hit "already scheduled"
     let pipeline: PipelineView;
     try {
+      // Before the email, so the invitation carries the link
+      if (dto.googleMeet && dto.format === InterviewFormat.ONLINE) interview = await this.addMeet(interview);
       pipeline =
         entry.stage === PipelineStage.INTERVIEW
           ? toView(entry)
           : await this.pipelineService.update(hr, entryId, { stage: PipelineStage.INTERVIEW });
     } catch (error) {
-      // Don't leave an interview the HR was told failed: retrying would hit "already scheduled"
+      await this.dropMeet(interview);
       await this.interviewRepository.delete(interview.id);
       throw error;
     }
@@ -182,7 +193,7 @@ export class HrInterviewService {
 
   /** Reschedule/edit, accept one of the candidate's proposed times, or cancel. */
   async update(hr: User, id: number, dto: UpdateInterviewDto): Promise<InterviewView> {
-    const interview = await this.interviewRepository.findOne({ where: { id, hrUserId: hr.id } });
+    let interview = await this.interviewRepository.findOne({ where: { id, hrUserId: hr.id } });
     if (!interview) throw new NotFoundException('Interview not found');
     if (interview.status === InterviewStatus.CANCELLED) throw new BadRequestException('გასაუბრება უკვე გაუქმებულია');
     const entry = await this.pipelineService.findOwned(hr.id, interview.entryId);
@@ -191,6 +202,7 @@ export class HrInterviewService {
 
     if (dto.cancel) {
       interview.status = InterviewStatus.CANCELLED;
+      await this.dropMeet(interview);
       const saved = await this.interviewRepository.save(interview);
       await this.pipelineService.recordEvent(entry, { type: PipelineEventType.INTERVIEW_CANCELLED, interviewAt: saved.startsAt });
       if (notify && saved.sentTo && saved.startsAt > now) await this.mailCandidate(saved, cancelledEmail);
@@ -202,6 +214,7 @@ export class HrInterviewService {
       if (!chosen || chosen <= now) throw new BadRequestException('ეს დრო აღარ არის ხელმისაწვდომი');
       Object.assign(interview, { startsAt: chosen, status: InterviewStatus.CONFIRMED, proposedTimes: [], alternatives: [], candidateNote: null });
       const saved = await this.interviewRepository.save(interview);
+      await this.syncMeet(saved);
       // Signed by the HR: "confirmed" events in the history are the candidate's own answers
       await this.pipelineService.recordEvent(entry, { type: PipelineEventType.INTERVIEW_UPDATED, interviewAt: chosen });
       if (notify) await this.mailCandidate(saved, confirmedEmail, true);
@@ -219,11 +232,23 @@ export class HrInterviewService {
     }
     if (dto.durationMin !== undefined) interview.durationMin = dto.durationMin;
     if (dto.format !== undefined) interview.format = dto.format;
-    if (dto.location !== undefined) interview.location = dto.location.trim();
     if (dto.message !== undefined) interview.message = dto.message?.trim() || null;
     if (dto.alternatives !== undefined) interview.alternatives = this.cleanAlternatives(dto.alternatives, interview.startsAt, now);
 
+    // A generated Meet link stays (its event follows the new time) until the HR turns it off or goes on site
+    const hadMeet = !!interview.googleEventId;
+    const wantsMeet = (dto.googleMeet ?? hadMeet) && interview.format === InterviewFormat.ONLINE;
+    if (hadMeet && !wantsMeet) {
+      await this.dropMeet(interview);
+      interview.location = dto.location?.trim() ?? '';
+    } else if (!hadMeet && dto.location !== undefined) {
+      interview.location = dto.location.trim();
+    }
+    // Before saving: if Google fails, nothing changes
+    if (wantsMeet && !hadMeet) interview = await this.addMeet(interview, false);
+
     let saved = await this.interviewRepository.save(interview);
+    if (hadMeet && wantsMeet) await this.syncMeet(saved);
     await this.pipelineService.recordEvent(entry, { type: PipelineEventType.INTERVIEW_UPDATED, interviewAt: saved.startsAt });
     if (notify) {
       // Also how an invitation saved without sending goes out later
@@ -270,8 +295,11 @@ export class HrInterviewService {
     }
     if (!result.changed) return this.publicView(token);
 
+    const moved = result.state.startsAt.getTime() !== interview.startsAt.getTime();
     Object.assign(interview, result.state, { respondedAt: new Date() });
     const saved = await this.interviewRepository.save(interview);
+    // Confirmed one of the HR's alternative times
+    if (moved) await this.syncMeet(saved);
     const entry = await this.pipelineService.findOwned(saved.hrUserId, saved.entryId).catch(() => null);
     const type = ANSWER_EVENT[saved.status];
     if (entry && type) {
@@ -295,6 +323,46 @@ export class HrInterviewService {
   }
 
   // ─── Helpers ──────────────────────────────────────────────────
+
+  /** Creates the interview's Google event and makes its Meet link the location. */
+  private async addMeet(interview: HrInterview, save = true): Promise<HrInterview> {
+    const { eventId, meetUrl } = await this.googleCalendar.createMeet(interview.hrUserId, await this.calendarEvent(interview));
+    Object.assign(interview, { googleEventId: eventId, location: meetUrl });
+    return save ? this.interviewRepository.save(interview) : interview;
+  }
+
+  /** Moves the Google event to the interview's current time. The link works either way, so failures only get logged. */
+  private async syncMeet(interview: HrInterview) {
+    if (!interview.googleEventId) return;
+    try {
+      await this.googleCalendar.updateEvent(interview.hrUserId, interview.googleEventId, await this.calendarEvent(interview));
+    } catch (error) {
+      this.logger.error(`Could not move the Google event of interview ${interview.id}: ${error.message}`);
+    }
+  }
+
+  /** Deletes the Google event (best effort) and forgets it. */
+  private async dropMeet(interview: HrInterview) {
+    if (!interview.googleEventId) return;
+    try {
+      await this.googleCalendar.deleteEvent(interview.hrUserId, interview.googleEventId);
+    } catch (error) {
+      this.logger.error(`Could not delete the Google event of interview ${interview.id}: ${error.message}`);
+    }
+    interview.googleEventId = null;
+  }
+
+  /** The event in the HR's own calendar: who and for what, plus where to manage it. */
+  private async calendarEvent(interview: HrInterview): Promise<CalendarEvent> {
+    const d = await this.mailData(interview);
+    const who = d.candidateName || 'კანდიდატი';
+    return {
+      summary: `გასაუბრება: ${who} · ${d.position}`,
+      description: [`კანდიდატი: ${who}${d.candidateEmail ? ` (${d.candidateEmail})` : ''}`, `Job Up: ${frontendUrl()}/hr/interviews`].join('\n'),
+      startsAt: interview.startsAt,
+      durationMin: interview.durationMin,
+    };
+  }
 
   private cleanAlternatives(values: string[] | undefined, startsAt: Date, now: Date): Date[] {
     const times = cleanTimes(values ?? [], now);
@@ -418,6 +486,7 @@ export class HrInterviewService {
       sentTo: iv.sentTo,
       respondedAt: iv.respondedAt,
       createdAt: iv.createdAt,
+      googleMeet: !!iv.googleEventId,
       link: interviewLink(iv.id, iv.linkNonce),
     };
   }

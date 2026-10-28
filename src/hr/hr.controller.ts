@@ -29,7 +29,8 @@ import { CreateNoteDto, UpdatePipelineDto } from './dto/hr-pipeline.dto';
 import { HrVacancyService } from './hr-vacancy.service';
 import { BoardQueryDto, CreateVacancyDto, UpdateVacancyDto } from './dto/hr-vacancy.dto';
 import { HrInterviewService } from './hr-interview.service';
-import { ScheduleInterviewDto, UpdateInterviewDto } from './dto/hr-interview.dto';
+import { GoogleConnectDto, ScheduleInterviewDto, UpdateInterviewDto } from './dto/hr-interview.dto';
+import { GoogleCalendarService } from './google-calendar.service';
 
 @ApiTags('HR')
 @ApiBearerAuth('bearerAuth')
@@ -42,7 +43,34 @@ export class HrController {
     private readonly hrPipelineService: HrPipelineService,
     private readonly hrVacancyService: HrVacancyService,
     private readonly hrInterviewService: HrInterviewService,
+    private readonly googleCalendarService: GoogleCalendarService,
   ) {}
+
+  @Get('google')
+  @ApiOperation({ summary: 'Whether a Google account is connected for Meet links, and which' })
+  googleStatus(@Req() req) {
+    return this.googleCalendarService.status(req.user.id);
+  }
+
+  @Post('google/connect')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Google's consent page URL; Google sends the HR back to the frontend callback page" })
+  googleConnectUrl(@Req() req) {
+    return { url: this.googleCalendarService.connectUrl(req.user.id) };
+  }
+
+  @Post('google/callback')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Finish connecting with the code Google returned (only the HR who started it can)' })
+  googleCallback(@Req() req, @Body() dto: GoogleConnectDto) {
+    return this.googleCalendarService.connect(req.user.id, dto.code, dto.state);
+  }
+
+  @Delete('google')
+  @ApiOperation({ summary: 'Disconnect Google: existing Meet links keep working' })
+  googleDisconnect(@Req() req) {
+    return this.googleCalendarService.disconnect(req.user.id);
+  }
 
   @Get('interviews')
   @ApiOperation({ summary: 'Your interviews from the last month on, soonest first' })

@@ -50,6 +50,10 @@ export class HrInterview {
   @Column({ type: 'varchar', length: 500, default: '' })
   location: string;
 
+  // The HR's Google Calendar event holding the generated Meet link (then `location` is that link)
+  @Column({ type: 'varchar', length: 255, nullable: true, default: null })
+  googleEventId: string | null;
+
   @Column({ type: 'varchar', length: 1000, nullable: true, default: null })
   message: string | null;
 

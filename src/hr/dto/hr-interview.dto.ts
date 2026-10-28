@@ -38,6 +38,11 @@ export class ScheduleInterviewDto {
   @MaxLength(500)
   location?: string;
 
+  @ApiPropertyOptional({ description: "Online: create a Google Meet link in the HR's connected calendar (replaces location)" })
+  @IsOptional()
+  @IsBoolean()
+  googleMeet?: boolean;
+
   @ApiPropertyOptional({ maxLength: 1000 })
   @IsOptional()
   @IsString()
@@ -80,6 +85,11 @@ export class UpdateInterviewDto {
   @IsString()
   @MaxLength(500)
   location?: string;
+
+  @ApiPropertyOptional({ description: 'true: create a Google Meet link if there is none; false: drop the generated one' })
+  @IsOptional()
+  @IsBoolean()
+  googleMeet?: boolean;
 
   @ApiPropertyOptional({ maxLength: 1000, nullable: true })
   @IsOptional()
@@ -136,4 +146,16 @@ export class InterviewAnswerDto {
   @ArrayMaxSize(MAX_ALTERNATIVES)
   @IsDateString({}, { each: true })
   proposedTimes?: string[];
+}
+
+export class GoogleConnectDto {
+  @ApiProperty({ description: 'The code Google added to the callback URL' })
+  @IsString()
+  @MaxLength(2000)
+  code: string;
+
+  @ApiProperty({ description: 'The state Google added to the callback URL' })
+  @IsString()
+  @MaxLength(500)
+  state: string;
 }

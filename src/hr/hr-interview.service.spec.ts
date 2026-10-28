@@ -56,6 +56,12 @@ function setup({ candidateEmail = 'ani@example.test', stage = PipelineStage.CONT
   };
   const email = { queueEmail: jest.fn() };
   const queue = { add: jest.fn(async () => ({})) };
+  let events = 0;
+  const google = {
+    createMeet: jest.fn(async () => ({ eventId: `ev${++events}`, meetUrl: `https://meet.google.com/abc-defg-hi${events}` })),
+    updateEvent: jest.fn(async () => undefined),
+    deleteEvent: jest.fn(async () => undefined),
+  };
   const service = new HrInterviewService(
     interviews as any,
     cvs as any,
@@ -63,10 +69,11 @@ function setup({ candidateEmail = 'ani@example.test', stage = PipelineStage.CONT
     vacancies as any,
     pipeline as any,
     email as any,
+    google as any,
     queue as any,
   );
   const draft = { startsAt: inDays(2), durationMin: 45, format: InterviewFormat.ONLINE, location: 'https://meet.example/x' };
-  return { service, interviews, pipeline, email, queue, draft, token: () => linkToken(rows[0].id, rows[0].linkNonce) };
+  return { service, interviews, pipeline, email, queue, google, draft, token: () => linkToken(rows[0].id, rows[0].linkNonce) };
 }
 
 describe('HrInterviewService', () => {
@@ -158,6 +165,45 @@ describe('HrInterviewService', () => {
     expect(email.queueEmail).toHaveBeenCalledTimes(1);
     expect(email.queueEmail.mock.calls[0][1]).toContain('გაუქმდა');
     await expect(service.answer(token(), { action: 'confirm' })).rejects.toThrow('გაუქმებულია');
+  });
+
+  it('Google Meet: each interview gets its own link, emailed to the candidate; the event follows reschedules and cancels', async () => {
+    const { service, email, google, draft } = setup();
+    const { interview } = await service.schedule(hr, 3, { ...draft, location: '', googleMeet: true });
+    expect(interview).toMatchObject({ googleMeet: true, location: 'https://meet.google.com/abc-defg-hi1' });
+    expect(google.createMeet).toHaveBeenCalledWith(7, expect.objectContaining({ summary: 'გასაუბრება: Ani Ts · Graphic Designer', durationMin: 45 }));
+    expect(email.queueEmail.mock.calls[0][2]).toContain('https://meet.google.com/abc-defg-hi1');
+
+    const later = inDays(3);
+    const moved = await service.update(hr, 1, { startsAt: later, location: 'ignored' });
+    expect(moved.location).toBe('https://meet.google.com/abc-defg-hi1');
+    expect(google.updateEvent).toHaveBeenCalledWith(7, 'ev1', expect.objectContaining({ startsAt: new Date(later) }));
+
+    await service.update(hr, 1, { cancel: true });
+    expect(google.deleteEvent).toHaveBeenCalledWith(7, 'ev1');
+
+    // The next interview gets a meeting of its own
+    const next = await service.schedule(hr, 3, { ...draft, googleMeet: true });
+    expect(next.interview.location).toBe('https://meet.google.com/abc-defg-hi2');
+  });
+
+  it('Google Meet: if Google fails nothing is saved; a later failed card move removes the event too; on site drops it', async () => {
+    const { service, interviews, pipeline, google, email, draft } = setup();
+    google.createMeet.mockRejectedValueOnce(new BadRequestException('Google ანგარიში ხელახლა დააკავშირეთ'));
+    await expect(service.schedule(hr, 3, { ...draft, googleMeet: true })).rejects.toThrow('ხელახლა');
+    expect(interviews.rows).toHaveLength(0);
+    expect(email.queueEmail).not.toHaveBeenCalled();
+
+    pipeline.update.mockRejectedValueOnce(new Error('db down'));
+    await expect(service.schedule(hr, 3, { ...draft, googleMeet: true })).rejects.toThrow('db down');
+    expect(google.deleteEvent).toHaveBeenCalledWith(7, 'ev1');
+    expect(interviews.rows).toHaveLength(0);
+
+    // Without googleMeet nothing touches Google; switching on site later drops a generated link
+    await service.schedule(hr, 3, { ...draft, googleMeet: true });
+    const onsite = await service.update(hr, interviews.rows[0].id, { format: InterviewFormat.ONSITE, location: 'Tbilisi, Rustaveli 1' });
+    expect(onsite).toMatchObject({ googleMeet: false, location: 'Tbilisi, Rustaveli 1' });
+    expect(google.deleteEvent).toHaveBeenLastCalledWith(7, 'ev2');
   });
 
   it('a reminder for an old time (rescheduled since) is ignored', async () => {
