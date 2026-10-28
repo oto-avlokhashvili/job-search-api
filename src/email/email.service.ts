@@ -8,6 +8,12 @@ import { AiMatchedJobsService } from '../ai-matched-jobs/ai-matched-jobs.service
 import { SentJobsService } from '../sent-jobs/sent-jobs.service';
 import { EntitlementService } from '../subscription/entitlement.service';
 
+/** Optional parts of a transactional email. Attachments are base64 (small files only: they travel in the queue job). */
+export interface EmailExtras {
+  replyTo?: { email: string; name?: string };
+  attachments?: { name: string; content: string }[];
+}
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
@@ -38,6 +44,7 @@ export class EmailService {
     html: string,
     senderEmail?: string,
     senderName?: string,
+    extra: EmailExtras = {},
   ) {
     let fromEmail = senderEmail || this.configService.get<string>('BREVO_SENDER_EMAIL') || 'jobup.ge@gmail.com';
     if (fromEmail === 'noreply@jobsearch.ge') {
@@ -53,6 +60,8 @@ export class EmailService {
         to: [{ email: to }],
         subject,
         htmlContent: html,
+        ...(extra.replyTo && { replyTo: extra.replyTo }),
+        ...(extra.attachments?.length && { attachment: extra.attachments }),
       });
       return response;
     } catch (err: any) {
@@ -70,10 +79,11 @@ export class EmailService {
     html: string,
     senderEmail?: string,
     senderName?: string,
+    extra?: EmailExtras,
   ) {
     return await this.emailQueue.add(
       'send-email',
-      { to, subject, html, senderEmail, senderName },
+      { to, subject, html, senderEmail, senderName, extra },
       {
         attempts: 3,
         backoff: { type: 'exponential', delay: 2000 },

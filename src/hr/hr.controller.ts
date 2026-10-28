@@ -28,6 +28,8 @@ import { HrPipelineService } from './hr-pipeline.service';
 import { CreateNoteDto, UpdatePipelineDto } from './dto/hr-pipeline.dto';
 import { HrVacancyService } from './hr-vacancy.service';
 import { BoardQueryDto, CreateVacancyDto, UpdateVacancyDto } from './dto/hr-vacancy.dto';
+import { HrInterviewService } from './hr-interview.service';
+import { ScheduleInterviewDto, UpdateInterviewDto } from './dto/hr-interview.dto';
 
 @ApiTags('HR')
 @ApiBearerAuth('bearerAuth')
@@ -39,7 +41,26 @@ export class HrController {
     private readonly hrCandidatesService: HrCandidatesService,
     private readonly hrPipelineService: HrPipelineService,
     private readonly hrVacancyService: HrVacancyService,
+    private readonly hrInterviewService: HrInterviewService,
   ) {}
+
+  @Get('interviews')
+  @ApiOperation({ summary: 'Your interviews from the last month on, soonest first' })
+  listInterviews(@Req() req) {
+    return this.hrInterviewService.list(req.user);
+  }
+
+  @Post('board/:entryId/interviews')
+  @ApiOperation({ summary: 'Schedule an interview for a card (moves it to INTERVIEW, emails the invitation unless send=false)' })
+  scheduleInterview(@Req() req, @Param('entryId', ParseIntPipe) entryId: number, @Body() dto: ScheduleInterviewDto) {
+    return this.hrInterviewService.schedule(req.user, entryId, dto);
+  }
+
+  @Patch('interviews/:id')
+  @ApiOperation({ summary: "Edit or reschedule, accept a candidate's proposed time, or cancel" })
+  updateInterview(@Req() req, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateInterviewDto) {
+    return this.hrInterviewService.update(req.user, id, dto);
+  }
 
   @Get('vacancies')
   @ApiOperation({ summary: 'Your vacancies with candidate counts per stage, plus the count not in any vacancy' })

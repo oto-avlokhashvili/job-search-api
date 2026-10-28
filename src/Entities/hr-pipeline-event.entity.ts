@@ -4,6 +4,13 @@ import { PipelineStage } from './hr-pipeline-entry.entity';
 export enum PipelineEventType {
   STAGE_CHANGED = 'STAGE_CHANGED',
   RATING_CHANGED = 'RATING_CHANGED',
+  // Interview invitation and the candidate's answers
+  INTERVIEW_SCHEDULED = 'INTERVIEW_SCHEDULED',
+  INTERVIEW_UPDATED = 'INTERVIEW_UPDATED',
+  INTERVIEW_CONFIRMED = 'INTERVIEW_CONFIRMED',
+  INTERVIEW_DECLINED = 'INTERVIEW_DECLINED',
+  INTERVIEW_RESCHEDULE_REQUESTED = 'INTERVIEW_RESCHEDULE_REQUESTED',
+  INTERVIEW_CANCELLED = 'INTERVIEW_CANCELLED',
 }
 
 /** Candidate history on the board; shown together with notes in the activity timeline. */
@@ -37,6 +44,13 @@ export class HrPipelineEvent {
 
   @Column({ type: 'smallint', nullable: true, default: null })
   rating: number | null;
+
+  // Interview events: the interview time at that moment, and the candidate's note
+  @Column({ type: 'timestamptz', nullable: true, default: null })
+  interviewAt: Date | null;
+
+  @Column({ type: 'varchar', length: 500, nullable: true, default: null })
+  note: string | null;
 
   @CreateDateColumn()
   createdAt: Date;

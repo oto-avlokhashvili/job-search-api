@@ -1,7 +1,7 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
-import { EmailService } from './email.service';
+import { EmailExtras, EmailService } from './email.service';
 
 export interface SendEmailJobData {
   to: string;
@@ -9,6 +9,7 @@ export interface SendEmailJobData {
   html: string;
   senderEmail?: string;
   senderName?: string;
+  extra?: EmailExtras;
 }
 
 export interface SendUserAlertJobData {
@@ -37,6 +38,7 @@ export class EmailProcessor extends WorkerHost {
           data.html,
           data.senderEmail,
           data.senderName,
+          data.extra,
         );
         this.logger.log(`[EmailProcessor] Successfully sent email to ${data.to} (job: ${job.id})`);
         return result;

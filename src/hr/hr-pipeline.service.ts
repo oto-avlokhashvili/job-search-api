@@ -41,6 +41,8 @@ export interface ActivityItem {
   toStage?: PipelineStage | null;
   rejectionReason?: string | null;
   rating?: number | null;
+  interviewAt?: Date | null;
+  note?: string | null;
 }
 
 const MAX_BOARD_ENTRIES = 500;
@@ -211,6 +213,8 @@ export class HrPipelineService implements OnModuleInit {
           toStage: e.toStage,
           rejectionReason: e.rejectionReason,
           rating: e.rating,
+          interviewAt: e.interviewAt,
+          note: e.note,
         }),
       ),
     ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -244,7 +248,12 @@ export class HrPipelineService implements OnModuleInit {
     return { ...entry, vacancyId: null, position: null };
   }
 
-  private async findOwned(hrUserId: number, entryId: number): Promise<HrPipelineEntry> {
+  /** History entry for a card, e.g. an interview update (written by the interview service). */
+  async recordEvent(entry: HrPipelineEntry, event: Partial<HrPipelineEvent> & { type: PipelineEventType }) {
+    await this.eventRepository.insert({ ...event, hrUserId: entry.hrUserId, cvId: entry.cvId, vacancyId: entry.vacancyId });
+  }
+
+  async findOwned(hrUserId: number, entryId: number): Promise<HrPipelineEntry> {
     const entry = await this.entryRepository.findOne({ where: { id: entryId, hrUserId } });
     if (!entry) throw new NotFoundException('Candidate is not on your board');
     return entry;
