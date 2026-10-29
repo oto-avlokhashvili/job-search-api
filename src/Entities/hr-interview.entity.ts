@@ -46,6 +46,10 @@ export class HrInterview {
   @Column({ type: 'timestamptz', nullable: true, default: null })
   inviteExpiresAt: Date | null;
 
+  // The position the interview is for, as the HR set it on an invitation (else the vacancy's title)
+  @Column({ type: 'varchar', length: 150, nullable: true, default: null })
+  position: string | null;
+
   @Column({ type: 'int', nullable: true, default: null })
   vacancyId: number | null;
 

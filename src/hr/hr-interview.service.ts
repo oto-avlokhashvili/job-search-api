@@ -70,6 +70,8 @@ export interface InterviewView {
   inviteeEmail: string | null;
   /** Invitation link nobody joined through yet: works until then */
   inviteExpiresAt: Date | null;
+  /** Set on invitations: the position the HR invited for */
+  position: string | null;
   startsAt: Date;
   durationMin: number;
   format: HrInterview['format'];
@@ -230,12 +232,17 @@ export class HrInterviewService {
     const alternatives = this.cleanAlternatives(dto.alternatives, startsAt, now);
 
     let vacancyId: number | null = null;
+    let position = dto.position?.replace(/\s+/g, ' ').trim() || '';
     if (dto.vacancyId !== undefined && dto.vacancyId !== null) {
       const vacancy = await this.vacancyRepository.findOne({ where: { id: dto.vacancyId, hrUserId: hr.id } });
       if (!vacancy) throw new NotFoundException('Vacancy not found');
       if (vacancy.status !== HrVacancyStatus.OPEN) throw new BadRequestException('ვაკანსია დახურულია');
       vacancyId = vacancy.id;
+      // On a vacancy's board the position is that vacancy, unless the HR typed another
+      position ||= vacancy.title;
     }
+    // The candidate's page and emails name it; without a vacancy nothing else would
+    if (!position) throw new BadRequestException('მიუთითეთ პოზიცია');
 
     let interview = await this.interviewRepository.save(
       this.interviewRepository.create({
@@ -246,6 +253,7 @@ export class HrInterviewService {
         inviteeName: null,
         inviteeEmail: null,
         inviteExpiresAt: new Date(now.getTime() + INVITE_TTL_MS),
+        position,
         startsAt,
         durationMin: dto.durationMin ?? 45,
         format: dto.format,
@@ -602,7 +610,7 @@ export class HrInterviewService {
       id: interview.id,
       candidateName: candidate.name,
       candidateEmail: candidate.email,
-      position: vacancy?.title || candidate.role || 'გასაუბრება',
+      position: interview.position || vacancy?.title || candidate.role || 'გასაუბრება',
       company: hr?.companyName ?? '',
       hrName: hr ? `${hr.firstName} ${hr.lastName}`.trim() : '',
       hrEmail: hr?.email ?? '',
@@ -629,6 +637,7 @@ export class HrInterviewService {
       inviteeName: iv.inviteeName,
       inviteeEmail: iv.inviteeEmail,
       inviteExpiresAt: iv.cvId === null ? iv.inviteExpiresAt : null,
+      position: iv.position,
       startsAt: iv.startsAt,
       durationMin: iv.durationMin,
       format: iv.format,

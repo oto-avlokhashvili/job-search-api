@@ -272,6 +272,21 @@ describe('HrInterviewService invitations (candidate not on the platform yet)', (
     expect(email.queueEmail).not.toHaveBeenCalled();
   });
 
+  it("position: the vacancy's title unless typed; without a vacancy it's required; the candidate's page shows it", async () => {
+    const { service, token, interviews } = setup();
+    expect((await service.invite(hr, invite())).position).toBe('Graphic Designer');
+    expect((await service.publicView(token())).position).toBe('Graphic Designer');
+
+    interviews.rows.length = 0;
+    const typed = await service.invite(hr, invite({ position: '  Senior   Designer ' }));
+    expect(typed.position).toBe('Senior Designer');
+    expect((await service.publicView(token())).position).toBe('Senior Designer');
+
+    await expect(service.invite(hr, invite({ vacancyId: undefined }))).rejects.toThrow('პოზიცია');
+    await expect(service.invite(hr, invite({ vacancyId: undefined, position: ' ' }))).rejects.toThrow('პოზიცია');
+    expect((await service.invite(hr, invite({ vacancyId: undefined, position: 'QA' }))).position).toBe('QA');
+  });
+
   it('needs an open vacancy of this HR', async () => {
     const closed = setup();
     (closed.service as any).vacancyRepository.findOne.mockResolvedValue({ id: 4, hrUserId: 7, status: 'CLOSED' });

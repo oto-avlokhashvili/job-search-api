@@ -177,6 +177,12 @@ export class InviteInterviewDto extends ScheduleInterviewDto {
   @IsOptional()
   @IsInt()
   vacancyId?: number;
+
+  @ApiPropertyOptional({ maxLength: 150, description: "Required without a vacancy; with one it defaults to the vacancy's title" })
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  position?: string;
 }
 
 const toBool = ({ value }: { value: unknown }) => value === true || value === 'true' || value === '1' || value === 1;
