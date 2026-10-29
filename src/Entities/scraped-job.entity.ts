@@ -40,6 +40,10 @@ export class ScrapedJobEntity {
   @Column({ type: 'text', nullable: true })
   description: string | null;
 
+  // Logo URL the source shows for the company (for jobs.ge: the company page holding it)
+  @Column({ type: 'text', nullable: true, default: null })
+  companyLogo: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 }

@@ -1,3 +1,4 @@
+import { CompanyLogoService } from 'src/companies/company-logo.service';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { JobService, buildWordBoundaryRegex, buildPhraseRegex, buildSalaryRegex, parseSearchQuery, getCityNameVariants } from './job.service';
@@ -75,6 +76,10 @@ describe('JobService', () => {
         {
           provide: LinkedinScraperService,
           useValue: {},
+        },
+        {
+          provide: CompanyLogoService,
+          useValue: { register: jest.fn().mockResolvedValue(undefined) },
         },
       ],
     }).compile();

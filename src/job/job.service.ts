@@ -13,6 +13,9 @@ import { MyjobsGeScraperService } from '../scrapers/myjobs-ge.scraper';
 import { LinkedinScraperService, LinkedinScraperOptions } from '../scrapers/linkedin.scraper';
 import { countJobsByPortal } from './portal-counts';
 import * as crypto from 'crypto';
+import { CompanyLogoService } from 'src/companies/company-logo.service';
+import { companyKey } from 'src/companies/company-key';
+import { LogoCandidate } from 'src/companies/company-logo';
 
 export interface LinkedinDuplicateCheckResult {
   nonDuplicatedJobs: JobData[];
@@ -202,7 +205,8 @@ export class JobService {
     @InjectRepository(JobEntity) 
     private readonly jobRepo: Repository<JobEntity>,
     @InjectRepository(ScrapedJobEntity)
-    private readonly scrapedJobRepo: Repository<ScrapedJobEntity>
+    private readonly scrapedJobRepo: Repository<ScrapedJobEntity>,
+    private readonly companyLogoService: CompanyLogoService,
   ) {
 
   }
@@ -216,7 +220,8 @@ export class JobService {
     }
     createJobDto.page ??= 1;
     try {
-      const job = await this.jobRepo.save(createJobDto);
+      const job = await this.jobRepo.save({ ...createJobDto, companyKey: companyKey(createJobDto.company) });
+      await this.companyLogoService.register([createJobDto.company], []).catch(() => {});
       this.citiesCache = null; // Invalidate cache
       return job;
     } catch (err: any) {
@@ -249,7 +254,7 @@ export class JobService {
         const sig = `${normalizedVacancy}|${normalizedCompany}|${normalizedLocation}`;
         dto.fingerprint = crypto.createHash('md5').update(sig).digest('hex');
       }
-      return dto;
+      return { ...dto, companyKey: companyKey(dto.company) };
     });
 
     const chunkSize = 500;
@@ -866,6 +871,7 @@ export class JobService {
           deadline: job.deadline,
           page: job.page,
           description: job.description || null,
+          companyLogo: job.companyLogo || null,
         })),
       );
     }
@@ -900,10 +906,18 @@ export class JobService {
 
     const perSource: MergeSourceResult[] = [];
     let totalInserted = 0;
+    // Every company seen in this run and the logos the sources show for them (duplicates included:
+    // a job dropped as a duplicate can still bring a better logo)
+    const companies: string[] = [];
+    const logoCandidates: LogoCandidate[] = [];
 
     for (const source of SCRAPE_SOURCE_PRIORITY) {
       const staged = await this.scrapedJobRepo.find({ where: { runId, source } });
       if (staged.length === 0) continue;
+      for (const row of staged) {
+        companies.push(row.company);
+        if (row.companyLogo) logoCandidates.push({ company: row.company, source, url: row.companyLogo });
+      }
 
       let duplicatesRemoved = 0;
       const byFingerprint = new Map<string, CreateJobDto>();
@@ -949,6 +963,11 @@ export class JobService {
       totalInserted += uniqueJobs.length;
       perSource.push({ source, staged: staged.length, duplicatesRemoved, inserted: uniqueJobs.length });
     }
+
+    // Logos must never fail a merge
+    await this.companyLogoService
+      .register(companies, logoCandidates)
+      .catch((error) => this.logger.error(`Company logos after run ${runId} failed: ${error.message}`));
 
     await this.scrapedJobRepo.delete({ runId });
     this.logger.log(`Merge for run ${runId} done: ${JSON.stringify(perSource)}`);

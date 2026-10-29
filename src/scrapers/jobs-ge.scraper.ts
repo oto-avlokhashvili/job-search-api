@@ -11,6 +11,8 @@ export interface JobData {
   deadline: string;
   page: number;
   description?: string;
+  /** Company logo URL from the source (jobs.ge: the company page that shows it) */
+  companyLogo?: string;
 }
 
 export interface ScraperOptions {
@@ -219,6 +221,9 @@ export class JobsGeScraperService {
           const jobTitleEl = $(cells[1]).find('a.vip').first();
           const jobLocationRaw = $(cells[1]).find('i').first().text();
           const companyEl = $(cells[3]).find('a').first();
+          // The row only has a tiny icon; the company page has the 100px logo
+          const hasLogo = $(elem).find('img[src*="/data/clients/logo"]').length > 0;
+          const companyHref = companyEl.attr('href');
           const publishEl = $(cells[4]);
           const deadlineEl = $(cells[5]);
 
@@ -261,6 +266,7 @@ export class JobsGeScraperService {
                   deadline,
                   page: currentPage,
                   description: '',
+                  companyLogo: hasLogo && companyHref ? new URL(companyHref, this.baseUrl).toString() : undefined,
                 });
               }
             }

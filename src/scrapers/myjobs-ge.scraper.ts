@@ -135,6 +135,10 @@ export class MyjobsGeScraperService {
               deadline: deadline.trim(),
               page: currentPage,
               description,
+              // The API only says a logo exists; the site builds its URL from the company id
+              companyLogo: item.company?.has_logo
+                ? `https://static.tnet.ge/myjobs/company/${item.company.id}.jpg?v=${item.company.logo_version ?? 1}`
+                : undefined,
             });
           }
         }

@@ -138,6 +138,7 @@ export class AworkGeScraperService {
               deadline: deadline.trim(),
               page: currentPage,
               description,
+              companyLogo: (item.brand?.image ?? item.business?.image)?.urls?.original || undefined,
             });
           }
         });

@@ -8,14 +8,16 @@ import { HrGeScraperService } from '../scrapers/hr-ge-scraper.service';
 import { AworkGeScraperService } from '../scrapers/awork-ge.scraper';
 import { MyjobsGeScraperService } from '../scrapers/myjobs-ge.scraper';
 import { LinkedinScraperService } from '../scrapers/linkedin.scraper';
+import { CompanyLogoService } from 'src/companies/company-logo.service';
 
 describe('JobService.mergeStagedJobs', () => {
   let service: JobService;
   let jobRepo: { find: jest.Mock };
   let scrapedJobRepo: { find: jest.Mock; delete: jest.Mock };
   let insertMany: jest.SpyInstance;
+  let logos: { register: jest.Mock };
 
-  const row = (source: string, vacancy: string, company: string, location = 'თბილისი', description = '') => ({
+  const row = (source: string, vacancy: string, company: string, location = 'თბილისი', description = '', companyLogo: string | null = null) => ({
     runId: 'run1',
     source,
     vacancy,
@@ -26,6 +28,7 @@ describe('JobService.mergeStagedJobs', () => {
     deadline: '',
     page: 1,
     description,
+    companyLogo,
   });
 
   const stage = (rows: ReturnType<typeof row>[]) =>
@@ -34,6 +37,7 @@ describe('JobService.mergeStagedJobs', () => {
   beforeEach(async () => {
     jobRepo = { find: jest.fn().mockResolvedValue([]) };
     scrapedJobRepo = { find: jest.fn(), delete: jest.fn().mockResolvedValue(undefined) };
+    logos = { register: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -45,6 +49,7 @@ describe('JobService.mergeStagedJobs', () => {
         { provide: AworkGeScraperService, useValue: {} },
         { provide: MyjobsGeScraperService, useValue: {} },
         { provide: LinkedinScraperService, useValue: {} },
+        { provide: CompanyLogoService, useValue: logos },
       ],
     }).compile();
 
@@ -125,6 +130,30 @@ describe('JobService.mergeStagedJobs', () => {
     const inserted = insertMany.mock.calls.flatMap((c) => c[0]);
     expect(inserted).toHaveLength(1);
     expect(inserted[0].description).toBe('a much longer description');
+  });
+
+  it('reports every company and its logos to the logo service, duplicates included', async () => {
+    stage([
+      row('hrge', 'Sales Manager', 'Aldagi', 'თბილისი', '', 'https://cf/a.png'),
+      row('awork', 'Sales Manager', 'ALDAGI', 'თბილისი', '', 'https://awork/a.jpg'),
+      row('jobsge', 'Cashier', 'Shop'),
+    ]);
+
+    await service.mergeStagedJobs('run1');
+
+    const [companies, candidates] = logos.register.mock.calls[0];
+    expect(companies).toEqual(['Aldagi', 'Shop', 'ALDAGI']);
+    // The awork row was a duplicate job, but its (better) logo still counts
+    expect(candidates).toEqual([
+      { company: 'Aldagi', source: 'hrge', url: 'https://cf/a.png' },
+      { company: 'ALDAGI', source: 'awork', url: 'https://awork/a.jpg' },
+    ]);
+  });
+
+  it('still merges when the logo step fails', async () => {
+    logos.register.mockRejectedValue(new Error('redis down'));
+    stage([row('hrge', 'Cashier', 'Shop')]);
+    await expect(service.mergeStagedJobs('run1')).resolves.toMatchObject({ totalInserted: 1 });
   });
 
   it('cleans up staged rows for the run after merging', async () => {

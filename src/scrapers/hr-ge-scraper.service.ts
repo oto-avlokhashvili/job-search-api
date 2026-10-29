@@ -134,6 +134,7 @@ export class HrGeScraperService {
               deadline: deadline.trim(),
               page: pageCount,
               description: description.trim(),
+              companyLogo: item.isWithLogo && item.logoFilename ? String(item.logoFilename) : undefined,
             });
           }
         });

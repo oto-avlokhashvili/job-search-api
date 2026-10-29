@@ -246,6 +246,11 @@ export class LinkedinScraperService {
             locationStr = 'საქართველო';
           }
 
+          // Lazy-loaded card image; only real company logos (not LinkedIn's gray placeholder)
+          const logoUrl = $el.find('img').first().attr('data-delayed-url') || '';
+          const companyLogo =
+            logoUrl.startsWith('https://media.licdn.com/') && logoUrl.includes('company-logo') ? logoUrl : undefined;
+
           const timeEl = $el.find('time');
           const datetimeAttr = timeEl.attr('datetime');
           const timeText = timeEl.text().trim();
@@ -262,6 +267,7 @@ export class LinkedinScraperService {
               deadline,
               page: currentPage,
               description: undefined,
+              companyLogo,
             });
             pageJobsCount++;
           }

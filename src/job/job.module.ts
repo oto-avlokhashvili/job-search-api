@@ -9,6 +9,7 @@ import { ScrapersModule } from '../scrapers/scrapers.module';
 import { ENRICH_QUEUE, SCRAPE_FLOW, SCRAPE_QUEUE, ScrapeQueueService } from './scrape-queue.service';
 import { ScrapeProcessor } from './scrape.processor';
 import { EnrichProcessor } from './enrich.processor';
+import { CompaniesModule } from '../companies/companies.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { EnrichProcessor } from './enrich.processor';
     BullModule.registerQueue({ name: SCRAPE_QUEUE }, { name: ENRICH_QUEUE }),
     BullModule.registerFlowProducer({ name: SCRAPE_FLOW }),
     forwardRef(() => ScrapersModule),
+    CompaniesModule,
   ],
   controllers: [JobController],
   providers: [JobService, ScrapeQueueService, ScrapeProcessor, EnrichProcessor],
