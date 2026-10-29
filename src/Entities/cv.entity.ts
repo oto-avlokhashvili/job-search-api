@@ -56,6 +56,16 @@ export class Cv {
   @Column({ type: 'timestamp', nullable: true, default: null })
   consentGivenAt: Date | null;
 
+  // A record an HR added by hand (name and position, no file): only that HR's board shows it,
+  // it never appears in the candidate search
+  @Column({ type: 'int', nullable: true, default: null })
+  @Index()
+  addedByHrId: number | null;
+
+  // Such a record's position as the HR typed it (there's no AI summary without a file)
+  @Column({ type: 'varchar', length: 150, nullable: true, default: null })
+  manualPosition: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

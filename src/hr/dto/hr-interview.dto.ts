@@ -1,12 +1,15 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsDateString,
+  IsEmail,
   IsEnum,
   IsIn,
   IsInt,
+  IsNotEmpty,
   IsOptional,
   IsString,
   Max,
@@ -116,6 +119,11 @@ export class UpdateInterviewDto {
   @IsBoolean()
   cancel?: boolean;
 
+  @ApiPropertyOptional({ description: 'Invitation nobody joined yet: a new link, valid for another day (the old one stops working)' })
+  @IsOptional()
+  @IsBoolean()
+  renewLink?: boolean;
+
   @ApiPropertyOptional({ default: true, description: 'Email the candidate about the change' })
   @IsOptional()
   @IsBoolean()
@@ -158,4 +166,78 @@ export class GoogleConnectDto {
   @IsString()
   @MaxLength(500)
   state: string;
+}
+
+/**
+ * Interview invitation as a link (valid for a day, for one person): whoever opens it gives their details
+ * and CV when accepting. The HR shares the link themselves; nothing is emailed (`send` is ignored).
+ */
+export class InviteInterviewDto extends ScheduleInterviewDto {
+  @ApiPropertyOptional({ description: 'Vacancy board the candidate joins; omit for the main board only' })
+  @IsOptional()
+  @IsInt()
+  vacancyId?: number;
+}
+
+const toBool = ({ value }: { value: unknown }) => value === true || value === 'true' || value === '1' || value === 1;
+// Multipart sends the list as a JSON string (or repeated fields)
+const toList = ({ value }: { value: unknown }) => {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [value];
+  } catch {
+    return [value];
+  }
+};
+
+/** An invited candidate's answer with their details and CV (multipart/form-data, the CV in `file`). */
+export class InterviewJoinDto {
+  @ApiProperty({ enum: ['confirm', 'reschedule'] })
+  @IsIn(['confirm', 'reschedule'])
+  action: 'confirm' | 'reschedule';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(MAX_ALTERNATIVES - 1)
+  slot?: number;
+
+  @ApiPropertyOptional({ maxLength: 500 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+
+  @ApiPropertyOptional({ type: [String], description: 'JSON array of ISO times' })
+  @IsOptional()
+  @Transform(toList)
+  @IsArray()
+  @ArrayMaxSize(MAX_ALTERNATIVES)
+  @IsDateString({}, { each: true })
+  proposedTimes?: string[];
+
+  @ApiProperty({ maxLength: 150 })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(150)
+  fullName: string;
+
+  @ApiProperty()
+  @IsEmail()
+  @MaxLength(255)
+  email: string;
+
+  @ApiProperty({ maxLength: 50 })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(50)
+  phoneNumber: string;
+
+  @ApiProperty({ description: 'Consent to store the CV and share it with the inviting HR' })
+  @Transform(toBool)
+  @IsBoolean()
+  consent: boolean;
 }

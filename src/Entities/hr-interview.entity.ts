@@ -16,6 +16,7 @@ export enum InterviewStatus {
 /**
  * An interview an HR scheduled for one board card. The candidate answers through a link
  * (no account needed): confirm, decline, or ask for another time.
+ * An invitation to someone not on the platform yet has no card until they accept with their CV.
  */
 @Entity('hr_interviews')
 @Index(['hrUserId', 'startsAt'])
@@ -27,12 +28,23 @@ export class HrInterview {
   @Column()
   hrUserId: number;
 
-  // The board card (CV + vacancy) this interview is for
-  @Column()
-  entryId: number;
+  // The board card (CV + vacancy) this interview is for; null while an invitee hasn't joined
+  @Column({ type: 'int', nullable: true, default: null })
+  entryId: number | null;
 
-  @Column()
-  cvId: number;
+  @Column({ type: 'int', nullable: true, default: null })
+  cvId: number | null;
+
+  // Invitation to a new candidate: who it was sent to, until their own CV takes over
+  @Column({ type: 'varchar', length: 150, nullable: true, default: null })
+  inviteeName: string | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true, default: null })
+  inviteeEmail: string | null;
+
+  // Invitation link: one person can join through it until then (the HR can issue a new one)
+  @Column({ type: 'timestamptz', nullable: true, default: null })
+  inviteExpiresAt: Date | null;
 
   @Column({ type: 'int', nullable: true, default: null })
   vacancyId: number | null;

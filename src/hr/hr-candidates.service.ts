@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, In, Repository } from 'typeorm';
 import { Cv } from 'src/Entities/cv.entity';
 import { User } from 'src/Entities/user.entity';
-import { HrCvAccess, HrCvAccessAction } from 'src/Entities/hr-cv-access.entity';
+import { CONTACT_ACCESS, HrCvAccess, HrCvAccessAction } from 'src/Entities/hr-cv-access.entity';
 import { UserRole } from 'src/enums/user-role.enum';
 import { HrVacancyStatus } from 'src/Entities/hr-vacancy.entity';
 import { R2StorageService } from 'src/cv/r2-storage.service';
@@ -11,6 +11,7 @@ import { PublicCvLimitsService } from 'src/cv/public-cv-limits.service';
 import { LinkedinSearchService } from 'src/linkedin-search/linkedin-search.service';
 import { LinkedinSearchDto } from 'src/linkedin-search/dto/linkedin-search.dto';
 import { HrCandidateSearchDto } from './dto/hr-candidate-search.dto';
+import { CreateManualCandidateDto } from './dto/hr-vacancy.dto';
 import { scoreCvForCriteria } from './candidate-score';
 import { BoardFilter, HrPipelineService, PipelineView, toView, VacancyMembership } from './hr-pipeline.service';
 import { HrVacancyService } from './hr-vacancy.service';
@@ -47,6 +48,8 @@ export interface HrCandidate {
   contact: CandidateContact | null;
   /** This HR's vacancies the CV is in (unlocked CVs only). */
   vacancies: VacancyMembership[];
+  /** Added by hand by this HR: name and position only, no file or AI summary */
+  manual: boolean;
 }
 
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, '\\$&');
@@ -86,6 +89,8 @@ export class HrCandidatesService {
     const cvs = await this.cvRepository
       .createQueryBuilder('cv')
       .where('cv.summary IS NOT NULL')
+      // HR-added records are private to their HR (they have no summary either; this is the rule itself)
+      .andWhere('cv.addedByHrId IS NULL')
       .andWhere(
         new Brackets((qb) =>
           keywords.forEach((k, i) => qb.orWhere(`cv.summary::text ILIKE :k${i}`, { [`k${i}`]: `%${escapeLike(k)}%` })),
@@ -119,7 +124,7 @@ export class HrCandidatesService {
    * a new one counts toward the monthly quota (admins are not limited).
    */
   async unlock(hr: User, cvId: number): Promise<HrCandidate> {
-    const cv = await this.findCv(cvId);
+    const cv = await this.findCv(hr.id, cvId);
 
     if (!(await this.isUnlocked(hr.id, cvId))) {
       if (hr.role !== UserRole.ADMIN && (await this.unlocksThisMonth(hr.id)) >= HR_CV_UNLOCKS_PER_MONTH) {
@@ -149,12 +154,54 @@ export class HrCandidatesService {
     const entry = await this.pipelineService.addToVacancy(hr.id, vacancyId, cvId);
     await this.vacancyService.touch(vacancyId);
 
-    const [card] = await this.toCards(hr.id, [await this.findCv(cvId)]);
+    const [card] = await this.toCards(hr.id, [await this.findCv(hr.id, cvId)]);
+    return { ...card, pipeline: toView(entry) };
+  }
+
+  /**
+   * Adds someone by hand (name and position, no CV file): a private record on this HR's main board,
+   * and on a vacancy's board when one is given. No quota, never in the candidate search.
+   */
+  async addManual(hr: User, dto: CreateManualCandidateDto): Promise<HrCandidate & { pipeline: PipelineView }> {
+    let vacancyId: number | null = null;
+    let position = dto.position?.trim() || '';
+    if (dto.vacancyId !== undefined && dto.vacancyId !== null) {
+      const vacancy = await this.vacancyService.findOwned(hr.id, dto.vacancyId);
+      if (vacancy.status !== HrVacancyStatus.OPEN) throw new BadRequestException('ვაკანსია დახურულია');
+      vacancyId = vacancy.id;
+      // On a vacancy's board the position is that vacancy, unless the HR typed another
+      position ||= vacancy.title;
+    }
+    if (!position) throw new BadRequestException('მიუთითეთ პოზიცია');
+
+    const cv = await this.cvRepository.save(
+      this.cvRepository.create({
+        userId: null,
+        email: null,
+        fullName: `${dto.firstName} ${dto.lastName}`,
+        phoneNumber: null,
+        fileName: '',
+        originalName: '',
+        mimeType: '',
+        size: 0,
+        storagePath: '',
+        summary: null,
+        // Nobody else sees it, and no file was shared
+        consentGiven: false,
+        addedByHrId: hr.id,
+        manualPosition: position,
+      }),
+    );
+    await this.accessRepository.insert({ hrUserId: hr.id, cvId: cv.id, action: HrCvAccessAction.ADDED });
+    const entry = await this.pipelineService.placeCandidate(hr.id, cv.id, vacancyId);
+    if (vacancyId !== null) await this.vacancyService.touch(vacancyId);
+
+    const [card] = await this.toCards(hr.id, [cv]);
     return { ...card, pipeline: toView(entry) };
   }
 
   async download(hr: User, cvId: number): Promise<{ buffer: Buffer; mimeType: string; originalName: string }> {
-    const cv = await this.findCv(cvId);
+    const cv = await this.findCv(hr.id, cvId);
     if (!(await this.isUnlocked(hr.id, cvId))) {
       throw new ForbiddenException('Open the candidate\'s contacts before downloading the CV');
     }
@@ -201,14 +248,15 @@ export class HrCandidatesService {
     };
   }
 
-  private async findCv(cvId: number): Promise<Cv> {
+  /** A CV this HR may see: any in the pool, or a hand-added record of their own. */
+  private async findCv(hrUserId: number, cvId: number): Promise<Cv> {
     const cv = await this.cvRepository.findOne({ where: { id: cvId } });
-    if (!cv) throw new NotFoundException('Candidate not found');
+    if (!cv || (cv.addedByHrId !== null && cv.addedByHrId !== hrUserId)) throw new NotFoundException('Candidate not found');
     return cv;
   }
 
   private isUnlocked(hrUserId: number, cvId: number): Promise<boolean> {
-    return this.accessRepository.exists({ where: { hrUserId, cvId, action: HrCvAccessAction.UNLOCK } });
+    return this.accessRepository.exists({ where: { hrUserId, cvId, action: In(CONTACT_ACCESS) } });
   }
 
   private async unlocksThisMonth(hrUserId: number): Promise<number> {
@@ -227,7 +275,7 @@ export class HrCandidatesService {
     if (!cvs.length) return [];
 
     const unlockedRows = await this.accessRepository.find({
-      where: { hrUserId, cvId: In(cvs.map((cv) => cv.id)), action: HrCvAccessAction.UNLOCK },
+      where: { hrUserId, cvId: In(cvs.map((cv) => cv.id)), action: In(CONTACT_ACCESS) },
       select: ['cvId'],
     });
     const unlocked = new Set(unlockedRows.map((r) => r.cvId));
@@ -246,7 +294,7 @@ export class HrCandidatesService {
       const user = cv.userId ? usersById.get(cv.userId) : undefined;
       return {
         id: cv.id,
-        detectedRole: s?.detectedRole ?? '',
+        detectedRole: s?.detectedRole ?? cv.manualPosition ?? '',
         seniorityLevel: s?.seniorityLevel ?? '',
         careerDirection: s?.careerDirection ?? '',
         primarySkills: s?.primarySkills ?? [],
@@ -263,6 +311,7 @@ export class HrCandidatesService {
             }
           : null,
         vacancies: memberships.get(cv.id) ?? [],
+        manual: cv.addedByHrId !== null,
       };
     });
   }

@@ -2,7 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundEx
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, IsNull, Not, Repository } from 'typeorm';
 import { User } from 'src/Entities/user.entity';
-import { HrCvAccess, HrCvAccessAction } from 'src/Entities/hr-cv-access.entity';
+import { CONTACT_ACCESS, HrCvAccess } from 'src/Entities/hr-cv-access.entity';
 import { HrPipelineEntry, PipelineStage } from 'src/Entities/hr-pipeline-entry.entity';
 import { HrPipelineEvent, PipelineEventType } from 'src/Entities/hr-pipeline-event.entity';
 import { HrCandidateNote } from 'src/Entities/hr-candidate-note.entity';
@@ -98,6 +98,15 @@ export class HrPipelineService implements OnModuleInit {
   async ensureEntry(hrUserId: number, cvId: number): Promise<void> {
     if (await this.entryRepository.exists({ where: { hrUserId, cvId } })) return;
     await this.entryRepository.createQueryBuilder().insert().values({ hrUserId, cvId }).orIgnore().execute();
+  }
+
+  /** The CV's card on a vacancy's board (added if needed), or on the main board without a vacancy. */
+  async placeCandidate(hrUserId: number, cvId: number, vacancyId: number | null): Promise<HrPipelineEntry> {
+    if (vacancyId !== null) return this.addToVacancy(hrUserId, vacancyId, cvId);
+    await this.ensureEntry(hrUserId, cvId);
+    // Its no-vacancy card, or the card it already has on some vacancy board
+    const entries = await this.entryRepository.find({ where: { hrUserId, cvId }, order: { id: 'ASC' } });
+    return entries.find((e) => e.vacancyId === null) ?? entries[0];
   }
 
   /** Entries for a board, newest first; the client orders each column by position. */
@@ -270,7 +279,7 @@ export class HrPipelineService implements OnModuleInit {
   }
 
   private async assertUnlocked(hrUserId: number, cvId: number) {
-    const unlocked = await this.accessRepository.exists({ where: { hrUserId, cvId, action: HrCvAccessAction.UNLOCK } });
+    const unlocked = await this.accessRepository.exists({ where: { hrUserId, cvId, action: In(CONTACT_ACCESS) } });
     if (!unlocked) throw new ForbiddenException('Open the candidate\'s contacts first');
   }
 

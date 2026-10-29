@@ -27,9 +27,9 @@ import { HrCandidateSearchDto } from './dto/hr-candidate-search.dto';
 import { HrPipelineService } from './hr-pipeline.service';
 import { CreateNoteDto, UpdatePipelineDto } from './dto/hr-pipeline.dto';
 import { HrVacancyService } from './hr-vacancy.service';
-import { BoardQueryDto, CreateVacancyDto, UpdateVacancyDto } from './dto/hr-vacancy.dto';
+import { BoardQueryDto, CreateManualCandidateDto, CreateVacancyDto, UpdateVacancyDto } from './dto/hr-vacancy.dto';
 import { HrInterviewService } from './hr-interview.service';
-import { GoogleConnectDto, ScheduleInterviewDto, UpdateInterviewDto } from './dto/hr-interview.dto';
+import { GoogleConnectDto, InviteInterviewDto, ScheduleInterviewDto, UpdateInterviewDto } from './dto/hr-interview.dto';
 import { GoogleCalendarService } from './google-calendar.service';
 
 @ApiTags('HR')
@@ -84,6 +84,13 @@ export class HrController {
     return this.hrInterviewService.schedule(req.user, entryId, dto);
   }
 
+  @Post('interviews/invite')
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
+  @ApiOperation({ summary: "Interview invitation as a link (one person, valid a day); they join the board when they accept with their CV" })
+  inviteToInterview(@Req() req, @Body() dto: InviteInterviewDto) {
+    return this.hrInterviewService.invite(req.user, dto);
+  }
+
   @Patch('interviews/:id')
   @ApiOperation({ summary: "Edit or reschedule, accept a candidate's proposed time, or cancel" })
   updateInterview(@Req() req, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateInterviewDto) {
@@ -127,6 +134,13 @@ export class HrController {
   board(@Req() req, @Query() query: BoardQueryDto) {
     const filter = query.vacancyId === undefined ? undefined : query.vacancyId === 'none' ? 'none' : Number(query.vacancyId);
     return this.hrCandidatesService.board(req.user, filter);
+  }
+
+  @Post('board')
+  @Throttle({ default: { limit: 30, ttl: 60000 } })
+  @ApiOperation({ summary: 'Add a candidate by hand (name, surname, position): main board, plus a vacancy board if given' })
+  addManualCandidate(@Req() req, @Body() dto: CreateManualCandidateDto) {
+    return this.hrCandidatesService.addManual(req.user, dto);
   }
 
   @Patch('board/:entryId')

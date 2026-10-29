@@ -1,9 +1,12 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, UseGuards } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { ClientIpThrottlerGuard } from 'src/auth/guards/client-ip-throttler.guard';
+import { CvFileValidationPipe } from 'src/cv/cv-file-validation.pipe';
 import { HrInterviewService } from './hr-interview.service';
-import { InterviewAnswerDto } from './dto/hr-interview.dto';
+import { InterviewAnswerDto, InterviewJoinDto } from './dto/hr-interview.dto';
 
 // The candidate's side of an interview invitation: no account, the signed link is the key.
 @ApiTags('Interview (candidate)')
@@ -25,5 +28,37 @@ export class InterviewPublicController {
   @ApiOperation({ summary: 'Confirm, decline or ask for another time' })
   answer(@Param('token') token: string, @Body() dto: InterviewAnswerDto) {
     return this.interviewService.answer(token, dto);
+  }
+
+  @Post(':token/join')
+  @HttpCode(HttpStatus.OK)
+  // Each call stores a file and runs an AI summary
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @ApiOperation({ summary: 'Invited candidate: accept (or ask for another time) with their details and CV' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['confirm', 'reschedule'] },
+        slot: { type: 'integer' },
+        note: { type: 'string' },
+        proposedTimes: { type: 'string', description: 'JSON array of ISO times' },
+        fullName: { type: 'string' },
+        email: { type: 'string' },
+        phoneNumber: { type: 'string' },
+        consent: { type: 'boolean' },
+        file: { type: 'string', format: 'binary', description: 'PDF or Word, max 5MB' },
+      },
+      required: ['action', 'fullName', 'email', 'phoneNumber', 'consent', 'file'],
+    },
+  })
+  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } }))
+  join(
+    @Param('token') token: string,
+    @UploadedFile(CvFileValidationPipe) file: Express.Multer.File,
+    @Body() dto: InterviewJoinDto,
+  ) {
+    return this.interviewService.join(token, dto, file);
   }
 }

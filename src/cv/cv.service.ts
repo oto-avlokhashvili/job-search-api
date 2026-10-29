@@ -204,6 +204,58 @@ export class CvService {
   }
 
   /**
+   * CV of a candidate who accepted an HR's interview invitation (no account). Stored and AI-summarized
+   * like a public CV; an earlier public CV with the same email is updated instead of duplicated.
+   * Not subject to the anonymous upload limits: it only comes through an HR's signed invitation link.
+   */
+  async saveInvitedCandidateCv(
+    candidate: { email: string; fullName: string; phoneNumber: string },
+    file: Express.Multer.File,
+  ): Promise<Cv> {
+    const email = candidate.email.trim().toLowerCase();
+    const ext = file.originalname.split('.').pop();
+    const fileName = `${randomUUID()}.${ext}`;
+    const storagePath = `cvs/public/${fileName}`;
+    const fileHash = sha256(file.buffer);
+
+    await this.r2StorageService.uploadFile(file.buffer, storagePath, file.mimetype);
+
+    let summary: CvSummaryDetails | null = null;
+    const sameFile = await this.cvRepository.findOne({ where: { fileHash, summary: Not(IsNull()) } });
+    if (sameFile?.summary) {
+      summary = sameFile.summary;
+    } else {
+      try {
+        summary = await this.aiService.summarizeCv(file);
+      } catch (e: any) {
+        // Saved anyway: the HR still gets the file and contacts
+        this.logger.warn(`Could not summarize invited candidate CV for ${email}: ${e.message}`);
+      }
+    }
+
+    const fields = {
+      fileName,
+      originalName: file.originalname,
+      mimeType: file.mimetype,
+      size: file.size,
+      storagePath,
+      fullName: candidate.fullName.trim(),
+      phoneNumber: candidate.phoneNumber.trim(),
+      summary,
+      fileHash,
+      consentGiven: true,
+      consentGivenAt: new Date(),
+    };
+
+    const existing = await this.cvRepository.findOne({ where: { email, userId: IsNull() } });
+    if (existing) {
+      if (existing.storagePath) await this.r2StorageService.deleteFile(existing.storagePath).catch(() => null);
+      return this.cvRepository.save(Object.assign(existing, fields));
+    }
+    return this.cvRepository.save(this.cvRepository.create({ userId: null, email, ...fields }));
+  }
+
+  /**
    * Re-issues a search token for a public CV, so a browser that uploaded before CV search
    * existed (or whose token was replaced from another device) can search without uploading
    * again. The browser proves itself with the email + original file name it saved at upload.

@@ -21,6 +21,8 @@ export interface InterviewMailData {
   link: string;
   /** Changes on every edit, so calendars replace the old event */
   sequence: number;
+  /** Invited candidate not on the platform yet: accepting asks for their CV */
+  newCandidate?: boolean;
 }
 
 export interface MailContent {
@@ -143,6 +145,11 @@ export function inviteEmail(d: InterviewMailData, updated = false): MailContent 
         ${heading(title, `${esc(d.company || d.hrName)} გიწვევთ გასაუბრებაზე პოზიციაზე <strong>${esc(d.position)}</strong>. გთხოვთ, გვაცნობოთ, მოგიხერხდებათ თუ არა.`)}
         ${details(d)}
         ${quote(d.message)}
+        ${
+          d.newCandidate
+            ? `<p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#475569;">📄 დადასტურებისას გთხოვთ, მიუთითოთ საკონტაქტო მონაცემები და ატვირთოთ თქვენი CV, რომ ${esc(d.company || d.hrName)} წინასწარ გაეცნოს.</p>`
+            : ''
+        }
         ${answerButtons(d)}
         ${calendarNote}`,
       footer: `<div style="margin-bottom:6px;">კითხვა გაქვთ? უბრალოდ უპასუხეთ ამ წერილს: პასუხი ${esc(d.hrName)}-ს მიუვა.</div>`,

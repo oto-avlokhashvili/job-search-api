@@ -5,14 +5,22 @@ import { Queue } from 'bullmq';
 import { In, MoreThanOrEqual, Not, Repository } from 'typeorm';
 import { User } from 'src/Entities/user.entity';
 import { Cv } from 'src/Entities/cv.entity';
-import { HrVacancy } from 'src/Entities/hr-vacancy.entity';
+import { HrVacancy, HrVacancyStatus } from 'src/Entities/hr-vacancy.entity';
 import { HrInterview, InterviewFormat, InterviewStatus } from 'src/Entities/hr-interview.entity';
-import { PipelineStage } from 'src/Entities/hr-pipeline-entry.entity';
+import { HrPipelineEntry, PipelineStage } from 'src/Entities/hr-pipeline-entry.entity';
 import { PipelineEventType } from 'src/Entities/hr-pipeline-event.entity';
+import { HrCvAccess, HrCvAccessAction } from 'src/Entities/hr-cv-access.entity';
 import { EmailService } from 'src/email/email.service';
+import { CvService } from 'src/cv/cv.service';
 import { HrPipelineService, PipelineView, toView } from './hr-pipeline.service';
 import { CalendarEvent, GoogleCalendarService } from './google-calendar.service';
-import { InterviewAnswerDto, ScheduleInterviewDto, UpdateInterviewDto } from './dto/hr-interview.dto';
+import {
+  InterviewAnswerDto,
+  InterviewJoinDto,
+  InviteInterviewDto,
+  ScheduleInterviewDto,
+  UpdateInterviewDto,
+} from './dto/hr-interview.dto';
 import {
   AnswerError,
   applyAnswer,
@@ -45,12 +53,23 @@ export interface ReminderJob {
 const REMINDER_HOURS = [24, 1];
 // Interviews shown to the HR: upcoming ones and those of the last month
 const LIST_FROM_DAYS = 30;
+// An invitation link works this long for joining; once someone joined it's their answer link
+export const INVITE_TTL_MS = 24 * 3600 * 1000;
+const inviteExpired = (iv: HrInterview, now = Date.now()) =>
+  iv.cvId === null && !!iv.inviteExpiresAt && iv.inviteExpiresAt.getTime() <= now;
+const expiredLink = () =>
+  new BadRequestException({ statusCode: 400, message: 'მოწვევის ბმულს ვადა გაუვიდა: სთხოვეთ HR-ს ახალი ბმული', code: 'INVITE_EXPIRED' });
 
 export interface InterviewView {
   id: number;
-  entryId: number;
-  cvId: number;
+  /** Null while an invited candidate hasn't joined (no card yet) */
+  entryId: number | null;
+  cvId: number | null;
   vacancyId: number | null;
+  inviteeName: string | null;
+  inviteeEmail: string | null;
+  /** Invitation link nobody joined through yet: works until then */
+  inviteExpiresAt: Date | null;
   startsAt: Date;
   durationMin: number;
   format: HrInterview['format'];
@@ -86,6 +105,12 @@ export interface PublicInterview {
   candidateName: string;
   /** False once the interview has started or was cancelled */
   canRespond: boolean;
+  /** Invited candidate not on the platform yet: accepting asks for their details and CV */
+  needsProfile: boolean;
+  /** The invitation link's day is over before anyone joined: the HR has to send a new one */
+  inviteExpired: boolean;
+  /** Prefill for that form: the address the invitation was sent to */
+  inviteeEmail: string | null;
 }
 
 const ANSWER_EVENT: Partial<Record<InterviewStatus, PipelineEventType>> = {
@@ -107,7 +132,9 @@ export class HrInterviewService {
     @InjectRepository(Cv) private readonly cvRepository: Repository<Cv>,
     @InjectRepository(User) private readonly userRepository: Repository<User>,
     @InjectRepository(HrVacancy) private readonly vacancyRepository: Repository<HrVacancy>,
+    @InjectRepository(HrCvAccess) private readonly accessRepository: Repository<HrCvAccess>,
     private readonly pipelineService: HrPipelineService,
+    private readonly cvService: CvService,
     private readonly emailService: EmailService,
     private readonly googleCalendar: GoogleCalendarService,
     @InjectQueue(INTERVIEW_QUEUE) private readonly queue: Queue,
@@ -140,7 +167,7 @@ export class HrInterviewService {
     if (!isValidStart(startsAt, now)) throw new BadRequestException('აირჩიეთ მომავალი თარიღი');
     const alternatives = this.cleanAlternatives(dto.alternatives, startsAt, now);
     const send = dto.send !== false;
-    const candidate = await this.candidate(entry.cvId);
+    const candidate = (await this.candidateByCv(entry.cvId)) ?? { name: '', email: null, role: '' };
     if (send && !candidate.email) throw new BadRequestException('კანდიდატს ელ-ფოსტა არ აქვს: შეინახეთ გაგზავნის გარეშე');
 
     let interview = await this.interviewRepository.save(
@@ -191,12 +218,115 @@ export class HrInterviewService {
     return { interview: this.toView(interview), pipeline };
   }
 
+  /**
+   * An interview invitation as a link the HR shares themselves: the HR doesn't need to know who it's for.
+   * It works for one person for a day: accepting asks for their details and CV, and they land on the
+   * board at "Interview" (see join). No card until then.
+   */
+  async invite(hr: User, dto: InviteInterviewDto): Promise<InterviewView> {
+    const now = new Date();
+    const startsAt = new Date(dto.startsAt);
+    if (!isValidStart(startsAt, now)) throw new BadRequestException('აირჩიეთ მომავალი თარიღი');
+    const alternatives = this.cleanAlternatives(dto.alternatives, startsAt, now);
+
+    let vacancyId: number | null = null;
+    if (dto.vacancyId !== undefined && dto.vacancyId !== null) {
+      const vacancy = await this.vacancyRepository.findOne({ where: { id: dto.vacancyId, hrUserId: hr.id } });
+      if (!vacancy) throw new NotFoundException('Vacancy not found');
+      if (vacancy.status !== HrVacancyStatus.OPEN) throw new BadRequestException('ვაკანსია დახურულია');
+      vacancyId = vacancy.id;
+    }
+
+    let interview = await this.interviewRepository.save(
+      this.interviewRepository.create({
+        hrUserId: hr.id,
+        entryId: null,
+        cvId: null,
+        vacancyId,
+        inviteeName: null,
+        inviteeEmail: null,
+        inviteExpiresAt: new Date(now.getTime() + INVITE_TTL_MS),
+        startsAt,
+        durationMin: dto.durationMin ?? 45,
+        format: dto.format,
+        location: dto.location?.trim() ?? '',
+        message: dto.message?.trim() || null,
+        alternatives,
+        linkNonce: newLinkNonce(),
+        sentTo: null,
+      }),
+    );
+    try {
+      if (dto.googleMeet && dto.format === InterviewFormat.ONLINE) interview = await this.addMeet(interview);
+    } catch (error) {
+      await this.interviewRepository.delete(interview.id);
+      throw error;
+    }
+    return this.toView(interview);
+  }
+
+  /**
+   * An invited candidate accepts (or asks for another time) with their details and CV: the CV is saved and
+   * AI-summarized, opened to the HR (no quota), put on the vacancy's board at "Interview", then the answer
+   * is recorded as for any candidate. Already joined: it's just the answer.
+   */
+  async join(token: string, dto: InterviewJoinDto, file: Express.Multer.File): Promise<PublicInterview> {
+    const interview = await this.byToken(token);
+    const answer: InterviewAnswerDto = { action: dto.action, slot: dto.slot, note: dto.note, proposedTimes: dto.proposedTimes };
+    // Someone already joined: the link is theirs now, so this is just an answer
+    if (interview.cvId !== null) return this.answer(token, answer);
+    if (inviteExpired(interview)) throw expiredLink();
+    if (!dto.consent) throw new BadRequestException('საჭიროა თანხმობა CV-ის შენახვაზე');
+    // Same checks as the answer itself, before storing anything (cancelled, already started, bad times)
+    try {
+      applyAnswer(interview, answer, new Date());
+    } catch (error) {
+      if (error instanceof AnswerError) throw new BadRequestException({ statusCode: 400, message: error.message, code: error.code });
+      throw error;
+    }
+
+    const hr = await this.userRepository.findOne({ where: { id: interview.hrUserId } });
+    if (!hr) throw new NotFoundException('ბმული არასწორია ან ვადაგასულია');
+
+    const cv = await this.cvService.saveInvitedCandidateCv(
+      { email: dto.email, fullName: dto.fullName, phoneNumber: dto.phoneNumber },
+      file,
+    );
+    const contacts = { hrUserId: hr.id, cvId: cv.id, action: HrCvAccessAction.INVITED };
+    if (!(await this.accessRepository.exists({ where: contacts }))) await this.accessRepository.insert(contacts);
+
+    // The vacancy may have been deleted since: then the main board
+    const vacancyId = interview.vacancyId && (await this.vacancyRepository.exists({ where: { id: interview.vacancyId } })) ? interview.vacancyId : null;
+    let entry: HrPipelineEntry = await this.pipelineService.placeCandidate(hr.id, cv.id, vacancyId);
+    if (entry.stage !== PipelineStage.INTERVIEW) {
+      await this.pipelineService.update(hr, entry.id, { stage: PipelineStage.INTERVIEW });
+      entry = await this.pipelineService.findOwned(hr.id, entry.id);
+    }
+
+    Object.assign(interview, {
+      cvId: cv.id,
+      entryId: entry.id,
+      vacancyId: entry.vacancyId,
+      inviteeName: dto.fullName.trim(),
+      sentTo: interview.sentTo ?? cv.email,
+    });
+    await this.interviewRepository.save(interview);
+    await this.pipelineService
+      .recordEvent(entry, { type: PipelineEventType.INTERVIEW_SCHEDULED, interviewAt: interview.startsAt, note: 'შემოუერთდა მოწვევით' })
+      .catch((error) => this.logger.error(`Could not record joining for interview ${interview.id}: ${error.message}`));
+
+    return this.answer(token, answer);
+  }
+
   /** Reschedule/edit, accept one of the candidate's proposed times, or cancel. */
   async update(hr: User, id: number, dto: UpdateInterviewDto): Promise<InterviewView> {
     let interview = await this.interviewRepository.findOne({ where: { id, hrUserId: hr.id } });
     if (!interview) throw new NotFoundException('Interview not found');
     if (interview.status === InterviewStatus.CANCELLED) throw new BadRequestException('გასაუბრება უკვე გაუქმებულია');
-    const entry = await this.pipelineService.findOwned(hr.id, interview.entryId);
+    // An invitation nobody has joined yet has no card (and no history) to update
+    const entry = interview.entryId !== null ? await this.pipelineService.findOwned(hr.id, interview.entryId) : null;
+    const recordEvent = (event: Parameters<HrPipelineService['recordEvent']>[1]) =>
+      entry ? this.pipelineService.recordEvent(entry, event) : Promise.resolve();
     const notify = dto.notify !== false;
     const now = new Date();
 
@@ -204,9 +334,16 @@ export class HrInterviewService {
       interview.status = InterviewStatus.CANCELLED;
       await this.dropMeet(interview);
       const saved = await this.interviewRepository.save(interview);
-      await this.pipelineService.recordEvent(entry, { type: PipelineEventType.INTERVIEW_CANCELLED, interviewAt: saved.startsAt });
+      await recordEvent({ type: PipelineEventType.INTERVIEW_CANCELLED, interviewAt: saved.startsAt });
       if (notify && saved.sentTo && saved.startsAt > now) await this.mailCandidate(saved, cancelledEmail);
       return this.toView(saved);
+    }
+
+    if (dto.renewLink) {
+      if (interview.cvId !== null) throw new BadRequestException('კანდიდატი უკვე შემოუერთდა მოწვევით');
+      // A new nonce: the old link (maybe forwarded somewhere) stops working
+      Object.assign(interview, { linkNonce: newLinkNonce(), inviteExpiresAt: new Date(now.getTime() + INVITE_TTL_MS) });
+      return this.toView(await this.interviewRepository.save(interview));
     }
 
     if (dto.acceptProposed !== undefined) {
@@ -216,7 +353,7 @@ export class HrInterviewService {
       const saved = await this.interviewRepository.save(interview);
       await this.syncMeet(saved);
       // Signed by the HR: "confirmed" events in the history are the candidate's own answers
-      await this.pipelineService.recordEvent(entry, { type: PipelineEventType.INTERVIEW_UPDATED, interviewAt: chosen });
+      await recordEvent({ type: PipelineEventType.INTERVIEW_UPDATED, interviewAt: chosen });
       if (notify) await this.mailCandidate(saved, confirmedEmail, true);
       await this.planReminders(saved);
       return this.toView(saved);
@@ -249,7 +386,7 @@ export class HrInterviewService {
 
     let saved = await this.interviewRepository.save(interview);
     if (hadMeet && wantsMeet) await this.syncMeet(saved);
-    await this.pipelineService.recordEvent(entry, { type: PipelineEventType.INTERVIEW_UPDATED, interviewAt: saved.startsAt });
+    await recordEvent({ type: PipelineEventType.INTERVIEW_UPDATED, interviewAt: saved.startsAt });
     if (notify) {
       // Also how an invitation saved without sending goes out later
       const sent = await this.mailCandidate(saved, (d) => inviteEmail(d, !!saved.sentTo), true);
@@ -279,13 +416,21 @@ export class HrInterviewService {
       company: d.company,
       hrName: d.hrName,
       candidateName: d.candidateName.split(/\s+/)[0] ?? '',
-      canRespond: interview.status !== InterviewStatus.CANCELLED && interview.startsAt.getTime() > now,
+      canRespond: interview.status !== InterviewStatus.CANCELLED && interview.startsAt.getTime() > now && !inviteExpired(interview, now),
+      needsProfile: interview.cvId === null,
+      inviteExpired: inviteExpired(interview, now),
+      inviteeEmail: interview.cvId === null ? interview.inviteeEmail : null,
     };
   }
 
   /** The candidate's answer from the link. Repeating the same answer changes nothing and sends nothing. */
   async answer(token: string, dto: InterviewAnswerDto): Promise<PublicInterview> {
     const interview = await this.byToken(token);
+    // An invitee accepts through join (with their CV); declining needs no details
+    if (inviteExpired(interview)) throw expiredLink();
+    if (interview.cvId === null && dto.action !== 'decline') {
+      throw new BadRequestException({ statusCode: 400, message: 'შეავსეთ თქვენი მონაცემები და ატვირთეთ CV', code: 'PROFILE_REQUIRED' });
+    }
     let result: ReturnType<typeof applyAnswer>;
     try {
       result = applyAnswer(interview, dto, new Date());
@@ -300,7 +445,7 @@ export class HrInterviewService {
     const saved = await this.interviewRepository.save(interview);
     // Confirmed one of the HR's alternative times
     if (moved) await this.syncMeet(saved);
-    const entry = await this.pipelineService.findOwned(saved.hrUserId, saved.entryId).catch(() => null);
+    const entry = saved.entryId !== null ? await this.pipelineService.findOwned(saved.hrUserId, saved.entryId).catch(() => null) : null;
     const type = ANSWER_EVENT[saved.status];
     if (entry && type) {
       await this.pipelineService.recordEvent(entry, { type, interviewAt: saved.startsAt, note: saved.candidateNote });
@@ -428,9 +573,15 @@ export class HrInterviewService {
     }
   }
 
-  private async candidate(cvId: number): Promise<{ name: string; email: string | null; role: string }> {
+  /** The interview's candidate; for an invitation nobody has joined yet, what the HR entered. */
+  private async candidate(interview: HrInterview): Promise<{ name: string; email: string | null; role: string }> {
+    const fromCv = interview.cvId !== null ? await this.candidateByCv(interview.cvId) : null;
+    return fromCv ?? { name: interview.inviteeName ?? '', email: interview.inviteeEmail, role: '' };
+  }
+
+  private async candidateByCv(cvId: number): Promise<{ name: string; email: string | null; role: string } | null> {
     const cv = await this.cvRepository.findOne({ where: { id: cvId } });
-    if (!cv) return { name: '', email: null, role: '' };
+    if (!cv) return null;
     const user = cv.userId
       ? await this.userRepository.findOne({ where: { id: cv.userId }, select: ['id', 'firstName', 'lastName', 'email'] })
       : null;
@@ -443,7 +594,7 @@ export class HrInterviewService {
 
   private async mailData(interview: HrInterview): Promise<InterviewMailData & { candidateEmail: string | null }> {
     const [candidate, hr, vacancy] = await Promise.all([
-      this.candidate(interview.cvId),
+      this.candidate(interview),
       this.userRepository.findOne({ where: { id: interview.hrUserId }, select: ['id', 'firstName', 'lastName', 'email', 'companyName'] }),
       interview.vacancyId ? this.vacancyRepository.findOne({ where: { id: interview.vacancyId } }) : null,
     ]);
@@ -465,6 +616,7 @@ export class HrInterviewService {
       candidateNote: interview.candidateNote,
       link: interviewLink(interview.id, interview.linkNonce),
       sequence: Math.floor((interview.updatedAt ?? new Date()).getTime() / 1000),
+      newCandidate: interview.cvId === null,
     };
   }
 
@@ -474,6 +626,9 @@ export class HrInterviewService {
       entryId: iv.entryId,
       cvId: iv.cvId,
       vacancyId: iv.vacancyId,
+      inviteeName: iv.inviteeName,
+      inviteeEmail: iv.inviteeEmail,
+      inviteExpiresAt: iv.cvId === null ? iv.inviteExpiresAt : null,
       startsAt: iv.startsAt,
       durationMin: iv.durationMin,
       format: iv.format,

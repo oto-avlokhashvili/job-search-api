@@ -48,11 +48,19 @@ function setup({ candidateEmail = 'ani@example.test', stage = PipelineStage.CONT
   const entry = { id: 3, hrUserId: 7, cvId: 10, vacancyId: 4, stage, rejectionReason: null, rating: null, tags: [], position: null, updatedAt: new Date() };
   const cvs = { findOne: jest.fn(async () => ({ id: 10, userId: null, fullName: 'Ani Ts', email: candidateEmail, summary: { detectedRole: 'Designer' } })) };
   const users = { findOne: jest.fn(async () => hr) };
-  const vacancies = { findOne: jest.fn(async () => ({ id: 4, title: 'Graphic Designer' })) };
+  const vacancies = {
+    findOne: jest.fn(async () => ({ id: 4, hrUserId: 7, title: 'Graphic Designer', status: 'OPEN' })),
+    exists: jest.fn(async () => true),
+  };
+  const access = { exists: jest.fn(async () => false), insert: jest.fn() };
+  const cvService = {
+    saveInvitedCandidateCv: jest.fn(async (c: { email: string; fullName: string }) => ({ id: 10, email: c.email, fullName: c.fullName })),
+  };
   const pipeline = {
     findOwned: jest.fn(async () => entry),
     update: jest.fn(async () => ({ id: 3, vacancyId: 4, stage: PipelineStage.INTERVIEW, rejectionReason: null, rating: null, tags: [], position: null })),
-    recordEvent: jest.fn(),
+    recordEvent: jest.fn(async () => undefined),
+    placeCandidate: jest.fn(async () => entry),
   };
   const email = { queueEmail: jest.fn() };
   const queue = { add: jest.fn(async () => ({})) };
@@ -67,13 +75,26 @@ function setup({ candidateEmail = 'ani@example.test', stage = PipelineStage.CONT
     cvs as any,
     users as any,
     vacancies as any,
+    access as any,
     pipeline as any,
+    cvService as any,
     email as any,
     google as any,
     queue as any,
   );
   const draft = { startsAt: inDays(2), durationMin: 45, format: InterviewFormat.ONLINE, location: 'https://meet.example/x' };
-  return { service, interviews, pipeline, email, queue, google, draft, token: () => linkToken(rows[0].id, rows[0].linkNonce) };
+  return {
+    service,
+    interviews,
+    pipeline,
+    email,
+    queue,
+    google,
+    access,
+    cvService,
+    draft,
+    token: () => linkToken(rows[0].id, rows[0].linkNonce),
+  };
 }
 
 describe('HrInterviewService', () => {
@@ -217,5 +238,136 @@ describe('HrInterviewService', () => {
 
     await service.sendReminder({ interviewId: 1, startsAt: interviews.rows[0].startsAt.getTime(), hours: 24 });
     expect(email.queueEmail.mock.calls.map((c) => c[0])).toEqual(['ani@example.test', 'hr@acme.ge']);
+  });
+});
+
+describe('HrInterviewService invitations (candidate not on the platform yet)', () => {
+  const file = { originalname: 'cv.pdf', mimetype: 'application/pdf', size: 10, buffer: Buffer.from('%PDF') } as Express.Multer.File;
+  const invite = (over = {}) => ({
+    startsAt: inDays(2),
+    durationMin: 45,
+    format: InterviewFormat.ONLINE,
+    location: 'https://meet.example/x',
+    vacancyId: 4,
+    ...over,
+  });
+  const joinData = (over = {}) => ({
+    action: 'confirm' as const,
+    fullName: 'Ani Tsitskishvili',
+    email: 'ani@example.test',
+    phoneNumber: '599000000',
+    consent: true,
+    ...over,
+  });
+
+  it('makes a link valid for a day, without a card, without knowing who it is for, emailing nobody', async () => {
+    const { service, email, interviews } = setup();
+    const view = await service.invite(hr, { ...invite(), send: true });
+    expect(view).toMatchObject({ entryId: null, cvId: null, vacancyId: 4, inviteeName: null, inviteeEmail: null, sentTo: null });
+    expect(view.link).toMatch(/\/interview\/1\./);
+    const ttl = view.inviteExpiresAt!.getTime() - Date.now();
+    expect(ttl).toBeGreaterThan(23.9 * HOUR);
+    expect(ttl).toBeLessThanOrEqual(24 * HOUR);
+    expect(interviews.rows).toHaveLength(1);
+    expect(email.queueEmail).not.toHaveBeenCalled();
+  });
+
+  it('needs an open vacancy of this HR', async () => {
+    const closed = setup();
+    (closed.service as any).vacancyRepository.findOne.mockResolvedValue({ id: 4, hrUserId: 7, status: 'CLOSED' });
+    await expect(closed.service.invite(hr, invite())).rejects.toThrow('დახურულია');
+  });
+
+  it('an expired link takes nothing; a new link works for another day and the old one stops', async () => {
+    const { service, token, interviews, cvService } = setup();
+    await service.invite(hr, invite());
+    const oldToken = token();
+    interviews.rows[0].inviteExpiresAt = new Date(Date.now() - 1000);
+
+    expect(await service.publicView(oldToken)).toMatchObject({ inviteExpired: true, canRespond: false });
+    await expect(service.join(oldToken, joinData(), file)).rejects.toThrow('ვადა');
+    await expect(service.answer(oldToken, { action: 'decline' })).rejects.toThrow('ვადა');
+    expect(cvService.saveInvitedCandidateCv).not.toHaveBeenCalled();
+
+    const renewed = await service.update(hr, 1, { renewLink: true });
+    expect(renewed.link).not.toContain(oldToken);
+    expect(renewed.inviteExpiresAt!.getTime()).toBeGreaterThan(Date.now() + 23 * HOUR);
+    await expect(service.publicView(oldToken)).rejects.toBeInstanceOf(NotFoundException);
+    expect(await service.publicView(token())).toMatchObject({ inviteExpired: false, canRespond: true });
+  });
+
+  it('once someone joined, the link is theirs: no second person, no expiry, no new link', async () => {
+    const { service, token, interviews, cvService } = setup();
+    await service.invite(hr, invite());
+    await service.join(token(), joinData(), file);
+    interviews.rows[0].inviteExpiresAt = new Date(Date.now() - 1000);
+
+    await service.join(token(), joinData({ fullName: 'Someone Else', email: 'else@example.test' }), file);
+    expect(cvService.saveInvitedCandidateCv).toHaveBeenCalledTimes(1);
+    expect(await service.publicView(token())).toMatchObject({ inviteExpired: false, needsProfile: false });
+    await expect(service.update(hr, 1, { renewLink: true })).rejects.toThrow('შემოუერთდა');
+  });
+
+  it('asks the invitee for details before accepting; declining needs none', async () => {
+    const { service, token, pipeline, email } = setup();
+    await service.invite(hr, invite());
+
+    const page = await service.publicView(token());
+    expect(page).toMatchObject({ needsProfile: true, inviteExpired: false, inviteeEmail: null, position: 'Graphic Designer' });
+    await expect(service.answer(token(), { action: 'confirm' })).rejects.toBeInstanceOf(BadRequestException);
+
+    email.queueEmail.mockClear();
+    const declined = await service.answer(token(), { action: 'decline', note: 'found a job' });
+    expect(declined.status).toBe(InterviewStatus.DECLINED);
+    expect(pipeline.recordEvent).not.toHaveBeenCalled(); // no card, no history
+    expect(email.queueEmail.mock.calls.map((c) => c[0])).toEqual(['hr@acme.ge']);
+  });
+
+  it('joining saves the CV, opens it to the HR, puts the candidate on the board and confirms', async () => {
+    const { service, token, cvService, access, pipeline, interviews, email, queue } = setup();
+    await service.invite(hr, invite());
+    email.queueEmail.mockClear();
+
+    const page = await service.join(token(), joinData(), file);
+
+    expect(cvService.saveInvitedCandidateCv).toHaveBeenCalledWith(
+      { email: 'ani@example.test', fullName: 'Ani Tsitskishvili', phoneNumber: '599000000' },
+      file,
+    );
+    expect(access.insert).toHaveBeenCalledWith({ hrUserId: 7, cvId: 10, action: 'INVITED' });
+    expect(pipeline.placeCandidate).toHaveBeenCalledWith(7, 10, 4);
+    expect(pipeline.update).toHaveBeenCalledWith(hr, 3, { stage: PipelineStage.INTERVIEW });
+    expect(interviews.rows[0]).toMatchObject({ cvId: 10, entryId: 3, status: InterviewStatus.CONFIRMED });
+    expect(page).toMatchObject({ status: InterviewStatus.CONFIRMED, needsProfile: false });
+    const types = pipeline.recordEvent.mock.calls.map((c: any[]) => c[1].type);
+    expect(types).toEqual([PipelineEventType.INTERVIEW_SCHEDULED, PipelineEventType.INTERVIEW_CONFIRMED]);
+    // HR is told, the candidate gets the confirmation, reminders are planned
+    expect(email.queueEmail.mock.calls.map((c) => c[0])).toEqual(['hr@acme.ge', 'ani@example.test']);
+    expect(queue.add).toHaveBeenCalled();
+  });
+
+  it('can ask for another time while joining', async () => {
+    const { service, token, interviews } = setup();
+    await service.invite(hr, invite());
+    await service.join(token(), joinData({ action: 'reschedule', proposedTimes: [inDays(4)], note: 'Thursday is busy' }), file);
+    expect(interviews.rows[0]).toMatchObject({ status: InterviewStatus.RESCHEDULE_REQUESTED, cvId: 10 });
+  });
+
+  it('stores nothing without consent or for a cancelled invitation', async () => {
+    const { service, token, cvService } = setup();
+    await service.invite(hr, invite());
+    await expect(service.join(token(), joinData({ consent: false }), file)).rejects.toThrow('თანხმობა');
+
+    await service.update(hr, 1, { cancel: true });
+    await expect(service.join(token(), joinData(), file)).rejects.toThrow('გაუქმებულია');
+    expect(cvService.saveInvitedCandidateCv).not.toHaveBeenCalled();
+  });
+
+  it('a second submit after joining is only an answer (no second CV)', async () => {
+    const { service, token, cvService } = setup();
+    await service.invite(hr, invite());
+    await service.join(token(), joinData(), file);
+    await service.join(token(), joinData(), file);
+    expect(cvService.saveInvitedCandidateCv).toHaveBeenCalledTimes(1);
   });
 });
