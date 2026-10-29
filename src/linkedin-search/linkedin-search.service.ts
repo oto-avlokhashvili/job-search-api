@@ -1,8 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { LinkedinSearchDto } from './dto/linkedin-search.dto';
 import { GoogleBrowserService, GoogleResult } from './google-browser.service';
 import { PublicCvLimitsService } from 'src/cv/public-cv-limits.service';
+import { SearloSearchService } from './searlo-search.service';
 
 export interface LinkedinProfile {
   name: string;
@@ -12,15 +13,23 @@ export interface LinkedinProfile {
 }
 
 const OPEN_TO_WORK_CLAUSE = '("open to work" OR "#opentowork" OR "looking for new opportunities")';
-// Every Google hit risks a CAPTCHA, so identical searches are answered from Redis
-// (shared by all HRs and kept across deploys).
+// Identical searches are answered from Redis (shared by all HRs, kept across deploys):
+// saves Searlo credits and spares the browser fallback from CAPTCHAs.
 const CACHE_TTL_SEC = 6 * 60 * 60;
+// After a Searlo failure, go straight to the browser for a while instead of waiting on Searlo each time
+const SEARLO_PAUSE_MS = 2 * 60 * 1000;
+
+export type SearchProvider = 'searlo' | 'google-browser';
 
 @Injectable()
 export class LinkedinSearchService {
+  private readonly logger = new Logger(LinkedinSearchService.name);
+  private searloPausedUntil = 0;
+
   constructor(
     private readonly googleBrowser: GoogleBrowserService,
     private readonly cache: PublicCvLimitsService,
+    private readonly searlo: SearloSearchService,
   ) {}
 
   /**
@@ -50,12 +59,25 @@ export class LinkedinSearchService {
       return { query, page, count: cached.length, profiles: cached, cached: true };
     }
 
-    const results = await this.googleBrowser.search(query, page);
+    const { results, provider } = await this.fetchResults(query, page);
     const profiles = results.filter((r) => /linkedin\.com\/in\//i.test(r.url)).map((r) => this.toProfile(r));
 
     await this.cache.setJson(cacheKey, profiles, CACHE_TTL_SEC);
 
-    return { query, page, count: profiles.length, profiles, cached: false };
+    return { query, page, count: profiles.length, profiles, cached: false, provider };
+  }
+
+  /** Searlo's API first; the own Google browser when Searlo is off, failing, or paused after a failure. */
+  private async fetchResults(query: string, page: number): Promise<{ results: GoogleResult[]; provider: SearchProvider }> {
+    if (this.searlo.enabled && Date.now() >= this.searloPausedUntil) {
+      try {
+        return { results: await this.searlo.search(query, page), provider: 'searlo' };
+      } catch (error) {
+        this.searloPausedUntil = Date.now() + SEARLO_PAUSE_MS;
+        this.logger.warn(`Searlo failed (${(error as Error).message}); using the Google browser for the next ${SEARLO_PAUSE_MS / 60000} min`);
+      }
+    }
+    return { results: await this.googleBrowser.search(query, page), provider: 'google-browser' };
   }
 
   // LinkedIn titles look like "Name - Headline - Company | LinkedIn"
