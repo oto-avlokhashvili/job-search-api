@@ -25,7 +25,7 @@ export class InterviewPublicController {
   @Post(':token/answer')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 10, ttl: 60000 } })
-  @ApiOperation({ summary: 'Confirm, decline or ask for another time' })
+  @ApiOperation({ summary: 'Confirm one of the offered times, or decline (optionally: none of the times suits)' })
   answer(@Param('token') token: string, @Body() dto: InterviewAnswerDto) {
     return this.interviewService.answer(token, dto);
   }
@@ -34,16 +34,14 @@ export class InterviewPublicController {
   @HttpCode(HttpStatus.OK)
   // Each call stores a file and runs an AI summary
   @Throttle({ default: { limit: 5, ttl: 60000 } })
-  @ApiOperation({ summary: 'Invited candidate: accept (or ask for another time) with their details and CV' })
+  @ApiOperation({ summary: 'Invited candidate: accept one of the offered times with their details and CV' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['confirm', 'reschedule'] },
+        action: { type: 'string', enum: ['confirm'] },
         slot: { type: 'integer' },
-        note: { type: 'string' },
-        proposedTimes: { type: 'string', description: 'JSON array of ISO times' },
         fullName: { type: 'string' },
         email: { type: 'string' },
         phoneNumber: { type: 'string' },

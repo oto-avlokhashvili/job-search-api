@@ -15,8 +15,9 @@ export interface InterviewMailData {
   location: string;
   message: string | null;
   alternatives: Date[];
-  proposedTimes: Date[];
   candidateNote: string | null;
+  /** Declined because none of the offered times suits them */
+  timeConflict: boolean;
   /** Candidate's answer page */
   link: string;
   /** Changes on every edit, so calendars replace the old event */
@@ -90,8 +91,13 @@ function details(d: InterviewMailData) {
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
       style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:8px 16px;margin:0 0 18px;">
     ${detailRow('💼', 'პოზიცია', esc(d.position))}
-    ${detailRow('📅', 'თარიღი', formatDate(d.startsAt))}
-    ${detailRow('🕑', 'დრო', `${formatTime(d.startsAt)} – ${formatTime(endsAt(d))} <span style="font-weight:400;color:#64748b;">(${d.durationMin} წთ)</span>`)}
+    ${
+      offered(d).length > 1
+        ? // Several times on offer: all of them, the candidate picks one
+          detailRow('📅', 'ვარიანტები', `${offered(d).map((t) => formatShort(t)).join('<br>')} <span style="font-weight:400;color:#64748b;">(${d.durationMin} წთ)</span>`)
+        : `${detailRow('📅', 'თარიღი', formatDate(d.startsAt))}
+    ${detailRow('🕑', 'დრო', `${formatTime(d.startsAt)} – ${formatTime(endsAt(d))} <span style="font-weight:400;color:#64748b;">(${d.durationMin} წთ)</span>`)}`
+    }
     ${detailRow(d.format === InterviewFormat.ONLINE ? '💻' : '📍', 'ადგილი', place)}
     ${detailRow('👤', 'HR', `${esc(d.hrName)}${d.company ? ` · ${esc(d.company)}` : ''}`)}
   </table>`;
@@ -108,24 +114,26 @@ function button(href: string, label: string, bg: string, color = '#ffffff', bord
     background:${bg};color:${color};font-size:15px;font-weight:700;text-decoration:none;">${label}</a>`;
 }
 
+/** The times on offer: the main one, then the HR's alternatives still ahead */
+const offered = (d: InterviewMailData) => [d.startsAt, ...d.alternatives.filter((t) => t.getTime() > Date.now())];
+
 function answerButtons(d: InterviewMailData) {
-  const alts = d.alternatives.filter((t) => t.getTime() > Date.now());
-  return `
+  const decline = button(`${d.link}?a=decline`, '❌ უარი', '#ffffff', '#dc2626', '#fecaca');
+  if (offered(d).length === 1) {
+    return `
   <div style="margin:4px 0 6px;">
     ${button(`${d.link}?a=confirm`, '✅ დადასტურება', '#16a34a')}
-    ${button(`${d.link}?a=decline`, '❌ უარი', '#ffffff', '#dc2626', '#fecaca')}
-  </div>
-  <div style="margin:0 0 ${alts.length ? 18 : 6}px;">
-    ${button(`${d.link}?a=reschedule`, '🔄 სხვა დრო მირჩიეთ', '#ffffff', BRAND, '#bfdbfe')}
-  </div>
-  ${
-    alts.length
-      ? `<p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#64748b;">ან აირჩიეთ სხვა დრო:</p>
-         <div style="margin:0 0 6px;">${alts
-           .map((t) => button(`${d.link}?a=confirm&slot=${d.alternatives.indexOf(t)}`, formatShort(t), '#eff6ff', '#1d4ed8', '#bfdbfe'))
-           .join('')}</div>`
-      : ''
-  }`;
+    ${decline}
+  </div>`;
+  }
+  // Each variant confirms itself (the main time has no slot)
+  const slotOf = (t: Date) => (t === d.startsAt ? '' : `&slot=${d.alternatives.indexOf(t)}`);
+  return `
+  <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#64748b;">აირჩიეთ თქვენთვის მოსახერხებელი დრო:</p>
+  <div style="margin:0 0 8px;">${offered(d)
+    .map((t) => button(`${d.link}?a=confirm${slotOf(t)}`, `✅ ${formatShort(t)}`, '#f0fdf4', '#15803d', '#bbf7d0'))
+    .join('')}</div>
+  <div style="margin:0 0 6px;">${decline}</div>`;
 }
 
 const calendarNote = `<p style="margin:14px 0 0;font-size:13px;color:#64748b;">📎 თანდართული ფაილით (interview.ics) გასაუბრებას კალენდარში დაამატებთ.</p>`;
@@ -212,31 +220,25 @@ const boardLink = () => `${frontendUrl()}/hr/candidates`;
 
 export function hrAnswerEmail(d: InterviewMailData, status: InterviewStatus): MailContent {
   const name = d.candidateName || 'კანდიდატი';
-  const headline =
-    status === InterviewStatus.CONFIRMED
-      ? `${esc(name)}-მა დაადასტურა გასაუბრება ✅`
-      : status === InterviewStatus.DECLINED
-        ? `${esc(name)}-მა უარი თქვა გასაუბრებაზე`
-        : `${esc(name)}-მა სხვა დრო შემოგთავაზათ 🔄`;
-  const proposed = d.proposedTimes.length
-    ? `<p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#64748b;">შემოთავაზებული დრო:</p>
-       <ul style="margin:0 0 18px;padding-left:20px;font-size:15px;color:#0f172a;">${d.proposedTimes
-         .map((t) => `<li style="margin-bottom:4px;">${formatDate(t)}, ${formatTime(t)}</li>`)
-         .join('')}</ul>`
-    : '';
-  const subjectWord =
-    status === InterviewStatus.CONFIRMED ? 'დადასტურდა' : status === InterviewStatus.DECLINED ? 'უარი' : 'სხვა დრო';
+  const confirmed = status === InterviewStatus.CONFIRMED;
+  // Declined only over the time: the HR can offer other times
+  const timeOnly = !confirmed && d.timeConflict;
+  const headline = confirmed
+    ? `${esc(name)}-მა დაადასტურა გასაუბრება ✅`
+    : timeOnly
+      ? `${esc(name)}-ს შემოთავაზებული დრო არ მოერგო 🕑`
+      : `${esc(name)}-მა უარი თქვა გასაუბრებაზე`;
+  const subjectWord = confirmed ? 'დადასტურდა' : timeOnly ? 'დრო არ მოერგო' : 'უარი';
   return {
     subject: `${subjectWord}: ${name} · ${d.position}`,
     html: layout({
       preheader: `${formatDate(d.startsAt)}, ${formatTime(d.startsAt)}`,
       company: d.company,
       body: `
-        ${heading(headline)}
+        ${heading(headline, timeOnly ? 'შესთავაზეთ სხვა დროის ვარიანტები: გასაუბრების შეცვლისას კანდიდატი ახალ მოწვევას მიიღებს.' : undefined)}
         ${details(d)}
-        ${proposed}
         ${quote(d.candidateNote)}
-        ${button(boardLink(), 'კანდიდატის ნახვა', BRAND)}`,
+        ${button(boardLink(), timeOnly ? 'სხვა დროის შეთავაზება' : 'კანდიდატის ნახვა', BRAND)}`,
     }),
     ics: status === InterviewStatus.CONFIRMED ? buildIcs(d, InterviewStatus.CONFIRMED) : undefined,
   };

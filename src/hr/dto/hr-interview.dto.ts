@@ -131,9 +131,9 @@ export class UpdateInterviewDto {
 }
 
 export class InterviewAnswerDto {
-  @ApiProperty({ enum: ['confirm', 'decline', 'reschedule'] })
-  @IsIn(['confirm', 'decline', 'reschedule'])
-  action: 'confirm' | 'decline' | 'reschedule';
+  @ApiProperty({ enum: ['confirm', 'decline'] })
+  @IsIn(['confirm', 'decline'])
+  action: 'confirm' | 'decline';
 
   @ApiPropertyOptional({ description: "confirm: one of the HR's alternative times (index)" })
   @IsOptional()
@@ -148,12 +148,10 @@ export class InterviewAnswerDto {
   @MaxLength(500)
   note?: string;
 
-  @ApiPropertyOptional({ type: [String], maxItems: MAX_ALTERNATIVES })
+  @ApiPropertyOptional({ description: 'decline: none of the offered times suits the candidate' })
   @IsOptional()
-  @IsArray()
-  @ArrayMaxSize(MAX_ALTERNATIVES)
-  @IsDateString({}, { each: true })
-  proposedTimes?: string[];
+  @IsBoolean()
+  timeConflict?: boolean;
 }
 
 export class GoogleConnectDto {
@@ -186,44 +184,19 @@ export class InviteInterviewDto extends ScheduleInterviewDto {
 }
 
 const toBool = ({ value }: { value: unknown }) => value === true || value === 'true' || value === '1' || value === 1;
-// Multipart sends the list as a JSON string (or repeated fields)
-const toList = ({ value }: { value: unknown }) => {
-  if (Array.isArray(value)) return value;
-  if (typeof value !== 'string' || !value.trim()) return undefined;
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [value];
-  } catch {
-    return [value];
-  }
-};
 
-/** An invited candidate's answer with their details and CV (multipart/form-data, the CV in `file`). */
+/** An invited candidate's acceptance with their details and CV (multipart/form-data, the CV in `file`). */
 export class InterviewJoinDto {
-  @ApiProperty({ enum: ['confirm', 'reschedule'] })
-  @IsIn(['confirm', 'reschedule'])
-  action: 'confirm' | 'reschedule';
+  @ApiProperty({ enum: ['confirm'] })
+  @IsIn(['confirm'])
+  action: 'confirm';
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: "One of the HR's alternative times (index)" })
   @IsOptional()
   @IsInt()
   @Min(0)
   @Max(MAX_ALTERNATIVES - 1)
   slot?: number;
-
-  @ApiPropertyOptional({ maxLength: 500 })
-  @IsOptional()
-  @IsString()
-  @MaxLength(500)
-  note?: string;
-
-  @ApiPropertyOptional({ type: [String], description: 'JSON array of ISO times' })
-  @IsOptional()
-  @Transform(toList)
-  @IsArray()
-  @ArrayMaxSize(MAX_ALTERNATIVES)
-  @IsDateString({}, { each: true })
-  proposedTimes?: string[];
 
   @ApiProperty({ maxLength: 150 })
   @IsString()

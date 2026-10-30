@@ -10,6 +10,7 @@ const state = (over: Partial<AnswerState> = {}): AnswerState => ({
   alternatives: [at('2026-10-31T07:00:00Z')],
   proposedTimes: [],
   candidateNote: null,
+  timeConflict: false,
   ...over,
 });
 
@@ -53,15 +54,17 @@ describe('applyAnswer', () => {
     expect(() => applyAnswer(state(), { action: 'confirm', slot: 2 }, now)).toThrow(AnswerError);
   });
 
-  it('declines with a trimmed note and asks for other times', () => {
+  it('declines with a trimmed note, and says when it is only the time', () => {
     expect(applyAnswer(state(), { action: 'decline', note: '  found   another job ' }, now).state).toMatchObject({
       status: InterviewStatus.DECLINED,
       candidateNote: 'found another job',
+      timeConflict: false,
     });
-    const re = applyAnswer(state(), { action: 'reschedule', proposedTimes: ['2026-11-03T08:00:00Z'] }, now);
-    expect(re.state.status).toBe(InterviewStatus.RESCHEDULE_REQUESTED);
-    expect(re.state.proposedTimes).toHaveLength(1);
-    expect(() => applyAnswer(state(), { action: 'reschedule', proposedTimes: [] }, now)).toThrow('მიუთითეთ');
+    const busy = applyAnswer(state(), { action: 'decline', timeConflict: true }, now);
+    expect(busy.state).toMatchObject({ status: InterviewStatus.DECLINED, timeConflict: true });
+    // Ticking it after declining is a change; confirming later clears it
+    expect(applyAnswer(applyAnswer(state(), { action: 'decline' }, now).state, { action: 'decline', timeConflict: true }, now).changed).toBe(true);
+    expect(applyAnswer(busy.state, { action: 'confirm' }, now).state.timeConflict).toBe(false);
   });
 
   it('a repeated answer changes nothing; cancelled or started interviews take no answers', () => {
@@ -100,8 +103,8 @@ describe('interview emails', () => {
     location: 'https://meet.google.com/abc-defg-hij',
     message: 'Bring your portfolio, please; thanks',
     alternatives: [at('2099-01-01T10:00:00Z')],
-    proposedTimes: [],
     candidateNote: null,
+    timeConflict: false,
     link: 'https://jobup.ge/interview/7.sig',
     sequence: 1,
   };
@@ -113,8 +116,10 @@ describe('interview emails', () => {
     expect(html).toContain('Acme &amp; Co');
     expect(html).toContain('https://jobup.ge/interview/7.sig?a=confirm');
     expect(html).toContain('https://jobup.ge/interview/7.sig?a=decline');
-    expect(html).toContain('https://jobup.ge/interview/7.sig?a=reschedule');
+    expect(html).not.toContain('a=reschedule');
+    // Each offered time is its own button
     expect(html).toContain('?a=confirm&slot=0');
+    expect(html).toContain('ვარიანტები');
     expect(subject).toContain('Acme & Co');
   });
 

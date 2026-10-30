@@ -80,6 +80,9 @@ export interface InterviewView {
   alternatives: Date[];
   status: InterviewStatus;
   candidateNote: string | null;
+  /** Declined because none of the offered times suits them */
+  timeConflict: boolean;
+  /** Older answers: times the candidate proposed (candidates no longer propose times) */
   proposedTimes: Date[];
   sentTo: string | null;
   respondedAt: Date | null;
@@ -101,6 +104,7 @@ export interface PublicInterview {
   alternatives: { slot: number; startsAt: Date }[];
   proposedTimes: Date[];
   candidateNote: string | null;
+  timeConflict: boolean;
   position: string;
   company: string;
   hrName: string;
@@ -274,13 +278,13 @@ export class HrInterviewService {
   }
 
   /**
-   * An invited candidate accepts (or asks for another time) with their details and CV: the CV is saved and
+   * An invited candidate accepts one of the offered times with their details and CV: the CV is saved and
    * AI-summarized, opened to the HR (no quota), put on the vacancy's board at "Interview", then the answer
    * is recorded as for any candidate. Already joined: it's just the answer.
    */
   async join(token: string, dto: InterviewJoinDto, file: Express.Multer.File): Promise<PublicInterview> {
     const interview = await this.byToken(token);
-    const answer: InterviewAnswerDto = { action: dto.action, slot: dto.slot, note: dto.note, proposedTimes: dto.proposedTimes };
+    const answer: InterviewAnswerDto = { action: dto.action, slot: dto.slot };
     // Someone already joined: the link is theirs now, so this is just an answer
     if (interview.cvId !== null) return this.answer(token, answer);
     if (inviteExpired(interview)) throw expiredLink();
@@ -357,7 +361,7 @@ export class HrInterviewService {
     if (dto.acceptProposed !== undefined) {
       const chosen = interview.proposedTimes[dto.acceptProposed];
       if (!chosen || chosen <= now) throw new BadRequestException('ეს დრო აღარ არის ხელმისაწვდომი');
-      Object.assign(interview, { startsAt: chosen, status: InterviewStatus.CONFIRMED, proposedTimes: [], alternatives: [], candidateNote: null });
+      Object.assign(interview, { startsAt: chosen, status: InterviewStatus.CONFIRMED, proposedTimes: [], alternatives: [], candidateNote: null, timeConflict: false });
       const saved = await this.interviewRepository.save(interview);
       await this.syncMeet(saved);
       // Signed by the HR: "confirmed" events in the history are the candidate's own answers
@@ -367,18 +371,26 @@ export class HrInterviewService {
       return this.toView(saved);
     }
 
-    // Edit: a new time needs the candidate's confirmation again
+    // Edit: new times need the candidate's answer again
+    const edited = interview;
+    const offeredTimes = () => [edited.startsAt, ...edited.alternatives].map((d) => d.getTime()).join();
+    const startBefore = interview.startsAt.getTime();
+    const timesBefore = offeredTimes();
     if (dto.startsAt !== undefined) {
       const startsAt = new Date(dto.startsAt);
       if (!isValidStart(startsAt, now)) throw new BadRequestException('აირჩიეთ მომავალი თარიღი');
-      if (startsAt.getTime() !== interview.startsAt.getTime()) {
-        Object.assign(interview, { startsAt, status: InterviewStatus.PENDING, proposedTimes: [], candidateNote: null, respondedAt: null });
-      }
+      interview.startsAt = startsAt;
     }
     if (dto.durationMin !== undefined) interview.durationMin = dto.durationMin;
     if (dto.format !== undefined) interview.format = dto.format;
     if (dto.message !== undefined) interview.message = dto.message?.trim() || null;
     if (dto.alternatives !== undefined) interview.alternatives = this.cleanAlternatives(dto.alternatives, interview.startsAt, now);
+    // A moved time, or other variants for a candidate who hasn't confirmed (e.g. none of the times suited them)
+    const reask =
+      interview.startsAt.getTime() !== startBefore || (interview.status !== InterviewStatus.CONFIRMED && offeredTimes() !== timesBefore);
+    if (reask) {
+      Object.assign(interview, { status: InterviewStatus.PENDING, proposedTimes: [], candidateNote: null, timeConflict: false, respondedAt: null });
+    }
 
     // A generated Meet link stays (its event follows the new time) until the HR turns it off or goes on site
     const hadMeet = !!interview.googleEventId;
@@ -420,6 +432,7 @@ export class HrInterviewService {
         .filter((a) => a.startsAt.getTime() > now),
       proposedTimes: interview.proposedTimes,
       candidateNote: interview.candidateNote,
+      timeConflict: interview.timeConflict,
       position: d.position,
       company: d.company,
       hrName: d.hrName,
@@ -456,7 +469,8 @@ export class HrInterviewService {
     const entry = saved.entryId !== null ? await this.pipelineService.findOwned(saved.hrUserId, saved.entryId).catch(() => null) : null;
     const type = ANSWER_EVENT[saved.status];
     if (entry && type) {
-      await this.pipelineService.recordEvent(entry, { type, interviewAt: saved.startsAt, note: saved.candidateNote });
+      const note = [saved.timeConflict && 'დრო არ მოერგო', saved.candidateNote].filter(Boolean).join(' · ') || null;
+      await this.pipelineService.recordEvent(entry, { type, interviewAt: saved.startsAt, note });
     }
 
     await this.mailHr(saved, (d) => hrAnswerEmail(d, saved.status));
@@ -620,8 +634,8 @@ export class HrInterviewService {
       location: interview.location,
       message: interview.message,
       alternatives: interview.alternatives,
-      proposedTimes: interview.proposedTimes,
       candidateNote: interview.candidateNote,
+      timeConflict: interview.timeConflict,
       link: interviewLink(interview.id, interview.linkNonce),
       sequence: Math.floor((interview.updatedAt ?? new Date()).getTime() / 1000),
       newCandidate: interview.cvId === null,
@@ -646,6 +660,7 @@ export class HrInterviewService {
       alternatives: iv.alternatives,
       status: iv.status,
       candidateNote: iv.candidateNote,
+      timeConflict: iv.timeConflict,
       proposedTimes: iv.proposedTimes,
       sentTo: iv.sentTo,
       respondedAt: iv.respondedAt,

@@ -63,7 +63,7 @@ export const isValidStart = (date: Date, now: Date) =>
 
 // ─── Candidate answer ──────────────────────────────────────────
 
-export type CandidateAction = 'confirm' | 'decline' | 'reschedule';
+export type CandidateAction = 'confirm' | 'decline';
 
 export interface AnswerState {
   status: InterviewStatus;
@@ -71,6 +71,7 @@ export interface AnswerState {
   alternatives: Date[];
   proposedTimes: Date[];
   candidateNote: string | null;
+  timeConflict: boolean;
 }
 
 export interface CandidateAnswer {
@@ -78,12 +79,13 @@ export interface CandidateAnswer {
   /** confirm: index of one of the HR's alternative times instead of the main one */
   slot?: number;
   note?: string | null;
-  proposedTimes?: string[];
+  /** decline: none of the offered times suits them */
+  timeConflict?: boolean;
 }
 
 export class AnswerError extends Error {
   constructor(
-    readonly code: 'CANCELLED' | 'PAST' | 'BAD_SLOT' | 'BAD_TIMES',
+    readonly code: 'CANCELLED' | 'PAST' | 'BAD_SLOT',
     message: string,
   ) {
     super(message);
@@ -115,16 +117,12 @@ export function applyAnswer(current: AnswerState, answer: CandidateAnswer, now: 
     state.alternatives = [];
     state.proposedTimes = [];
     state.candidateNote = null;
-  } else if (answer.action === 'decline') {
+    state.timeConflict = false;
+  } else {
     state.status = InterviewStatus.DECLINED;
     state.proposedTimes = [];
     state.candidateNote = cleanNote(answer.note);
-  } else {
-    const times = cleanTimes(answer.proposedTimes ?? [], now);
-    if (!times || !times.length) throw new AnswerError('BAD_TIMES', 'მიუთითეთ 1-დან 3-მდე მომავალი დრო');
-    state.status = InterviewStatus.RESCHEDULE_REQUESTED;
-    state.proposedTimes = times;
-    state.candidateNote = cleanNote(answer.note);
+    state.timeConflict = !!answer.timeConflict;
   }
 
   const sameTimes = (a: Date[], b: Date[]) => a.length === b.length && a.every((d, i) => d.getTime() === b[i].getTime());
@@ -132,6 +130,7 @@ export function applyAnswer(current: AnswerState, answer: CandidateAnswer, now: 
     state.status !== current.status ||
     state.startsAt.getTime() !== current.startsAt.getTime() ||
     state.candidateNote !== current.candidateNote ||
+    state.timeConflict !== current.timeConflict ||
     !sameTimes(state.proposedTimes, current.proposedTimes);
   return { state, changed };
 }

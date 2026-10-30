@@ -24,6 +24,7 @@ function setup({ candidateEmail = 'ani@example.test', stage = PipelineStage.CONT
         status: InterviewStatus.PENDING,
         proposedTimes: [],
         candidateNote: null,
+        timeConflict: false,
         respondedAt: null,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -170,15 +171,18 @@ describe('HrInterviewService', () => {
     await expect(service.publicView('nonsense')).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it('HR accepts a proposed time; cancelling emails the candidate only if they were invited', async () => {
+  it("none of the times suits: the HR offers other variants and asks again; cancelling emails the candidate", async () => {
     const { service, email, draft, token } = setup();
     await service.schedule(hr, 3, draft);
-    const proposed = inDays(4);
-    await service.answer(token(), { action: 'reschedule', proposedTimes: [proposed] });
+    email.queueEmail.mockClear();
+    const declined = await service.answer(token(), { action: 'decline', timeConflict: true });
+    expect(declined).toMatchObject({ status: InterviewStatus.DECLINED, timeConflict: true });
+    expect(email.queueEmail.mock.calls[0][1]).toContain('დრო არ მოერგო');
 
-    const accepted = await service.update(hr, 1, { acceptProposed: 0 });
-    expect(accepted).toMatchObject({ status: InterviewStatus.CONFIRMED, proposedTimes: [] });
-    expect(new Date(accepted.startsAt).toISOString()).toBe(proposed);
+    // Same main time, new variants: the candidate answers again
+    const reoffered = await service.update(hr, 1, { alternatives: [inDays(4), inDays(5)] });
+    expect(reoffered).toMatchObject({ status: InterviewStatus.PENDING, timeConflict: false });
+    expect(reoffered.alternatives).toHaveLength(2);
 
     email.queueEmail.mockClear();
     const cancelled = await service.update(hr, 1, { cancel: true });
@@ -361,11 +365,13 @@ describe('HrInterviewService invitations (candidate not on the platform yet)', (
     expect(queue.add).toHaveBeenCalled();
   });
 
-  it('can ask for another time while joining', async () => {
+  it('picks one of the offered times while joining', async () => {
     const { service, token, interviews } = setup();
-    await service.invite(hr, invite());
-    await service.join(token(), joinData({ action: 'reschedule', proposedTimes: [inDays(4)], note: 'Thursday is busy' }), file);
-    expect(interviews.rows[0]).toMatchObject({ status: InterviewStatus.RESCHEDULE_REQUESTED, cvId: 10 });
+    const other = inDays(4);
+    await service.invite(hr, invite({ alternatives: [other] }));
+    await service.join(token(), joinData({ slot: 0 }), file);
+    expect(interviews.rows[0]).toMatchObject({ status: InterviewStatus.CONFIRMED, cvId: 10, alternatives: [] });
+    expect(interviews.rows[0].startsAt.toISOString()).toBe(other);
   });
 
   it('stores nothing without consent or for a cancelled invitation', async () => {

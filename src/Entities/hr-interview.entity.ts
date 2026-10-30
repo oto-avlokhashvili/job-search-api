@@ -14,8 +14,8 @@ export enum InterviewStatus {
 }
 
 /**
- * An interview an HR scheduled for one board card. The candidate answers through a link
- * (no account needed): confirm, decline, or ask for another time.
+ * An interview an HR scheduled for one board card, offering one or a few times. The candidate answers
+ * through a link (no account needed): confirm the time that suits them, or decline (maybe because none does).
  * An invitation to someone not on the platform yet has no card until they accept with their CV.
  */
 @Entity('hr_interviews')
@@ -80,11 +80,15 @@ export class HrInterview {
   @Column({ type: 'enum', enum: InterviewStatus, default: InterviewStatus.PENDING })
   status: InterviewStatus;
 
-  // Candidate's decline reason or reschedule note
+  // Candidate's decline reason (on older answers, a reschedule note)
   @Column({ type: 'varchar', length: 500, nullable: true, default: null })
   candidateNote: string | null;
 
-  // Times the candidate suggested instead
+  // Declined because none of the offered times suits them: the HR can offer others
+  @Column({ default: false })
+  timeConflict: boolean;
+
+  // Times the candidate suggested instead (older answers only: candidates no longer propose times)
   @Column({ type: 'timestamptz', array: true, default: () => "'{}'" })
   proposedTimes: Date[];
 
