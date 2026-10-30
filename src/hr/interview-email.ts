@@ -118,12 +118,13 @@ function button(href: string, label: string, bg: string, color = '#ffffff', bord
 const offered = (d: InterviewMailData) => [d.startsAt, ...d.alternatives.filter((t) => t.getTime() > Date.now())];
 
 function answerButtons(d: InterviewMailData) {
-  const decline = button(`${d.link}?a=decline`, '❌ უარი', '#ffffff', '#dc2626', '#fecaca');
+  // Besides confirming: none of the times suits, or not coming at all
+  const others = `${button(`${d.link}?a=reschedule`, '🕑 სხვა დრო მჭირდება', '#ffffff', '#7c3aed', '#ddd6fe')}${button(`${d.link}?a=decline`, '❌ უარი', '#ffffff', '#dc2626', '#fecaca')}`;
   if (offered(d).length === 1) {
     return `
   <div style="margin:4px 0 6px;">
     ${button(`${d.link}?a=confirm`, '✅ დადასტურება', '#16a34a')}
-    ${decline}
+    ${others}
   </div>`;
   }
   // Each variant confirms itself (the main time has no slot)
@@ -133,7 +134,7 @@ function answerButtons(d: InterviewMailData) {
   <div style="margin:0 0 8px;">${offered(d)
     .map((t) => button(`${d.link}?a=confirm${slotOf(t)}`, `✅ ${formatShort(t)}`, '#f0fdf4', '#15803d', '#bbf7d0'))
     .join('')}</div>
-  <div style="margin:0 0 6px;">${decline}</div>`;
+  <div style="margin:0 0 6px;">${others}</div>`;
 }
 
 const calendarNote = `<p style="margin:14px 0 0;font-size:13px;color:#64748b;">📎 თანდართული ფაილით (interview.ics) გასაუბრებას კალენდარში დაამატებთ.</p>`;
@@ -217,28 +218,30 @@ export function reminderEmail(d: InterviewMailData, hoursBefore: number): MailCo
 // ─── Emails to the HR ──────────────────────────────────────────
 
 const boardLink = () => `${frontendUrl()}/hr/candidates`;
+// Where the HR answers requests for other times
+const interviewsLink = () => `${frontendUrl()}/hr/interviews`;
 
 export function hrAnswerEmail(d: InterviewMailData, status: InterviewStatus): MailContent {
   const name = d.candidateName || 'კანდიდატი';
   const confirmed = status === InterviewStatus.CONFIRMED;
-  // Declined only over the time: the HR can offer other times
-  const timeOnly = !confirmed && d.timeConflict;
+  // Only the time is the problem (older answers: declined over it): the HR offers other times
+  const timeOnly = status === InterviewStatus.RESCHEDULE_REQUESTED || (!confirmed && d.timeConflict);
   const headline = confirmed
     ? `${esc(name)}-მა დაადასტურა გასაუბრება ✅`
     : timeOnly
-      ? `${esc(name)}-ს შემოთავაზებული დრო არ მოერგო 🕑`
+      ? `${esc(name)}-ს სხვა დრო სჭირდება 🕑`
       : `${esc(name)}-მა უარი თქვა გასაუბრებაზე`;
-  const subjectWord = confirmed ? 'დადასტურდა' : timeOnly ? 'დრო არ მოერგო' : 'უარი';
+  const subjectWord = confirmed ? 'დადასტურდა' : timeOnly ? 'სხვა დრო სჭირდება' : 'უარი';
   return {
     subject: `${subjectWord}: ${name} · ${d.position}`,
     html: layout({
       preheader: `${formatDate(d.startsAt)}, ${formatTime(d.startsAt)}`,
       company: d.company,
       body: `
-        ${heading(headline, timeOnly ? 'შესთავაზეთ სხვა დროის ვარიანტები: გასაუბრების შეცვლისას კანდიდატი ახალ მოწვევას მიიღებს.' : undefined)}
+        ${heading(headline, timeOnly ? 'შესთავაზეთ სხვა დროის ვარიანტები: კანდიდატი მათ ელ-ფოსტით მიიღებს და იმავე ბმულზე აირჩევს.' : undefined)}
         ${details(d)}
         ${quote(d.candidateNote)}
-        ${button(boardLink(), timeOnly ? 'სხვა დროის შეთავაზება' : 'კანდიდატის ნახვა', BRAND)}`,
+        ${timeOnly ? button(interviewsLink(), 'ახალი დროის შეთავაზება', BRAND) : button(boardLink(), 'კანდიდატის ნახვა', BRAND)}`,
     }),
     ics: status === InterviewStatus.CONFIRMED ? buildIcs(d, InterviewStatus.CONFIRMED) : undefined,
   };

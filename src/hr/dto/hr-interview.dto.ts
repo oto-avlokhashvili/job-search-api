@@ -131,9 +131,22 @@ export class UpdateInterviewDto {
 }
 
 export class InterviewAnswerDto {
-  @ApiProperty({ enum: ['confirm', 'decline'] })
-  @IsIn(['confirm', 'decline'])
-  action: 'confirm' | 'decline';
+  @ApiProperty({ enum: ['confirm', 'reschedule', 'decline'] })
+  @IsIn(['confirm', 'reschedule', 'decline'])
+  action: 'confirm' | 'reschedule' | 'decline';
+
+  @ApiPropertyOptional({ maxLength: 150, description: "reschedule, invitee not on the platform yet: their name (new times are emailed)" })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(150)
+  fullName?: string;
+
+  @ApiPropertyOptional({ description: 'reschedule, invitee not on the platform yet: where the new times go' })
+  @IsOptional()
+  @IsEmail()
+  @MaxLength(255)
+  email?: string;
 
   @ApiPropertyOptional({ description: "confirm: one of the HR's alternative times (index)" })
   @IsOptional()

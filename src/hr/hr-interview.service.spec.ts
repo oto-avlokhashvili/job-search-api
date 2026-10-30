@@ -175,13 +175,17 @@ describe('HrInterviewService', () => {
     const { service, email, draft, token } = setup();
     await service.schedule(hr, 3, draft);
     email.queueEmail.mockClear();
-    const declined = await service.answer(token(), { action: 'decline', timeConflict: true });
-    expect(declined).toMatchObject({ status: InterviewStatus.DECLINED, timeConflict: true });
-    expect(email.queueEmail.mock.calls[0][1]).toContain('დრო არ მოერგო');
+    const asked = await service.answer(token(), { action: 'reschedule', note: 'after 18:00' });
+    expect(asked).toMatchObject({ status: InterviewStatus.RESCHEDULE_REQUESTED, candidateNote: 'after 18:00', timeConflict: false });
+    expect(email.queueEmail.mock.calls[0][1]).toContain('სხვა დრო სჭირდება');
+    expect(email.queueEmail.mock.calls[0][2]).toContain('/hr/interviews');
 
-    // Same main time, new variants: the candidate answers again
+    // Same main time, new variants: the candidate answers again, emailed on the same link
+    email.queueEmail.mockClear();
     const reoffered = await service.update(hr, 1, { alternatives: [inDays(4), inDays(5)] });
-    expect(reoffered).toMatchObject({ status: InterviewStatus.PENDING, timeConflict: false });
+    expect(reoffered).toMatchObject({ status: InterviewStatus.PENDING, timeConflict: false, candidateNote: null });
+    expect(email.queueEmail.mock.calls[0][0]).toBe('ani@example.test');
+    expect(email.queueEmail.mock.calls[0][2]).toContain(token());
     expect(reoffered.alternatives).toHaveLength(2);
 
     email.queueEmail.mockClear();
@@ -340,6 +344,47 @@ describe('HrInterviewService invitations (candidate not on the platform yet)', (
     expect(declined.status).toBe(InterviewStatus.DECLINED);
     expect(pipeline.recordEvent).not.toHaveBeenCalled(); // no card, no history
     expect(email.queueEmail.mock.calls.map((c) => c[0])).toEqual(['hr@acme.ge']);
+  });
+
+  it('invitee needs another time: leaves name and email (no CV), the link is theirs, new times are emailed to it', async () => {
+    const { service, token, interviews, email, cvService } = setup();
+    await service.invite(hr, invite());
+    const link = token();
+
+    await expect(service.answer(link, { action: 'reschedule' })).rejects.toThrow('ელ-ფოსტა');
+    email.queueEmail.mockClear();
+    const asked = await service.answer(link, { action: 'reschedule', fullName: ' Ani  Ts ', email: 'ani@example.test', note: 'evenings' });
+    expect(asked).toMatchObject({ status: InterviewStatus.RESCHEDULE_REQUESTED, inviteeName: 'Ani Ts', inviteeEmail: 'ani@example.test', inviteExpired: false });
+    expect(email.queueEmail.mock.calls.map((c) => c[0])).toEqual(['hr@acme.ge']);
+    expect(email.queueEmail.mock.calls[0][1]).toContain('Ani Ts');
+
+    // Claimed: the day passing doesn't close it
+    expect(interviews.rows[0].inviteExpiresAt).toBeNull();
+    email.queueEmail.mockClear();
+    const updated = await service.update(hr, 1, { startsAt: inDays(3) });
+    expect(updated).toMatchObject({ status: InterviewStatus.PENDING, sentTo: 'ani@example.test', inviteExpiresAt: null });
+    expect(token()).toBe(link);
+    expect(email.queueEmail.mock.calls.map((c) => c[0])).toEqual(['ani@example.test']);
+    expect(email.queueEmail.mock.calls[0][2]).toContain(link);
+
+    // Confirming still takes the CV
+    expect(await service.publicView(link)).toMatchObject({ status: InterviewStatus.PENDING, canRespond: true, needsProfile: true, inviteeName: 'Ani Ts' });
+    await expect(service.answer(link, { action: 'confirm' })).rejects.toThrow('CV');
+    await service.join(link, joinData(), file);
+    expect(cvService.saveInvitedCandidateCv).toHaveBeenCalledTimes(1);
+    expect(interviews.rows[0].status).toBe(InterviewStatus.CONFIRMED);
+  });
+
+  it('older answers: an unclaimed invitee who declined over the time gets another day on the same link', async () => {
+    const { service, token, interviews } = setup();
+    await service.invite(hr, invite());
+    const link = token();
+    await service.answer(link, { action: 'decline', timeConflict: true });
+    interviews.rows[0].inviteExpiresAt = new Date(Date.now() - 1000);
+
+    const updated = await service.update(hr, 1, { startsAt: inDays(3) });
+    expect(updated.inviteExpiresAt!.getTime()).toBeGreaterThan(Date.now() + 23 * HOUR);
+    expect(await service.publicView(link)).toMatchObject({ status: InterviewStatus.PENDING, inviteExpired: false });
   });
 
   it('joining saves the CV, opens it to the HR, puts the candidate on the board and confirms', async () => {

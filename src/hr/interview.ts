@@ -63,7 +63,7 @@ export const isValidStart = (date: Date, now: Date) =>
 
 // ─── Candidate answer ──────────────────────────────────────────
 
-export type CandidateAction = 'confirm' | 'decline';
+export type CandidateAction = 'confirm' | 'reschedule' | 'decline';
 
 export interface AnswerState {
   status: InterviewStatus;
@@ -78,8 +78,9 @@ export interface CandidateAnswer {
   action: CandidateAction;
   /** confirm: index of one of the HR's alternative times instead of the main one */
   slot?: number;
+  /** decline: the reason; reschedule: when it would suit them */
   note?: string | null;
-  /** decline: none of the offered times suits them */
+  /** decline (older answers): none of the offered times suits them; now that's "reschedule" */
   timeConflict?: boolean;
 }
 
@@ -117,6 +118,12 @@ export function applyAnswer(current: AnswerState, answer: CandidateAnswer, now: 
     state.alternatives = [];
     state.proposedTimes = [];
     state.candidateNote = null;
+    state.timeConflict = false;
+  } else if (answer.action === 'reschedule') {
+    // None of the times suits: the HR offers others on the same link
+    state.status = InterviewStatus.RESCHEDULE_REQUESTED;
+    state.proposedTimes = [];
+    state.candidateNote = cleanNote(answer.note);
     state.timeConflict = false;
   } else {
     state.status = InterviewStatus.DECLINED;

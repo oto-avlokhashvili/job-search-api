@@ -115,7 +115,8 @@ export interface PublicInterview {
   needsProfile: boolean;
   /** The invitation link's day is over before anyone joined: the HR has to send a new one */
   inviteExpired: boolean;
-  /** Prefill for that form: the address the invitation was sent to */
+  /** Prefill for that form: who asked for other times, and where the invitation went */
+  inviteeName: string | null;
   inviteeEmail: string | null;
 }
 
@@ -390,6 +391,8 @@ export class HrInterviewService {
       interview.startsAt.getTime() !== startBefore || (interview.status !== InterviewStatus.CONFIRMED && offeredTimes() !== timesBefore);
     if (reask) {
       Object.assign(interview, { status: InterviewStatus.PENDING, proposedTimes: [], candidateNote: null, timeConflict: false, respondedAt: null });
+      // An invitee whose link still expires (older answers) gets another day to answer through it
+      if (interview.cvId === null && interview.inviteExpiresAt) interview.inviteExpiresAt = new Date(now.getTime() + INVITE_TTL_MS);
     }
 
     // A generated Meet link stays (its event follows the new time) until the HR turns it off or goes on site
@@ -440,6 +443,7 @@ export class HrInterviewService {
       canRespond: interview.status !== InterviewStatus.CANCELLED && interview.startsAt.getTime() > now && !inviteExpired(interview, now),
       needsProfile: interview.cvId === null,
       inviteExpired: inviteExpired(interview, now),
+      inviteeName: interview.cvId === null ? interview.inviteeName : null,
       inviteeEmail: interview.cvId === null ? interview.inviteeEmail : null,
     };
   }
@@ -449,8 +453,19 @@ export class HrInterviewService {
     const interview = await this.byToken(token);
     // An invitee accepts through join (with their CV); declining needs no details
     if (inviteExpired(interview)) throw expiredLink();
-    if (interview.cvId === null && dto.action !== 'decline') {
+    if (interview.cvId === null && dto.action === 'confirm') {
       throw new BadRequestException({ statusCode: 400, message: 'შეავსეთ თქვენი მონაცემები და ატვირთეთ CV', code: 'PROFILE_REQUIRED' });
+    }
+    // An invitee asking for other times leaves a name and email: the new times are emailed to them,
+    // and the link is theirs from then on (no expiry, as after joining). The CV comes when they confirm.
+    let claim: Partial<HrInterview> = {};
+    if (interview.cvId === null && dto.action === 'reschedule') {
+      const fullName = dto.fullName?.replace(/\s+/g, ' ').trim();
+      const email = dto.email?.trim();
+      if (!fullName || !email) {
+        throw new BadRequestException({ statusCode: 400, message: 'მიუთითეთ სახელი და ელ-ფოსტა', code: 'CONTACT_REQUIRED' });
+      }
+      claim = { inviteeName: fullName, inviteeEmail: email, sentTo: email, inviteExpiresAt: null };
     }
     let result: ReturnType<typeof applyAnswer>;
     try {
@@ -459,10 +474,11 @@ export class HrInterviewService {
       if (error instanceof AnswerError) throw new BadRequestException({ statusCode: 400, message: error.message, code: error.code });
       throw error;
     }
-    if (!result.changed) return this.publicView(token);
+    const claimChanged = Object.entries(claim).some(([key, value]) => interview[key as keyof HrInterview] !== value);
+    if (!result.changed && !claimChanged) return this.publicView(token);
 
     const moved = result.state.startsAt.getTime() !== interview.startsAt.getTime();
-    Object.assign(interview, result.state, { respondedAt: new Date() });
+    Object.assign(interview, result.state, claim, { respondedAt: new Date() });
     const saved = await this.interviewRepository.save(interview);
     // Confirmed one of the HR's alternative times
     if (moved) await this.syncMeet(saved);

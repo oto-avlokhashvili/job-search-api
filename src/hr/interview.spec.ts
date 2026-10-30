@@ -67,6 +67,13 @@ describe('applyAnswer', () => {
     expect(applyAnswer(busy.state, { action: 'confirm' }, now).state.timeConflict).toBe(false);
   });
 
+  it('asks for other times with an optional note; a repeat changes nothing, confirming after works', () => {
+    const asked = applyAnswer(state(), { action: 'reschedule', note: ' evenings ' }, now);
+    expect(asked).toMatchObject({ changed: true, state: { status: InterviewStatus.RESCHEDULE_REQUESTED, candidateNote: 'evenings', timeConflict: false } });
+    expect(applyAnswer(asked.state, { action: 'reschedule', note: 'evenings' }, now).changed).toBe(false);
+    expect(applyAnswer(asked.state, { action: 'confirm' }, now).state).toMatchObject({ status: InterviewStatus.CONFIRMED, candidateNote: null });
+  });
+
   it('a repeated answer changes nothing; cancelled or started interviews take no answers', () => {
     const confirmed = applyAnswer(state(), { action: 'confirm' }, now).state;
     expect(applyAnswer(confirmed, { action: 'confirm' }, now).changed).toBe(false);
@@ -116,7 +123,7 @@ describe('interview emails', () => {
     expect(html).toContain('Acme &amp; Co');
     expect(html).toContain('https://jobup.ge/interview/7.sig?a=confirm');
     expect(html).toContain('https://jobup.ge/interview/7.sig?a=decline');
-    expect(html).not.toContain('a=reschedule');
+    expect(html).toContain('https://jobup.ge/interview/7.sig?a=reschedule');
     // Each offered time is its own button
     expect(html).toContain('?a=confirm&slot=0');
     expect(html).toContain('ვარიანტები');
