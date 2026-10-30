@@ -268,6 +268,13 @@ describe('HrInterviewService invitations (candidate not on the platform yet)', (
     ...over,
   });
 
+  it('may name who the link is for (e.g. found on LinkedIn): the list shows it, their form starts with it', async () => {
+    const { service, token } = setup();
+    const view = await service.invite(hr, invite({ inviteeName: '  Ani   Ts ' }));
+    expect(view).toMatchObject({ inviteeName: 'Ani Ts', cvId: null, sentTo: null });
+    expect(await service.publicView(token())).toMatchObject({ inviteeName: 'Ani Ts', candidateName: 'Ani', needsProfile: true });
+  });
+
   it('makes a link valid for a day, without a card, without knowing who it is for, emailing nobody', async () => {
     const { service, email, interviews } = setup();
     const view = await service.invite(hr, { ...invite(), send: true });

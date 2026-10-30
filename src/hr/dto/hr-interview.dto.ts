@@ -194,6 +194,12 @@ export class InviteInterviewDto extends ScheduleInterviewDto {
   @IsString()
   @MaxLength(150)
   position?: string;
+
+  @ApiPropertyOptional({ maxLength: 150, description: 'Who the link is for, when the HR knows (e.g. a LinkedIn profile): names the row and prefills their form' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  inviteeName?: string;
 }
 
 const toBool = ({ value }: { value: unknown }) => value === true || value === 'true' || value === '1' || value === 1;

@@ -226,7 +226,8 @@ export class HrInterviewService {
   }
 
   /**
-   * An interview invitation as a link the HR shares themselves: the HR doesn't need to know who it's for.
+   * An interview invitation as a link the HR shares themselves: the HR doesn't need to know who it's for
+   * (but may name them, e.g. someone found on LinkedIn).
    * It works for one person for a day: accepting asks for their details and CV, and they land on the
    * board at "Interview" (see join). No card until then.
    */
@@ -255,7 +256,8 @@ export class HrInterviewService {
         entryId: null,
         cvId: null,
         vacancyId,
-        inviteeName: null,
+        // Known when inviting someone found on LinkedIn; they still confirm it with their own details
+        inviteeName: dto.inviteeName?.replace(/\s+/g, ' ').trim() || null,
         inviteeEmail: null,
         inviteExpiresAt: new Date(now.getTime() + INVITE_TTL_MS),
         position,
