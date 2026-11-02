@@ -58,6 +58,51 @@ describe('LinkedinScraperService', () => {
     expect(result.totalJobs).toBe(1);
   });
 
+  const card = (id: number) => `
+    <li>
+      <div class="base-card" data-entity-urn="urn:li:jobPosting:${id}">
+        <h3 class="base-search-card__title">Job ${id}</h3>
+        <h4 class="base-search-card__subtitle">Company ${id}</h4>
+        <span class="job-search-card__location">Tbilisi, Georgia</span>
+        <a class="base-card__full-link" href="https://ge.linkedin.com/jobs/view/job-${id}"></a>
+        <time datetime="2026-10-30">3 days ago</time>
+      </div>
+    </li>`;
+  const page = (ids: number[]) => ({ data: `<ul>${ids.map(card).join('')}</ul>`, status: 200 });
+  const requestedParams = (call: number) => new URL(mockedAxios.get.mock.calls[call][0]).searchParams;
+
+  it('scopes searches to Georgia by geo id, never by the ambiguous "Georgia" location', async () => {
+    mockedAxios.get.mockResolvedValue(page([1]));
+
+    await service.scrapeJobs({ maxPages: 1 });
+    await service.scrapeJobs({ maxPages: 1, location: 'Georgia' });
+    await service.scrapeJobs({ maxPages: 1, location: 'Batumi' });
+
+    expect(requestedParams(0).get('geoId')).toBe('106315325');
+    expect(requestedParams(0).has('location')).toBe(false);
+    expect(requestedParams(1).get('geoId')).toBe('106315325');
+    expect(requestedParams(1).has('location')).toBe(false);
+    expect(requestedParams(2).get('location')).toBe('Batumi');
+    expect(requestedParams(2).has('geoId')).toBe(false);
+  });
+
+  it('scrapes the whole country newest first within the posting window, until a short page', async () => {
+    jest.spyOn(service as any, 'applyHumanDelay').mockResolvedValue(undefined);
+    const firstPage = Array.from({ length: 10 }, (_, i) => i + 1);
+    mockedAxios.get.mockResolvedValueOnce(page(firstPage)).mockResolvedValueOnce(page([11, 12, 1]));
+
+    const result = await service.scrapeAllGeorgiaJobs({ postedWithinDays: 2 });
+
+    expect(mockedAxios.get).toHaveBeenCalledTimes(2);
+    const params = requestedParams(1);
+    expect(params.get('geoId')).toBe('106315325');
+    expect(params.get('f_TPR')).toBe('r172800');
+    expect(params.get('sortBy')).toBe('DD');
+    expect(params.get('start')).toBe('10');
+    expect(result.jobs.map((j) => j.vacancy)).toEqual([...firstPage, 11, 12].map((id) => `Job ${id}`));
+    expect(result.jobs[10].page).toBe(2);
+  });
+
   it('should parse job description and criteria', async () => {
     const mockDetailHtml = `
       <div>

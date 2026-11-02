@@ -97,10 +97,10 @@ export class ScrapersController {
   @Post('sync-linkedin')
   @ApiQuery({ name: 'query', required: false, type: String, description: 'Alias for keywords filter' })
   @ApiQuery({ name: 'keywords', required: false, type: String, description: 'Search keywords' })
-  @ApiQuery({ name: 'location', required: false, type: String, description: 'Location (e.g. Tbilisi, Batumi, Georgia)' })
+  @ApiQuery({ name: 'location', required: false, type: String, description: 'City (e.g. Tbilisi, Batumi). Omit or pass "Georgia" for the whole country' })
   @ApiQuery({ name: 'startPage', required: false, type: Number })
   @ApiQuery({ name: 'maxPages', required: false, type: Number })
-  @ApiQuery({ name: 'maxPagesPerRegion', required: false, type: Number, description: 'Max pages to scrape per region when running countrywide (default: 30)' })
+  @ApiQuery({ name: 'postedWithinDays', required: false, type: Number, description: 'Countrywide scrape only: include postings from the last N days, newest first (default: 3)' })
   @ApiQuery({ name: 'delayBetweenRequests', required: false, type: Number })
   @ApiQuery({ name: 'fetchDescriptions', required: false, type: Boolean })
   @ApiQuery({ name: 'descriptionLimit', required: false, type: Number, description: 'Limit number of descriptions to fetch (e.g. 10 or 25) to prevent rate limits' })
@@ -110,7 +110,7 @@ export class ScrapersController {
     @Query('location') location?: string,
     @Query('startPage', new ParseIntPipe({ optional: true })) startPage?: number,
     @Query('maxPages', new ParseIntPipe({ optional: true })) maxPages?: number,
-    @Query('maxPagesPerRegion', new ParseIntPipe({ optional: true })) maxPagesPerRegion?: number,
+    @Query('postedWithinDays', new ParseIntPipe({ optional: true })) postedWithinDays?: number,
     @Query('delayBetweenRequests', new ParseIntPipe({ optional: true })) delayBetweenRequests?: number,
     @Query('fetchDescriptions') fetchDescriptions?: string,
     @Query('descriptionLimit', new ParseIntPipe({ optional: true })) descriptionLimit?: number,
@@ -121,7 +121,7 @@ export class ScrapersController {
       location,
       startPage,
       maxPages,
-      maxPagesPerRegion: maxPagesPerRegion || 30,
+      postedWithinDays,
       delayBetweenRequests,
       fetchDescriptions: fetchDescriptions === 'true',
       descriptionLimit: descriptionLimit || undefined,

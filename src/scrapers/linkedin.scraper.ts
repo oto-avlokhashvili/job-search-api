@@ -7,7 +7,8 @@ export interface LinkedinScraperOptions {
   keywords?: string;
   location?: string;
   allGeorgia?: boolean;
-  maxPagesPerRegion?: number;
+  /** Countrywide scrape only: how far back to look (default 3 days) */
+  postedWithinDays?: number;
   startPage?: number;
   maxPages?: number;
   delayBetweenRequests?: number;
@@ -22,13 +23,27 @@ export interface LinkedinScraperResult {
   lastPage: number;
 }
 
+/** A parsed search card plus the key it is deduplicated by (LinkedIn job id, or the link) */
+interface ParsedJobCard {
+  key: string;
+  job: Omit<JobData, 'page'>;
+}
+
 @Injectable()
 export class LinkedinScraperService {
   private readonly logger = new Logger(LinkedinScraperService.name);
 
-  // Using ge.linkedin.com ensures public guest searches default to Georgia (the country)
   private readonly searchBaseUrl = 'https://ge.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search';
   private readonly jobDetailBaseUrl = 'https://ge.linkedin.com/jobs-guest/jobs/api/jobPosting';
+
+  /**
+   * LinkedIn's geo id for Georgia (the country). Without it a search falls back to the caller's IP
+   * country, and `location=Georgia` resolves to the US state.
+   */
+  private readonly georgiaGeoId = '106315325';
+  /** Guest searches stop returning results after start=990 */
+  private readonly maxGuestPages = 100;
+  private readonly pageSize = 10;
 
   private cookiesMap = new Map<string, string>();
   private requestCounter = 0;
@@ -93,6 +108,120 @@ export class LinkedinScraperService {
   }
 
   /**
+   * Builds guest search params scoped to Georgia. A city name is passed as `location` (LinkedIn
+   * resolves it); an empty location or one naming the country itself uses Georgia's geo id.
+   */
+  private buildSearchParams(keywords: string, location: string, start: number): URLSearchParams {
+    const params = new URLSearchParams();
+    params.append('start', start.toString());
+    if (keywords.trim()) params.append('keywords', keywords.trim());
+    const loc = location.trim();
+    if (!loc || /^(georgia|საქართველო)$/i.test(loc)) {
+      params.append('geoId', this.georgiaGeoId);
+    } else {
+      params.append('location', loc);
+    }
+    return params;
+  }
+
+  private async fetchSearchPage(params: URLSearchParams): Promise<string> {
+    const requestUrl = `${this.searchBaseUrl}?${params.toString()}`;
+    this.logger.log(`Fetching LinkedIn search: ${requestUrl}`);
+    const response = await axios.get(requestUrl, {
+      headers: {
+        'User-Agent': this.getRandomUserAgent(),
+        'Accept-Language': 'en-US,en;q=0.9,ka;q=0.8',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Sec-Fetch-Site': 'same-origin',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Dest': 'empty',
+        ...(this.getSessionCookieHeader() ? { Cookie: this.getSessionCookieHeader() } : {}),
+      },
+      timeout: 15000,
+    });
+    this.extractCookies(response.headers?.['set-cookie']);
+    return typeof response.data === 'string' ? response.data : '';
+  }
+
+  /**
+   * Parses a guest search results page. `itemCount` counts every <li> (cards without a title
+   * included) so callers can tell a full page from the last one.
+   */
+  private parseJobCards(html: string): { cards: ParsedJobCard[]; itemCount: number } {
+    const $ = cheerio.load(html);
+    const listItems = $('li');
+    const cards: ParsedJobCard[] = [];
+
+    listItems.each((_, el) => {
+      const $el = $(el);
+
+      const urn =
+        $el.find('[data-entity-urn]').attr('data-entity-urn') ||
+        $el.find('.base-card').attr('data-entity-urn') ||
+        $el.attr('data-entity-urn') ||
+        '';
+
+      let jobId = '';
+      const matchUrn = urn.match(/urn:li:jobPosting:(\d+)/);
+      if (matchUrn) jobId = matchUrn[1];
+
+      const rawLink =
+        $el.find('a.base-card__full-link').attr('href') ||
+        $el.find('a').attr('href') ||
+        '';
+
+      let cleanLink = rawLink ? rawLink.split('?')[0].trim() : '';
+      if (!jobId && cleanLink) {
+        const matchLink = cleanLink.match(/-(\d+)$/);
+        if (matchLink) jobId = matchLink[1];
+      }
+      if (!cleanLink && jobId) {
+        cleanLink = `https://www.linkedin.com/jobs/view/${jobId}`;
+      }
+
+      const vacancy =
+        $el.find('.base-search-card__title').text().trim() ||
+        $el.find('h3').text().trim();
+
+      const key = jobId || cleanLink;
+      if (!key || !vacancy) return;
+
+      const company =
+        $el.find('.base-search-card__subtitle').text().trim() ||
+        $el.find('h4').text().trim() ||
+        'LinkedIn Employer';
+
+      const location =
+        $el.find('.job-search-card__location').text().trim().replace(/^[\s\-\–\—\•\.\,\/]+/g, '').trim() ||
+        'საქართველო';
+
+      // Lazy-loaded card image; only real company logos (not LinkedIn's gray placeholder)
+      const logoUrl = $el.find('img').first().attr('data-delayed-url') || '';
+      const companyLogo =
+        logoUrl.startsWith('https://media.licdn.com/') && logoUrl.includes('company-logo') ? logoUrl : undefined;
+
+      const timeEl = $el.find('time');
+      const publishDate = this.parsePublishDate(timeEl.attr('datetime'), timeEl.text().trim());
+
+      cards.push({
+        key,
+        job: {
+          vacancy,
+          location,
+          company,
+          link: cleanLink,
+          publishDate,
+          deadline: this.calculateDeadline(publishDate),
+          description: undefined,
+          companyLogo,
+        },
+      });
+    });
+
+    return { cards, itemCount: listItems.length };
+  }
+
+  /**
    * Scrapes LinkedIn jobs for Georgia with pagination, deduplication, and optional full descriptions.
    */
   async scrapeJobs(options: LinkedinScraperOptions = {}): Promise<LinkedinScraperResult> {
@@ -108,9 +237,7 @@ export class LinkedinScraperService {
       location = '',
       startPage = 1,
       maxPages = 50,
-      delayBetweenRequests = 600,
       fetchDescriptions = false,
-      descriptionDelay = 800,
       descriptionLimit = undefined,
     } = options;
 
@@ -121,50 +248,17 @@ export class LinkedinScraperService {
     const allJobs: JobData[] = [];
     const seenJobIds = new Set<string>();
     let currentPage = startPage;
-    let keepScraping = true;
     let consecutiveEmptyPages = 0;
     let consecutive429 = 0;
 
-    const pageSize = 10;
-
-    while (keepScraping) {
-      if (currentPage > startPage + maxPages - 1) {
-        this.logger.log(`Reached max pages limit of ${maxPages}. Stopping scraper.`);
-        break;
-      }
-
-      const startIndex = (currentPage - 1) * pageSize;
-      const params = new URLSearchParams();
-      params.append('start', startIndex.toString());
-      if (keywords && keywords.trim()) {
-        params.append('keywords', keywords.trim());
-      }
-      if (location && location.trim()) {
-        params.append('location', location.trim());
-      }
-
-      const requestUrl = `${this.searchBaseUrl}?${params.toString()}`;
-      this.logger.log(`Scraping LinkedIn page ${currentPage} (start=${startIndex}): ${requestUrl}`);
+    while (currentPage <= startPage + maxPages - 1) {
+      const params = this.buildSearchParams(keywords, location, (currentPage - 1) * this.pageSize);
 
       try {
-        const response = await axios.get(requestUrl, {
-          headers: {
-            'User-Agent': this.getRandomUserAgent(),
-            'Accept-Language': 'en-US,en;q=0.9,ka;q=0.8',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Sec-Fetch-Site': 'same-origin',
-            'Sec-Fetch-Mode': 'cors',
-            'Sec-Fetch-Dest': 'empty',
-            ...(this.getSessionCookieHeader() ? { Cookie: this.getSessionCookieHeader() } : {}),
-          },
-          timeout: 15000,
-        });
-
-        this.extractCookies(response.headers?.['set-cookie']);
+        const html = await this.fetchSearchPage(params);
         consecutive429 = 0;
 
-        const html = response.data;
-        if (!html || typeof html !== 'string' || html.trim() === '') {
+        if (html.trim() === '') {
           this.logger.warn(`LinkedIn page ${currentPage} returned empty response.`);
           consecutiveEmptyPages++;
           if (consecutiveEmptyPages >= 2) break;
@@ -173,110 +267,25 @@ export class LinkedinScraperService {
           continue;
         }
 
-        const $ = cheerio.load(html);
-        const listItems = $('li');
-
-        if (listItems.length === 0) {
+        const { cards, itemCount } = this.parseJobCards(html);
+        if (itemCount === 0) {
           this.logger.log(`No job cards found on page ${currentPage}. End of results reached.`);
           break;
         }
 
         consecutiveEmptyPages = 0;
         let pageJobsCount = 0;
-
-        for (let i = 0; i < listItems.length; i++) {
-          const el = listItems[i];
-          const $el = $(el);
-
-          const urn =
-            $el.find('[data-entity-urn]').attr('data-entity-urn') ||
-            $el.find('.base-card').attr('data-entity-urn') ||
-            $el.attr('data-entity-urn') ||
-            '';
-
-          let jobId = '';
-          const matchUrn = urn.match(/urn:li:jobPosting:(\d+)/);
-          if (matchUrn) {
-            jobId = matchUrn[1];
-          }
-
-          let rawLink =
-            $el.find('a.base-card__full-link').attr('href') ||
-            $el.find('a').attr('href') ||
-            '';
-
-          let cleanLink = '';
-          if (rawLink) {
-            cleanLink = rawLink.split('?')[0].trim();
-            if (!jobId) {
-              const matchLink = cleanLink.match(/-(\d+)$/);
-              if (matchLink) {
-                jobId = matchLink[1];
-              }
-            }
-          } else if (jobId) {
-            cleanLink = `https://www.linkedin.com/jobs/view/${jobId}`;
-          }
-
-          if (!cleanLink && !jobId) {
-            continue;
-          }
-
-          const dedupKey = jobId || cleanLink;
-          if (seenJobIds.has(dedupKey)) {
-            continue;
-          }
-          seenJobIds.add(dedupKey);
-
-          const vacancy =
-            $el.find('.base-search-card__title').text().trim() ||
-            $el.find('h3').text().trim();
-
-          const company =
-            $el.find('.base-search-card__subtitle').text().trim() ||
-            $el.find('h4').text().trim() ||
-            'LinkedIn Employer';
-
-          let rawLocation =
-            $el.find('.job-search-card__location').text().trim() ||
-            'საქართველო';
-
-          let locationStr = rawLocation.replace(/^[\s\-\–\—\•\.\,\/]+/g, '').trim();
-          if (!locationStr) {
-            locationStr = 'საქართველო';
-          }
-
-          // Lazy-loaded card image; only real company logos (not LinkedIn's gray placeholder)
-          const logoUrl = $el.find('img').first().attr('data-delayed-url') || '';
-          const companyLogo =
-            logoUrl.startsWith('https://media.licdn.com/') && logoUrl.includes('company-logo') ? logoUrl : undefined;
-
-          const timeEl = $el.find('time');
-          const datetimeAttr = timeEl.attr('datetime');
-          const timeText = timeEl.text().trim();
-          const publishDate = this.parsePublishDate(datetimeAttr, timeText);
-          const deadline = this.calculateDeadline(publishDate);
-
-          if (vacancy) {
-            allJobs.push({
-              vacancy,
-              location: locationStr,
-              company,
-              link: cleanLink,
-              publishDate,
-              deadline,
-              page: currentPage,
-              description: undefined,
-              companyLogo,
-            });
-            pageJobsCount++;
-          }
+        for (const { key, job } of cards) {
+          if (seenJobIds.has(key)) continue;
+          seenJobIds.add(key);
+          allJobs.push({ ...job, page: currentPage });
+          pageJobsCount++;
         }
 
         this.logger.log(`Page ${currentPage}: parsed ${pageJobsCount} jobs (Total collected: ${allJobs.length})`);
 
-        if (listItems.length < pageSize) {
-          this.logger.log(`Page ${currentPage} returned fewer than ${pageSize} items. Stopping pagination.`);
+        if (itemCount < this.pageSize) {
+          this.logger.log(`Page ${currentPage} returned fewer than ${this.pageSize} items. Stopping pagination.`);
           break;
         }
 
@@ -314,13 +323,16 @@ export class LinkedinScraperService {
   }
 
   /**
-   * Scrapes ALL vacancies across Georgia by querying multiple regional partitions
-   * (Countrywide, Tbilisi, Batumi, Kutaisi, Rustavi, Remote, Hybrid, On-site) and deduplicating in-memory.
+   * Scrapes every vacancy in Georgia posted within the last `postedWithinDays` days.
+   * Results are requested newest first, so LinkedIn's ~1,000-result cap on guest searches only cuts
+   * off the oldest postings. (Relevance-sorted searches buried fresh postings past the page limit.)
+   * The 3-day default (~150 jobs) is meant for the daily run and survives a couple of missed runs;
+   * Georgia gets ~50 postings a day, so windows past ~20 days hit the cap and rate limits.
    */
   async scrapeAllGeorgiaJobs(options: LinkedinScraperOptions = {}): Promise<LinkedinScraperResult> {
     const {
       keywords = '',
-      maxPagesPerRegion = 30,
+      postedWithinDays = 3,
       fetchDescriptions = false,
       descriptionLimit = undefined,
     } = options;
@@ -328,188 +340,71 @@ export class LinkedinScraperService {
     this.requestCounter = 0;
     this.cookiesMap.clear();
 
-    const partitions = [
-      { name: 'All Georgia', location: '', extraParam: '' },
-      { name: 'Tbilisi', location: 'Tbilisi', extraParam: '' },
-      { name: 'Batumi', location: 'Batumi', extraParam: '' },
-      { name: 'Kutaisi', location: 'Kutaisi', extraParam: '' },
-      { name: 'Rustavi', location: 'Rustavi', extraParam: '' },
-      { name: 'Remote Georgia', location: '', extraParam: 'f_WT=2' },
-      { name: 'Hybrid Georgia', location: '', extraParam: 'f_WT=3' },
-      { name: 'On-site Georgia', location: '', extraParam: 'f_WT=1' },
-    ];
-
-    this.logger.log(`Starting comprehensive multi-region LinkedIn scrape across Georgia...`);
+    this.logger.log(`Starting LinkedIn scrape of Georgia: postings from the last ${postedWithinDays} days, newest first...`);
 
     const allJobsMap = new Map<string, JobData>();
+    let page = 1;
+    let consecutive429 = 0;
+    let consecutiveErrors = 0;
+    let consecutiveZeroNew = 0;
 
-    for (let pIdx = 0; pIdx < partitions.length; pIdx++) {
-      const partition = partitions[pIdx];
-      this.logger.log(`Scanning LinkedIn partition (${pIdx + 1}/${partitions.length}): ${partition.name}...`);
-      let start = 0;
-      let page = 1;
-      let consecutiveEmpty = 0;
-      let consecutive429 = 0;
-      let consecutiveZeroNew = 0;
+    while (page <= this.maxGuestPages) {
+      const params = this.buildSearchParams(keywords, '', (page - 1) * this.pageSize);
+      params.append('f_TPR', `r${postedWithinDays * 86400}`);
+      params.append('sortBy', 'DD');
 
-      while (page <= maxPagesPerRegion) {
-        const params = new URLSearchParams();
-        params.append('start', start.toString());
-        if (keywords && keywords.trim()) params.append('keywords', keywords.trim());
-        if (partition.location) params.append('location', partition.location);
-        if (partition.extraParam) {
-          const [k, v] = partition.extraParam.split('=');
-          params.append(k, v);
+      try {
+        const { cards, itemCount } = this.parseJobCards(await this.fetchSearchPage(params));
+        consecutive429 = 0;
+        consecutiveErrors = 0;
+
+        let newInPage = 0;
+        for (const { key, job } of cards) {
+          if (allJobsMap.has(key)) continue;
+          allJobsMap.set(key, { ...job, page });
+          newInPage++;
         }
 
-        const url = `${this.searchBaseUrl}?${params.toString()}`;
+        if (page % 5 === 0 || itemCount < this.pageSize || newInPage === 0) {
+          this.logger.log(`Page ${page}: +${newInPage} new jobs. Total unique so far: ${allJobsMap.size}`);
+        }
 
-        try {
-          const response = await axios.get(url, {
-            headers: {
-              'User-Agent': this.getRandomUserAgent(),
-              'Accept-Language': 'en-US,en;q=0.9,ka;q=0.8',
-              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-              'Sec-Fetch-Site': 'same-origin',
-              'Sec-Fetch-Mode': 'cors',
-              'Sec-Fetch-Dest': 'empty',
-              ...(this.getSessionCookieHeader() ? { Cookie: this.getSessionCookieHeader() } : {}),
-            },
-            timeout: 15000,
-          });
+        if (itemCount < this.pageSize) {
+          this.logger.log(`Page ${page} returned ${itemCount} items (< ${this.pageSize}). Scrape complete.`);
+          break;
+        }
 
-          this.extractCookies(response.headers?.['set-cookie']);
-          consecutive429 = 0;
+        // A date-sorted search only repeats itself when LinkedIn stops paginating properly
+        consecutiveZeroNew = newInPage === 0 ? consecutiveZeroNew + 1 : 0;
+        if (consecutiveZeroNew >= 3) {
+          this.logger.warn(`No new jobs across 3 consecutive pages. Stopping at page ${page}.`);
+          break;
+        }
 
-          const $ = cheerio.load(response.data);
-          const listItems = $('li');
-          if (listItems.length === 0) {
-            consecutiveEmpty++;
-            if (consecutiveEmpty >= 2) break;
-            start += 10;
-            page++;
-            await this.applyHumanDelay();
-            continue;
-          }
-
-          consecutiveEmpty = 0;
-          let newInPage = 0;
-
-          listItems.each((_, el) => {
-            const $el = $(el);
-            const urn =
-              $el.find('[data-entity-urn]').attr('data-entity-urn') ||
-              $el.find('.base-card').attr('data-entity-urn') ||
-              '';
-
-            let jobId = '';
-            const matchUrn = urn.match(/urn:li:jobPosting:(\d+)/);
-            if (matchUrn) jobId = matchUrn[1];
-
-            const rawLink =
-              $el.find('a.base-card__full-link').attr('href') ||
-              $el.find('a').attr('href') ||
-              '';
-
-            let cleanLink = rawLink ? rawLink.split('?')[0].trim() : '';
-            if (!jobId && cleanLink) {
-              const matchLink = cleanLink.match(/-(\d+)$/);
-              if (matchLink) jobId = matchLink[1];
-            }
-            if (!cleanLink && jobId) {
-              cleanLink = `https://www.linkedin.com/jobs/view/${jobId}`;
-            }
-
-            const vacancy =
-              $el.find('.base-search-card__title').text().trim() ||
-              $el.find('h3').text().trim();
-
-            const company =
-              $el.find('.base-search-card__subtitle').text().trim() ||
-              $el.find('h4').text().trim() ||
-              'LinkedIn Employer';
-
-            let locationStr =
-              $el.find('.job-search-card__location').text().trim() ||
-              (partition.location ? `${partition.location}, Georgia` : 'საქართველო');
-
-            locationStr = locationStr.replace(/^[\s\-\–\—\•\.\,\/]+/g, '').trim() || 'საქართველო';
-
-            const timeEl = $el.find('time');
-            const publishDate = this.parsePublishDate(timeEl.attr('datetime'), timeEl.text().trim());
-            const deadline = this.calculateDeadline(publishDate);
-
-            const dedupKey = jobId || cleanLink;
-            if (dedupKey && vacancy && !allJobsMap.has(dedupKey)) {
-              allJobsMap.set(dedupKey, {
-                vacancy,
-                location: locationStr,
-                company,
-                link: cleanLink,
-                publishDate,
-                deadline,
-                page,
-                description: undefined,
-              });
-              newInPage++;
-            }
-          });
-
-          if (page % 5 === 0 || listItems.length < 10 || newInPage === 0) {
-            this.logger.log(
-              `[${partition.name}] Page ${page}: +${newInPage} new jobs. Total unique so far: ${allJobsMap.size}`,
-            );
-          }
-
-          if (newInPage === 0) {
-            consecutiveZeroNew++;
-            if (consecutiveZeroNew >= 2) {
-              this.logger.log(
-                `[${partition.name}] 0 new jobs found across 2 consecutive pages. Concluding partition early.`,
-              );
-              break;
-            }
-          } else {
-            consecutiveZeroNew = 0;
-          }
-
-          if (listItems.length < 10) {
-            this.logger.log(
-              `[${partition.name}] Page ${page} returned ${listItems.length} items (< 10). Partition complete.`,
-            );
+        page++;
+        await this.applyHumanDelay();
+      } catch (err: any) {
+        if (err.response?.status === 429) {
+          consecutive429++;
+          if (consecutive429 >= 4) {
+            this.logger.warn(`Repeated 429 on page ${page}. Stopping with ${allJobsMap.size} jobs collected.`);
             break;
           }
-
-          start += 10;
+          const backoff = consecutive429 * 15000 + Math.floor(Math.random() * 3000);
+          this.logger.warn(`429 Rate limit on page ${page}. Backing off for ${(backoff / 1000).toFixed(1)}s before retrying...`);
+          await this.sleep(backoff);
+        } else {
+          consecutiveErrors++;
+          this.logger.error(`Page ${page} failed: ${err.message}`);
+          if (consecutiveErrors >= 3) break;
           page++;
           await this.applyHumanDelay();
-        } catch (err: any) {
-          if (err.response?.status === 429) {
-            consecutive429++;
-            const backoff = consecutive429 * 6000 + Math.floor(Math.random() * 2000);
-            this.logger.warn(`[${partition.name}] 429 Rate limit on page ${page}. Backing off for ${(backoff / 1000).toFixed(1)}s...`);
-            await this.sleep(backoff);
-            if (consecutive429 >= 2) {
-              this.logger.warn(`[${partition.name}] Repeated 429. Moving to next partition.`);
-              break;
-            }
-          } else {
-            this.logger.error(`[${partition.name}] Page ${page} failed: ${err.message}`);
-            break;
-          }
         }
-      }
-
-      // Pause between partitions if there is another partition coming
-      if (pIdx < partitions.length - 1) {
-        const partitionPause = Math.floor(Math.random() * 2000) + 3000;
-        this.logger.log(`[Partition Complete] Pausing ${(partitionPause / 1000).toFixed(1)}s before scanning next region...`);
-        await this.sleep(partitionPause);
       }
     }
 
     const allJobs = Array.from(allJobsMap.values());
-    this.logger.log(`Multi-region scrape completed. Found ${allJobs.length} unique vacancies in Georgia.`);
+    this.logger.log(`LinkedIn scrape of Georgia completed. Found ${allJobs.length} unique vacancies.`);
 
     if (fetchDescriptions && allJobs.length > 0) {
       const descLimit = descriptionLimit ?? 25;
@@ -520,7 +415,7 @@ export class LinkedinScraperService {
     return {
       jobs: allJobs,
       totalJobs: allJobs.length,
-      lastPage: partitions.length,
+      lastPage: page,
     };
   }
 
@@ -529,9 +424,7 @@ export class LinkedinScraperService {
    */
   async scrapeAllJobs(options: LinkedinScraperOptions = {}): Promise<LinkedinScraperResult> {
     return await this.scrapeAllGeorgiaJobs({
-      maxPagesPerRegion: options.maxPagesPerRegion ?? 30,
       fetchDescriptions: options.fetchDescriptions ?? false,
-      delayBetweenRequests: options.delayBetweenRequests ?? 600,
       ...options,
     });
   }

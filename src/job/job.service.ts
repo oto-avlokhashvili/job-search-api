@@ -1045,7 +1045,7 @@ export class JobService {
         })
       : await this.linkedinScraperService.scrapeAllGeorgiaJobs({
           keywords: options.keywords,
-          maxPagesPerRegion: options.maxPagesPerRegion ?? 30,
+          postedWithinDays: options.postedWithinDays,
           fetchDescriptions: options.fetchDescriptions ?? false,
           descriptionLimit: options.descriptionLimit,
         });
