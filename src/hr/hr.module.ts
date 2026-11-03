@@ -10,6 +10,8 @@ import { HrCandidateNote } from 'src/Entities/hr-candidate-note.entity';
 import { HrVacancy } from 'src/Entities/hr-vacancy.entity';
 import { HrInterview } from 'src/Entities/hr-interview.entity';
 import { HrGoogleAccount } from 'src/Entities/hr-google-account.entity';
+import { HrAiSearchLog } from 'src/Entities/hr-ai-search-log.entity';
+import { AiModule } from 'src/ai/ai.module';
 import { EmailModule } from 'src/email/email.module';
 import { CvModule } from 'src/cv/cv.module';
 import { LinkedinSearchModule } from 'src/linkedin-search/linkedin-search.module';
@@ -34,8 +36,10 @@ import { GoogleCalendarService } from './google-calendar.service';
       HrVacancy,
       HrInterview,
       HrGoogleAccount,
+      HrAiSearchLog,
     ]),
     BullModule.registerQueue({ name: INTERVIEW_QUEUE }),
+    AiModule,
     EmailModule,
     CvModule,
     LinkedinSearchModule,

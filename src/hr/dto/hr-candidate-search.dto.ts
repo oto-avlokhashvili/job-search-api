@@ -38,3 +38,29 @@ export class HrCandidateSearchDto {
   @Max(50)
   limit?: number = 20;
 }
+
+export class HrAiCandidateSearchDto {
+  @ApiProperty({
+    example: 'Senior React developer with fintech experience, Tbilisi or remote',
+    description: 'The candidate you want, in plain language (Georgian or English)',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  query: string;
+
+  @ApiPropertyOptional({ default: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @ApiPropertyOptional({ default: 10, maximum: 30 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(30)
+  limit?: number = 10;
+}

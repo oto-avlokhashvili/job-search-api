@@ -53,8 +53,10 @@ function setup() {
     {} as any,
     {} as any,
     {} as any,
+    {} as any,
     pipeline as any,
     vacancies as any,
+    {} as any,
   );
   return { service, cvs, access, pipeline, vacancies };
 }

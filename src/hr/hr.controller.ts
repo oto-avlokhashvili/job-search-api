@@ -23,7 +23,7 @@ import { Roles } from 'src/auth/decorators/roles.decorator';
 import { UserRole } from 'src/enums/user-role.enum';
 import { LinkedinSearchDto } from 'src/linkedin-search/dto/linkedin-search.dto';
 import { HrCandidatesService } from './hr-candidates.service';
-import { HrCandidateSearchDto } from './dto/hr-candidate-search.dto';
+import { HrAiCandidateSearchDto, HrCandidateSearchDto } from './dto/hr-candidate-search.dto';
 import { HrPipelineService } from './hr-pipeline.service';
 import { CreateNoteDto, UpdatePipelineDto } from './dto/hr-pipeline.dto';
 import { HrVacancyService } from './hr-vacancy.service';
@@ -178,6 +178,14 @@ export class HrController {
   @ApiOperation({ summary: 'Search all CVs (anonymized; contacts after unlock)' })
   searchCvs(@Req() req, @Query() dto: HrCandidateSearchDto) {
     return this.hrCandidatesService.searchCvs(req.user, dto);
+  }
+
+  @Post('candidates/ai-search')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 20, ttl: 60000 } }) // Each uncached search makes two AI calls
+  @ApiOperation({ summary: 'Describe the candidate in plain language; AI ranks matching CVs with a reason each' })
+  searchCvsWithAi(@Req() req, @Body() dto: HrAiCandidateSearchDto) {
+    return this.hrCandidatesService.searchCvsWithAi(req.user, dto);
   }
 
   @Get('candidates/linkedin')

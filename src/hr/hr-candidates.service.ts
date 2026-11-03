@@ -1,4 +1,13 @@
-import { BadRequestException, ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
+import { createHash } from 'crypto';
+import {
+  BadRequestException,
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Brackets, In, Repository } from 'typeorm';
 import { Cv } from 'src/Entities/cv.entity';
@@ -6,13 +15,27 @@ import { User } from 'src/Entities/user.entity';
 import { CONTACT_ACCESS, HrCvAccess, HrCvAccessAction } from 'src/Entities/hr-cv-access.entity';
 import { UserRole } from 'src/enums/user-role.enum';
 import { HrVacancyStatus } from 'src/Entities/hr-vacancy.entity';
+import { HrAiSearchLog } from 'src/Entities/hr-ai-search-log.entity';
+import { AiService } from 'src/ai/ai.service';
 import { R2StorageService } from 'src/cv/r2-storage.service';
 import { PublicCvLimitsService } from 'src/cv/public-cv-limits.service';
-import { LinkedinSearchService } from 'src/linkedin-search/linkedin-search.service';
+import { LinkedinProfile, LinkedinSearchService } from 'src/linkedin-search/linkedin-search.service';
 import { LinkedinSearchDto } from 'src/linkedin-search/dto/linkedin-search.dto';
-import { HrCandidateSearchDto } from './dto/hr-candidate-search.dto';
+import { HrAiCandidateSearchDto, HrCandidateSearchDto } from './dto/hr-candidate-search.dto';
 import { CreateManualCandidateDto } from './dto/hr-vacancy.dto';
-import { scoreCvForCriteria } from './candidate-score';
+import { CandidateCriteria, scoreCvForCriteria } from './candidate-score';
+import {
+  AiRanking,
+  buildExpandPrompt,
+  buildRankPrompt,
+  cvRankId,
+  ExpandedQuery,
+  linkedinRankId,
+  parseExpandedQuery,
+  parseRankings,
+  toCvRankItem,
+  toLinkedinRankItem,
+} from './candidate-ai-search';
 import { BoardFilter, HrPipelineService, PipelineView, toView, VacancyMembership } from './hr-pipeline.service';
 import { HrVacancyService } from './hr-vacancy.service';
 
@@ -21,6 +44,15 @@ const envInt = (name: string, fallback: number) => Number(process.env[name]) || 
 export const HR_CV_UNLOCKS_PER_MONTH = envInt('HR_CV_UNLOCKS_PER_MONTH', 50);
 export const HR_LINKEDIN_SEARCHES_PER_DAY = envInt('HR_LINKEDIN_SEARCHES_PER_DAY', 30);
 const HR_CV_SEARCHES_PER_HOUR = envInt('HR_CV_SEARCHES_PER_HOUR', 120);
+// Each new AI search costs two AI calls; paging through a cached one is free.
+const HR_AI_SEARCHES_PER_HOUR = envInt('HR_AI_SEARCHES_PER_HOUR', 30);
+const AI_SEARCH_CACHE_SEC = 60 * 60;
+// A search whose LinkedIn half was skipped or failed is kept briefly, so a retry can include LinkedIn
+const AI_SEARCH_PARTIAL_CACHE_SEC = 5 * 60;
+// How many of the best keyword matches the AI reads and ranks
+const AI_RANK_POOL = 80;
+// The browser fallback can be slow; past this the AI search goes on with our CVs only
+const AI_LINKEDIN_TIMEOUT_MS = 30_000;
 // The SQL prefilter (keyword anywhere in the summary) bounds how many CVs get scored in memory.
 const PREFILTER_LIMIT = 2000;
 const MAX_RANKED = 200;
@@ -55,23 +87,49 @@ export interface HrCandidate {
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, '\\$&');
 const splitKeywords = (keyword: string) =>
   Array.from(new Set(keyword.split(',').map((k) => k.trim()).filter(Boolean))).slice(0, 10);
+// Used when the AI can't expand the request: its longer words as plain keywords
+const queryWords = (query: string) =>
+  Array.from(new Set(query.toLowerCase().split(/[\s,;.]+/).filter((w) => w.length >= 3))).slice(0, 10);
 const startOfMonthUtc = () => {
   const now = new Date();
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
 };
+
+/** How the LinkedIn half of an AI search went: `quota` = the HR's daily LinkedIn searches are used up. */
+export type AiLinkedinStatus = 'ok' | 'quota' | 'failed';
+
+type AiVerdict = Pick<AiRanking, 'reason' | 'missing' | 'unverified'>;
+/** One AI search result: a CV card from our base, or a LinkedIn profile (match null only without the AI). */
+export type HrAiResult =
+  | (HrCandidate & AiVerdict & { source: 'cv' })
+  | (AiVerdict & { source: 'linkedin'; profile: LinkedinProfile; match: number | null });
+
+interface CachedAiSearch {
+  expanded: ExpandedQuery;
+  poolSize: number;
+  linkedinProfiles: LinkedinProfile[];
+  linkedin: AiLinkedinStatus;
+  rankings: AiRanking[];
+  aiRanked: boolean;
+}
+
 const linkedinQuotaKey = (hrUserId: number) => `hr:linkedin:${hrUserId}:${new Date().toISOString().slice(0, 10)}`;
 
 @Injectable()
 export class HrCandidatesService {
+  private readonly logger = new Logger(HrCandidatesService.name);
+
   constructor(
     @InjectRepository(Cv) private readonly cvRepository: Repository<Cv>,
     @InjectRepository(User) private readonly userRepository: Repository<User>,
     @InjectRepository(HrCvAccess) private readonly accessRepository: Repository<HrCvAccess>,
+    @InjectRepository(HrAiSearchLog) private readonly aiSearchLogRepository: Repository<HrAiSearchLog>,
     private readonly r2StorageService: R2StorageService,
     private readonly limits: PublicCvLimitsService,
     private readonly linkedinSearchService: LinkedinSearchService,
     private readonly pipelineService: HrPipelineService,
     private readonly vacancyService: HrVacancyService,
+    private readonly aiService: AiService,
   ) {}
 
   /** Ranked, anonymized CVs (every CV with an AI summary is searchable). */
@@ -86,25 +144,10 @@ export class HrCandidatesService {
     const keywords = splitKeywords(dto.keyword);
     if (!keywords.length) throw new BadRequestException('Enter at least one keyword');
 
-    const cvs = await this.cvRepository
-      .createQueryBuilder('cv')
-      .where('cv.summary IS NOT NULL')
-      // HR-added records are private to their HR (they have no summary either; this is the rule itself)
-      .andWhere('cv.addedByHrId IS NULL')
-      .andWhere(
-        new Brackets((qb) =>
-          keywords.forEach((k, i) => qb.orWhere(`cv.summary::text ILIKE :k${i}`, { [`k${i}`]: `%${escapeLike(k)}%` })),
-        ),
-      )
-      .orderBy('cv.updatedAt', 'DESC')
-      .take(PREFILTER_LIMIT)
-      .getMany();
-
-    const ranked = cvs
-      .map((cv) => ({ cv, score: scoreCvForCriteria(cv.summary!, { keywords, location: dto.location, seniority: dto.seniority }) }))
-      .filter((r): r is { cv: Cv; score: NonNullable<typeof r.score> } => r.score !== null)
-      .sort((a, b) => b.score.match - a.score.match || b.cv.updatedAt.getTime() - a.cv.updatedAt.getTime())
-      .slice(0, MAX_RANKED);
+    const ranked = (await this.findCandidatePool({ keywords, location: dto.location, seniority: dto.seniority })).slice(
+      0,
+      MAX_RANKED,
+    );
 
     const page = dto.page ?? 1;
     const limit = dto.limit ?? 20;
@@ -117,6 +160,164 @@ export class HrCandidatesService {
       limit,
       candidates: cards.map((card, i) => ({ ...card, ...pageItems[i].score })),
     };
+  }
+
+  /**
+   * The candidate described in plain language, searched in our CV base and on LinkedIn at once:
+   * the AI turns the request into keywords (and LinkedIn titles), the keyword search finds the best
+   * AI_RANK_POOL CVs while one LinkedIn search runs, and the AI ranks both together with a reason
+   * for each. A search is cached, so paging through it costs nothing. Without the AI, results still
+   * come back: CVs by the deterministic score, then LinkedIn in Google's order, without reasons.
+   */
+  async searchCvsWithAi(hr: User, dto: HrAiCandidateSearchDto) {
+    const query = dto.query.replace(/\s+/g, ' ').trim();
+    if (!query) throw new BadRequestException('Describe the candidate you are looking for');
+
+    const cacheKey = `hr:ai-search:${createHash('sha256').update(query.toLowerCase()).digest('hex')}`;
+    let search = await this.limits.getJson<CachedAiSearch>(cacheKey);
+    const fresh = !search;
+    if (!search) {
+      await this.limits.consume(
+        `hr:ai-search:${hr.id}`,
+        HR_AI_SEARCHES_PER_HOUR,
+        3600,
+        'AI ძიების ლიმიტი ამოიწურა, სცადეთ მოგვიანებით',
+      );
+      search = await this.runAiSearch(hr, query);
+      const ttl = search.linkedin === 'ok' ? AI_SEARCH_CACHE_SEC : AI_SEARCH_PARTIAL_CACHE_SEC;
+      await this.limits.setJson(cacheKey, search, ttl);
+    }
+
+    const page = dto.page ?? 1;
+    const limit = dto.limit ?? 10;
+    if (fresh || page === 1) {
+      await this.aiSearchLogRepository
+        .insert({
+          hrUserId: hr.id,
+          query: query.slice(0, 500),
+          keywords: search.expanded.keywords,
+          poolSize: search.poolSize,
+          linkedinCount: search.linkedinProfiles.length,
+          resultCvIds: search.rankings.filter((r) => r.id.startsWith('cv:')).map((r) => Number(r.id.slice(3))),
+          aiRanked: search.aiRanked,
+        })
+        .catch(() => null);
+    }
+
+    // CVs deleted since the search was cached drop out
+    const pageRankings = search.rankings.slice((page - 1) * limit, page * limit);
+    const cvIds = pageRankings.filter((r) => r.id.startsWith('cv:')).map((r) => Number(r.id.slice(3)));
+    const cvs = cvIds.length ? await this.cvRepository.find({ where: { id: In(cvIds) } }) : [];
+    const cards = new Map((await this.toCards(hr.id, cvs)).map((c) => [cvRankId(c.id), c]));
+    const profiles = new Map(search.linkedinProfiles.map((p, i) => [linkedinRankId(i), p]));
+
+    return {
+      total: search.rankings.length,
+      page,
+      limit,
+      understood: search.expanded,
+      aiRanked: search.aiRanked,
+      linkedin: search.linkedin,
+      candidates: pageRankings.flatMap(({ id, ...ranking }): HrAiResult[] => {
+        const card = cards.get(id);
+        if (card) return [{ source: 'cv', ...card, ...ranking, match: ranking.match ?? undefined }];
+        const profile = profiles.get(id);
+        return profile ? [{ source: 'linkedin', profile, ...ranking }] : [];
+      }),
+    };
+  }
+
+  private async runAiSearch(hr: User, query: string): Promise<CachedAiSearch> {
+    const expanded = parseExpandedQuery(
+      await this.aiService.generateJson(buildExpandPrompt(query), 'hrAiSearch.expand'),
+    ) ?? { keywords: queryWords(query), titles: queryWords(query).slice(0, 3) };
+    const empty = { expanded, poolSize: 0, linkedinProfiles: [], rankings: [] };
+    if (!expanded.keywords.length) return { ...empty, linkedin: 'ok', aiRanked: false };
+
+    const [fullPool, linkedin] = await Promise.all([this.findCandidatePool(expanded), this.searchLinkedinForAi(hr, expanded)]);
+    const pool = fullPool.slice(0, AI_RANK_POOL);
+    const base = { expanded, poolSize: pool.length, linkedinProfiles: linkedin.profiles, linkedin: linkedin.status };
+    if (!pool.length && !linkedin.profiles.length) return { ...base, rankings: [], aiRanked: true };
+
+    const items = [
+      ...pool.map((r) => toCvRankItem(r.cv.id, r.cv.summary!)),
+      ...linkedin.profiles.map((p, i) => toLinkedinRankItem(i, p)),
+    ];
+    const rankings = parseRankings(
+      await this.aiService.generateJson(buildRankPrompt(query, items), 'hrAiSearch.rank'),
+      new Set(items.map((item) => item.id)),
+    );
+    if (rankings) return { ...base, rankings, aiRanked: true };
+
+    return {
+      ...base,
+      rankings: [
+        ...pool.slice(0, 20).map((r) => ({ id: cvRankId(r.cv.id), match: r.score.match, reason: '', missing: [], unverified: [] })),
+        ...linkedin.profiles.map((_, i) => ({ id: linkedinRankId(i), match: null, reason: '', missing: [], unverified: [] })),
+      ],
+      aiRanked: false,
+    };
+  }
+
+  /**
+   * One LinkedIn page for an AI search, spending one of the HR's daily LinkedIn searches (admins
+   * are not limited). Never throws: an empty quota, a failure or a timeout just leaves LinkedIn out.
+   */
+  private async searchLinkedinForAi(
+    hr: User,
+    expanded: ExpandedQuery,
+  ): Promise<{ profiles: LinkedinProfile[]; status: AiLinkedinStatus }> {
+    if (
+      hr.role !== UserRole.ADMIN &&
+      !(await this.limits.tryConsume(linkedinQuotaKey(hr.id), HR_LINKEDIN_SEARCHES_PER_DAY, DAY_SEC))
+    ) {
+      return { profiles: [], status: 'quota' };
+    }
+
+    // "Remote" as a quoted Google term would only find profiles that literally say it
+    const location = expanded.location && !/remote|დისტანციურ/i.test(expanded.location) ? expanded.location : undefined;
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const res = await Promise.race([
+        this.linkedinSearchService.search({ keyword: expanded.titles.join(','), location }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('timed out')), AI_LINKEDIN_TIMEOUT_MS);
+        }),
+      ]);
+      return { profiles: res.profiles, status: 'ok' };
+    } catch (e) {
+      this.logger.warn(`AI search: LinkedIn part skipped (${(e as Error).message})`);
+      return { profiles: [], status: 'failed' };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Searchable CVs matching any keyword, best deterministic score first. Both searches start here;
+   * this is the step to swap for a vector search once keywords stop finding the right people.
+   */
+  private async findCandidatePool(criteria: CandidateCriteria) {
+    const cvs = await this.cvRepository
+      .createQueryBuilder('cv')
+      .where('cv.summary IS NOT NULL')
+      // HR-added records are private to their HR (they have no summary either; this is the rule itself)
+      .andWhere('cv.addedByHrId IS NULL')
+      .andWhere(
+        new Brackets((qb) =>
+          criteria.keywords.forEach((k, i) =>
+            qb.orWhere(`cv.summary::text ILIKE :k${i}`, { [`k${i}`]: `%${escapeLike(k)}%` }),
+          ),
+        ),
+      )
+      .orderBy('cv.updatedAt', 'DESC')
+      .take(PREFILTER_LIMIT)
+      .getMany();
+
+    return cvs
+      .map((cv) => ({ cv, score: scoreCvForCriteria(cv.summary!, criteria) }))
+      .filter((r): r is { cv: Cv; score: NonNullable<typeof r.score> } => r.score !== null)
+      .sort((a, b) => b.score.match - a.score.match || b.cv.updatedAt.getTime() - a.cv.updatedAt.getTime());
   }
 
   /**

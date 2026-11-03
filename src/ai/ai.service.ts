@@ -160,6 +160,34 @@ export class AiService {
     return text.trim();
   }
 
+  /**
+   * One JSON-mode prompt: Gemini first, OpenRouter as the fallback. Returns the parsed object,
+   * or null when both fail or the answer isn't a JSON object, so callers can fall back themselves.
+   */
+  async generateJson<T extends object>(prompt: string, label: string): Promise<T | null> {
+    let text: string;
+    try {
+      const data = await this.callGemini([{ parts: [{ text: prompt }] }], { temperature: 0, responseMimeType: 'application/json' });
+      text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+    } catch (geminiErr: any) {
+      this.logger.warn(`${label}: Gemini failed, trying OpenRouter fallback... Error: ${geminiErr.message}`);
+      try {
+        text = await this.callOpenRouter([{ role: 'user', content: prompt }], true, 0);
+      } catch (orErr: any) {
+        this.logger.error(`${label}: OpenRouter fallback also failed: ${orErr.message}`);
+        return null;
+      }
+    }
+
+    try {
+      const parsed = JSON.parse(jsonrepair(this.extractJson(text)));
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as T) : null;
+    } catch (parseErr: any) {
+      this.logger.error(`${label}: could not parse the AI response: ${parseErr.message}`);
+      return null;
+    }
+  }
+
 
 
 
