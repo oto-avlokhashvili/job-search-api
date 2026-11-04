@@ -7,17 +7,15 @@ import { AiMatchedJobsService } from 'src/ai-matched-jobs/ai-matched-jobs.servic
 import { AiService } from 'src/ai/ai.service';
 import { CvService } from 'src/cv/cv.service';
 import { scoreJobForCv } from 'src/cv/public-cv-search.service';
-
-/** Only jobs at least this good a fit are sent to Telegram. */
-const TELEGRAM_MIN_MATCH = 60;
-/** How many unsent candidates are scored per user; title matches come first, so this covers them all. */
-const TELEGRAM_CANDIDATE_LIMIT = 500;
 import { JobService } from 'src/job/job.service';
 import { SentJobsService } from 'src/sent-jobs/sent-jobs.service';
 import { UserService } from 'src/user/user.service';
 import { EntitlementService } from 'src/subscription/entitlement.service';
 import { SubscriptionService } from 'src/subscription/subscription.service';
 import { User } from 'src/Entities/user.entity';
+
+/** Only jobs at least this good a fit are sent to Telegram. */
+const TELEGRAM_MIN_MATCH = 60;
 
 /**
  * Telegram errors a retry can't fix: the bot can't reach the chat (never started, blocked,
@@ -308,11 +306,10 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
                 return { status: 'skipped', reason: 'no search queries' };
             }
 
-            // 2. Fetch matching jobs the user hasn't received yet (excluded in SQL, so the
-            //    candidate limit isn't used up by already sent jobs)
+            // 2. Fetch every matching job the user hasn't received yet (no limit: all are scored)
             const sentJobIds = await this.sentJobsService.findAllJobIdsByUserId(user.id);
             const matchingJobs = await this.jobService.findAllByQuery(searchQueries, {
-                limit: TELEGRAM_CANDIDATE_LIMIT,
+                limit: null,
                 excludeIds: sentJobIds,
             });
 

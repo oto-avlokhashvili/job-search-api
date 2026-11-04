@@ -10,8 +10,8 @@ import { PublicCvLimitsService } from './public-cv-limits.service';
 
 export const PUBLIC_CV_SEARCHES_PER_HOUR = 30;
 const RESULT_CACHE_SEC = 3600;
-const MIN_MATCH = 30;
-const MAX_RESULTS = 30;
+/** Every candidate job is scored; only strong matches are shown. */
+const MIN_MATCH = 60;
 
 export interface PublicCvMatchedJob {
   id: number;
@@ -152,16 +152,16 @@ export class PublicCvSearchService {
       throw new ConflictException('CV-ის ანალიზი ვერ მოხერხდა, ატვირთეთ CV თავიდან');
     }
 
-    // Keyed on updatedAt so a re-upload never serves the previous CV's results.
-    const cacheKey = `search:${cv.id}:${cv.updatedAt.getTime()}`;
+    // Keyed on updatedAt so a re-upload never serves the previous CV's results;
+    // the version is bumped whenever the ranking rules change.
+    const cacheKey = `search:v2:${cv.id}:${cv.updatedAt.getTime()}`;
     let ranked = await this.limits.getJson<PublicCvMatchedJob[]>(cacheKey);
     if (!ranked) {
-      const candidates = await this.jobService.findAllByQuery(summary.searchQueries);
+      const candidates = await this.jobService.findAllByQuery(summary.searchQueries, { limit: null });
       ranked = candidates
         .map((job) => ({ job, ...scoreJobForCv(job, summary) }))
         .filter((r) => r.match >= MIN_MATCH)
         .sort((a, b) => b.match - a.match)
-        .slice(0, MAX_RESULTS)
         .map(({ job, match, matchedKeywords }) => ({
           id: job.id,
           vacancy: job.vacancy,

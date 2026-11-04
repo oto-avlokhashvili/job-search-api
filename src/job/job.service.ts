@@ -432,7 +432,8 @@ export class JobService {
     return { jobs: await qb.getMany() };
   }
 
-  async findAllByQuery(query: string | string[], options: { limit?: number; excludeIds?: number[] } = {}) {
+  /** `limit` defaults to 60; pass null to return every matching job. */
+  async findAllByQuery(query: string | string[], options: { limit?: number | null; excludeIds?: number[] } = {}) {
     const rawQueries = (Array.isArray(query) ? query : [query])
       .filter((q) => typeof q === 'string' && q.trim().length > 0);
 
@@ -547,7 +548,7 @@ export class JobService {
     }
     qb.orderBy(orderScoreSql, 'DESC');
     qb.addOrderBy('job.id', 'DESC');
-    qb.limit(options.limit ?? 60);
+    if (options.limit !== null) qb.limit(options.limit ?? 60);
 
     return qb.getMany();
   }
