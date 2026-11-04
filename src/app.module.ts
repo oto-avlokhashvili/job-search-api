@@ -33,6 +33,9 @@ import { HrModule } from './hr/hr.module';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
+        // Separate key namespace per environment: a local server on the shared Redis must
+        // never pick up production jobs (it would send them with the dev bot's token).
+        const prefix = configService.get<string>('QUEUE_PREFIX') || process.env.QUEUE_PREFIX || 'bull';
         const redisUrl =
           configService.get<string>('REDIS_URL') ||
           process.env.REDIS_URL ||
@@ -45,6 +48,7 @@ import { HrModule } from './hr/hr.module';
           try {
             const parsed = new URL(redisUrl);
             return {
+              prefix,
               connection: {
                 host: parsed.hostname,
                 port: Number(parsed.port) || 6379,
@@ -58,6 +62,7 @@ import { HrModule } from './hr/hr.module';
             };
           } catch {
             return {
+              prefix,
               connection: {
                 url: redisUrl,
                 maxRetriesPerRequest: null,
@@ -68,6 +73,7 @@ import { HrModule } from './hr/hr.module';
         }
 
         return {
+          prefix,
           connection: {
             host: configService.get<string>('REDIS_HOST') || process.env.REDIS_HOST || 'localhost',
             port: Number(configService.get<number>('REDIS_PORT') || process.env.REDIS_PORT) || 6379,
