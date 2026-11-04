@@ -600,6 +600,14 @@ export class JobService {
     return result;
   }
 
+  /** The jobs that still exist among `ids`, in the order given (missing ones are left out). */
+  async findByIds(ids: number[]): Promise<JobEntity[]> {
+    if (ids.length === 0) return [];
+    const jobs = await this.jobRepo.find({ where: { id: In(ids) } });
+    const byId = new Map(jobs.map((job) => [job.id, job]));
+    return ids.map((id) => byId.get(id)).filter((job): job is JobEntity => !!job);
+  }
+
   async findOne(id: number) {
     const job = await this.jobRepo.findOne({ where: { id } });
     if (!job) {

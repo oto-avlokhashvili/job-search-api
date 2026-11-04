@@ -22,6 +22,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { StatsModule } from './stats/stats.module';
 import { LinkedinSearchModule } from './linkedin-search/linkedin-search.module';
 import { HrModule } from './hr/hr.module';
+import { FavoritesModule } from './favorites/favorites.module';
 
 @Module({
   imports: [
@@ -100,6 +101,7 @@ import { HrModule } from './hr/hr.module';
     AuthModule,
     SubscriptionModule,
     SentJobsModule,
+    FavoritesModule,
     AiModule,
     CvModule,
     AiMatchedJobsModule,

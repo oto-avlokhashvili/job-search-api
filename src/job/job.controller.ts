@@ -170,6 +170,17 @@ export class JobController {
     return await this.jobService.removeOutdated();
   }
   
+  @ApiOperation({ summary: 'Jobs by id (comma separated, max 100); ids of deleted jobs are left out' })
+  @ApiQuery({ name: 'ids', required: true, type: String, example: '12,34,56' })
+  @Get('by-ids')
+  async findByIds(@Query('ids') ids: string = '') {
+    const parsed = [...new Set(
+      String(ids).split(',').map((id) => Number(id.trim())).filter((id) => Number.isInteger(id) && id > 0),
+    )];
+    if (parsed.length > 100) throw new BadRequestException('Too many ids (max 100)');
+    return await this.jobService.findByIds(parsed);
+  }
+
   @Get(':id')
   async findOne(@Param('id', ParseIntPipe) id: number) {
     return await this.jobService.findOne(id);
