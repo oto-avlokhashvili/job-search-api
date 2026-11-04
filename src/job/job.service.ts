@@ -284,7 +284,7 @@ export class JobService {
     return duplicates; // returns array of { link: '...', count: 2 }
   }
   async findAll(filterDto: FilterJobDto) {
-    const { query, page = 1, limit = 10, source, company, location, publishDate } = filterDto;
+    const { query, page = 1, limit = 10, source, company, companyKey: companyKeyFilter, location, publishDate } = filterDto;
     const skip = (page - 1) * limit;
 
     const qb = this.jobRepo.createQueryBuilder('job');
@@ -361,6 +361,11 @@ export class JobService {
     if (company && company.trim().length > 0) {
       hasFilter = true;
       qb.andWhere('LOWER(job.company) LIKE :company', { company: `%${company.trim().toLowerCase()}%` });
+    }
+
+    if (companyKeyFilter && companyKeyFilter.trim().length > 0) {
+      hasFilter = true;
+      qb.andWhere('job.companyKey = :companyKeyFilter', { companyKeyFilter: companyKeyFilter.trim() });
     }
 
     if (location && location.trim().length > 0) {

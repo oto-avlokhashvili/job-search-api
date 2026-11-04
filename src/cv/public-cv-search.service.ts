@@ -22,6 +22,8 @@ export interface PublicCvMatchedJob {
   publishDate: string;
   deadline: string;
   page: number;
+  companyLogo: string | null;
+  companyKey: string | null;
   match: number;
   matchedKeywords: string[];
 }
@@ -154,7 +156,7 @@ export class PublicCvSearchService {
 
     // Keyed on updatedAt so a re-upload never serves the previous CV's results;
     // the version is bumped whenever the ranking rules change.
-    const cacheKey = `search:v2:${cv.id}:${cv.updatedAt.getTime()}`;
+    const cacheKey = `search:v3:${cv.id}:${cv.updatedAt.getTime()}`;
     let ranked = await this.limits.getJson<PublicCvMatchedJob[]>(cacheKey);
     if (!ranked) {
       const candidates = await this.jobService.findAllByQuery(summary.searchQueries, { limit: null });
@@ -171,6 +173,8 @@ export class PublicCvSearchService {
           publishDate: job.publishDate,
           deadline: job.deadline,
           page: job.page,
+          companyLogo: job.companyLogo ?? null,
+          companyKey: job.companyKey ?? null,
           match,
           matchedKeywords,
         }));

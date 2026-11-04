@@ -15,6 +15,11 @@ export class FilterJobDto {
   @IsString()
   company?: string;
 
+  // Exact company (normalized name, see companyKey()); `company` above is a substring match
+  @IsOptional()
+  @IsString()
+  companyKey?: string;
+
   @IsOptional()
   @IsString()
   location?: string;

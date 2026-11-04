@@ -106,6 +106,7 @@ export class JobController {
   @ApiQuery({ name: 'query', required: false, type: String })
   @ApiQuery({ name: 'source', required: false, type: String, description: 'Source filter (e.g. jobs.ge, hr.ge, awork.ge, myjobs.ge, linkedin)' })
   @ApiQuery({ name: 'company', required: false, type: String })
+  @ApiQuery({ name: 'companyKey', required: false, type: String, description: 'Exact company (normalized name), for company pages' })
   @ApiQuery({ name: 'location', required: false, type: String })
   @ApiQuery({ name: 'publishDate', required: false, type: String })
   @Get('all')
