@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Param, Body, Req, UseGuards, ParseIntPipe } from '@nestjs/common';
+import { Controller, Delete, Get, Post, Param, Body, Req, UseGuards, ParseIntPipe } from '@nestjs/common';
 import { TelegramService } from './telegram.service';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { UserService } from 'src/user/user.service';
@@ -22,6 +22,14 @@ export class TelegramController {
     const token = uuidv4();
     await this.usersService.saveTelegramToken(userId, token);
     return { token };
+  }
+
+  @ApiBearerAuth('bearerAuth')
+  @UseGuards(JwtAuthGuard)
+  @Delete('disconnect')
+  @ApiOperation({ summary: 'Disconnect the current user\'s Telegram account' })
+  async disconnect(@Req() req) {
+    return this.telegramService.disconnect(req.user.id);
   }
 
   @Post('dispatch-alerts')

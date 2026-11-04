@@ -432,7 +432,7 @@ export class JobService {
     return { jobs: await qb.getMany() };
   }
 
-  async findAllByQuery(query: string | string[]) {
+  async findAllByQuery(query: string | string[], options: { limit?: number; excludeIds?: number[] } = {}) {
     const rawQueries = (Array.isArray(query) ? query : [query])
       .filter((q) => typeof q === 'string' && q.trim().length > 0);
 
@@ -542,9 +542,12 @@ export class JobService {
     )`;
 
     qb.andWhere(`${orderScoreSql} >= 100`);
+    if (options.excludeIds?.length) {
+      qb.andWhere('NOT (job.id = ANY(:excludeIds))', { excludeIds: options.excludeIds });
+    }
     qb.orderBy(orderScoreSql, 'DESC');
     qb.addOrderBy('job.id', 'DESC');
-    qb.limit(60);
+    qb.limit(options.limit ?? 60);
 
     return qb.getMany();
   }

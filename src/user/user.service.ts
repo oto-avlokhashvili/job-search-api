@@ -183,6 +183,16 @@ export class UserService implements OnModuleInit {
     return user;
   }
 
+  /** Unlinks Telegram; returns the chat id that was linked (null when nothing was). */
+  async disconnectTelegram(userId: number): Promise<string | null> {
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException(`User with ID ${userId} not found`);
+
+    const chatId = user.telegramChatId || null;
+    await this.userRepo.update(userId, { telegramChatId: '', telegramToken: '' });
+    return chatId;
+  }
+
   async saveTelegramToken(userId: number, token: string) {
     const tokenawait = await this.userRepo.update(userId, { telegramToken: token });
     return tokenawait;

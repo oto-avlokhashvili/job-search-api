@@ -6,6 +6,12 @@ import { Queue, UnrecoverableError } from 'bullmq';
 import { AiMatchedJobsService } from 'src/ai-matched-jobs/ai-matched-jobs.service';
 import { AiService } from 'src/ai/ai.service';
 import { CvService } from 'src/cv/cv.service';
+import { scoreJobForCv } from 'src/cv/public-cv-search.service';
+
+/** Only jobs at least this good a fit are sent to Telegram. */
+const TELEGRAM_MIN_MATCH = 60;
+/** How many unsent candidates are scored per user; title matches come first, so this covers them all. */
+const TELEGRAM_CANDIDATE_LIMIT = 500;
 import { JobService } from 'src/job/job.service';
 import { SentJobsService } from 'src/sent-jobs/sent-jobs.service';
 import { UserService } from 'src/user/user.service';
@@ -152,6 +158,36 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
                 }
             }
         });
+
+        this.bot?.onText(/^\/stop\b/, async (msg) => {
+            const chatId = msg.chat.id.toString();
+            const user = await this.userService.findByTelegramId(chatId);
+            if (!user) {
+                await this.sendDirectMessage(chatId, 'ℹ️ ეს ჩატი არცერთ ანგარიშთან არ არის დაკავშირებული.');
+                return;
+            }
+            await this.disconnect(user.id);
+        });
+    }
+
+    /**
+     * Unlinks the user's Telegram chat and says goodbye there. The subscription is left as is:
+     * a paid BASIC also has no end date, so it can't be told apart from the free Telegram one.
+     */
+    async disconnect(userId: number): Promise<{ disconnected: boolean }> {
+        const chatId = await this.userService.disconnectTelegram(userId);
+        if (!chatId) return { disconnected: false };
+
+        try {
+            await this.sendDirectMessage(
+                chatId,
+                `👋 Telegram გათიშულია თქვენი ანგარიშიდან. ვაკანსიებს აღარ მიიღებთ.\n` +
+                `ხელახლა დასაკავშირებლად გამოიყენეთ პროფილის გვერდი.`
+            );
+        } catch {
+            // Best effort: the chat may already be blocked or deleted
+        }
+        return { disconnected: true };
     }
 
     /** Connecting Telegram comes with free BASIC (no end date); returns the user with that plan loaded. */
@@ -272,19 +308,22 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
                 return { status: 'skipped', reason: 'no search queries' };
             }
 
-            // 2. Fetch matching raw jobs directly from DB and sent jobs in parallel
-            const [matchingJobs, sentJobIdsArr] = await Promise.all([
-                this.jobService.findAllByQuery(searchQueries),
-                this.sentJobsService.findAllJobIdsByUserId(user.id),
-            ]);
+            // 2. Fetch matching jobs the user hasn't received yet (excluded in SQL, so the
+            //    candidate limit isn't used up by already sent jobs)
+            const sentJobIds = await this.sentJobsService.findAllJobIdsByUserId(user.id);
+            const matchingJobs = await this.jobService.findAllByQuery(searchQueries, {
+                limit: TELEGRAM_CANDIDATE_LIMIT,
+                excludeIds: sentJobIds,
+            });
 
-            const sentJobIds = new Set<number>(sentJobIdsArr);
-
-            // 3. Exclude already sent jobs & slice to dynamic daily limit
+            // 3. Score them like the public site (keyword-based, no AI), keep only strong
+            //    matches, best first & slice to dynamic daily limit
             const dailyLimit = this.entitlementService.getDailyJobLimit(user);
             const effectivePlan = this.entitlementService.getEffectivePlan(user);
             const newJobs = matchingJobs
-                .filter((job) => !sentJobIds.has(job.id))
+                .map((job) => ({ ...job, ...scoreJobForCv(job, summary!) }))
+                .filter((job) => job.match >= TELEGRAM_MIN_MATCH)
+                .sort((a, b) => b.match - a.match)
                 .slice(0, dailyLimit === Infinity ? undefined : dailyLimit);
 
             // Send welcome message
@@ -317,6 +356,11 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
                         `🏢 ${job.company}\n` +
                         `📍 ${job.location ?? 'თბილისი'}\n` +
                         `📅 ${job.publishDate ?? ''} – ${job.deadline ?? ''}\n` +
+                        `🎯 დამთხვევა: *${job.match}%*\n` +
+                        `${this.buildMatchBar(job.match)}\n` +
+                        (job.matchedKeywords.length
+                            ? `🔑 ${job.matchedKeywords.map((k) => k.replace(/[_*`\[\]]/g, '')).join(', ')}\n`
+                            : '') +
                         `🔗 [დეტალები](${job.link})\n` +
                         `━━━━━━━━━━━━━━━━━━━`,
                         { parse_mode: 'Markdown' }
@@ -329,7 +373,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
                         vacancy: job.vacancy,
                         location: job.location,
                         company: job.company,
-                        match: 0,
+                        match: job.match,
                     });
 
                     // Small 300ms pacing delay per chat
