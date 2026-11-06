@@ -9,12 +9,13 @@ import { Subscription } from 'src/Entities/subscription.entity';
 import { SubscriptionPlan, SubscriptionStatus } from 'src/enums/subscriptions.enum';
 import { EmailService } from '../email/email.service';
 import { UserRole } from 'src/enums/user-role.enum';
+import { HrType } from 'src/enums/hr-type.enum';
 
 /** Emails are compared trimmed and lowercased: "Name@Gmail.com" and "name@gmail.com" are one account. */
 export const normalizeEmail = (email: string | null | undefined) => (email ?? '').trim().toLowerCase();
 
 // Fields safe to return to clients (never the password hash or verification code).
-const PUBLIC_USER_FIELDS: (keyof User)[] = ['id', 'firstName', 'lastName', 'email', 'role', 'companyName', 'hrApproved', 'createdAt', 'subscription', 'telegramChatId', 'isEmailVerified', 'receiveMessages'];
+const PUBLIC_USER_FIELDS: (keyof User)[] = ['id', 'firstName', 'lastName', 'email', 'role', 'companyName', 'hrType', 'hrApproved', 'createdAt', 'subscription', 'telegramChatId', 'isEmailVerified', 'receiveMessages'];
 
 @Injectable()
 export class UserService implements OnModuleInit {
@@ -51,7 +52,7 @@ export class UserService implements OnModuleInit {
     }
   }
 
-  async create(createUserDto: CreateUserDto, isEmailVerified = false, extra: Pick<Partial<User>, 'role' | 'companyName'> = {}) {
+  async create(createUserDto: CreateUserDto, isEmailVerified = false, extra: Pick<Partial<User>, 'role' | 'companyName' | 'hrType'> = {}) {
     // Copy fields explicitly: the request body must never set role, hrApproved, subscription, etc.
     const { firstName, lastName, password, receiveMessages } = createUserDto;
     const email = normalizeEmail(createUserDto.email);
@@ -86,7 +87,12 @@ export class UserService implements OnModuleInit {
   }
 
   async createHr(dto: CreateHrUserDto) {
-    const user = await this.create(dto, false, { role: UserRole.HR, companyName: dto.companyName.trim() });
+    const hrType = dto.hrType ?? HrType.COMPANY;
+    const user = await this.create(dto, false, {
+      role: UserRole.HR,
+      hrType,
+      companyName: dto.companyName?.trim() || null,
+    });
     return this.findOne(user.id);
   }
 

@@ -23,6 +23,9 @@ import { PublicCvReconnectDto } from './dto/public-cv-reconnect.dto';
 import { CvParserService } from './cv-parser.service';
 import { PublicCvSearchService } from './public-cv-search.service';
 import { TurnstileService } from './turnstile.service';
+import { RolesGuard } from 'src/auth/guards/roles.guard';
+import { Roles } from 'src/auth/decorators/roles.decorator';
+import { UserRole } from 'src/enums/user-role.enum';
 
 @ApiTags('CV')
 @ApiBearerAuth('bearerAuth')
@@ -176,5 +179,24 @@ export class CvController {
       characterCount: text.length,
       text,
     };
+  }
+
+  /**
+   * Admin: re-analyzes every CV whose summary lacks the HR filter facts (employers, universities,
+   * languages, years of experience), in the background, one AI call per CV. Returns the progress;
+   * calling it again while it runs just returns the progress.
+   */
+  @Post('admin/reanalyze')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  startReanalysis() {
+    return this.cvService.startReanalysis();
+  }
+
+  @Get('admin/reanalyze')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  reanalysisStatus() {
+    return this.cvService.reanalysisStatus();
   }
 }

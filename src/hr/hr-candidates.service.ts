@@ -23,7 +23,8 @@ import { LinkedinProfile, LinkedinSearchService } from 'src/linkedin-search/link
 import { LinkedinSearchDto } from 'src/linkedin-search/dto/linkedin-search.dto';
 import { HrAiCandidateSearchDto, HrCandidateSearchDto } from './dto/hr-candidate-search.dto';
 import { CreateManualCandidateDto } from './dto/hr-vacancy.dto';
-import { CandidateCriteria, scoreCvForCriteria } from './candidate-score';
+import { CandidateCriteria, CandidateFilters, fitsWithoutKeywords, scoreCvForCriteria } from './candidate-score';
+import { universityEnglishNames } from 'src/cv/georgian-universities';
 import {
   AiRanking,
   buildExpandPrompt,
@@ -87,6 +88,40 @@ export interface HrCandidate {
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, '\\$&');
 const splitKeywords = (keyword: string) =>
   Array.from(new Set(keyword.split(',').map((k) => k.trim()).filter(Boolean))).slice(0, 10);
+/** "A, B" from a filter field -> ['A', 'B'] (at most 5) */
+const splitList = (value?: string) => (value ? splitKeywords(value).slice(0, 5) : []);
+
+/** The form's comma-separated filter fields as lists */
+const filtersFromDto = (dto: { company?: string; university?: string; skills?: string; languages?: string }): Required<CandidateFilters> => ({
+  companies: splitList(dto.company),
+  universities: splitList(dto.university),
+  skills: splitList(dto.skills),
+  languages: splitList(dto.languages),
+});
+
+type SummaryListField = 'companies' | 'universities' | 'primarySkills' | 'secondarySkills' | 'languages';
+const jsonList = (field: SummaryListField) =>
+  `(CASE WHEN jsonb_typeof(cv.summary->'${field}') = 'array' THEN cv.summary->'${field}' ELSE '[]'::jsonb END)`;
+
+/**
+ * A filter on the summary's lists (case-insensitive "contains"): `groups` are AND-ed, the terms in
+ * a group OR-ed. CVs not re-analyzed yet don't have the fact lists, so those filters skip them.
+ */
+const summaryListFilter = (fields: SummaryListField[], groups: string[][], paramPrefix: string) => {
+  const kept = groups.map((g) => g.map((t) => t.trim()).filter(Boolean)).filter((g) => g.length);
+  if (!kept.length) return '1=1';
+  const source = fields.map(jsonList).join(' || ');
+  const params: Record<string, string> = {};
+  const clauses = kept.map((terms, gi) => {
+    const ors = terms.map((term, ti) => {
+      const name = `${paramPrefix}${gi}_${ti}`;
+      params[name] = `%${escapeLike(term)}%`;
+      return `entry ILIKE :${name}`;
+    });
+    return `EXISTS (SELECT 1 FROM jsonb_array_elements_text(${source}) AS entry WHERE ${ors.join(' OR ')})`;
+  });
+  return new Brackets((qb) => qb.where(clauses.join(' AND '), params));
+};
 // Used when the AI can't expand the request: its longer words as plain keywords
 const queryWords = (query: string) =>
   Array.from(new Set(query.toLowerCase().split(/[\s,;.]+/).filter((w) => w.length >= 3))).slice(0, 10);
@@ -103,6 +138,9 @@ type AiVerdict = Pick<AiRanking, 'reason' | 'missing' | 'unverified'>;
 export type HrAiResult =
   | (HrCandidate & AiVerdict & { source: 'cv' })
   | (AiVerdict & { source: 'linkedin'; profile: LinkedinProfile; match: number | null });
+
+/** The form's hard filters, applied on top of what the AI reads from the request */
+type AiSearchFilters = Required<CandidateFilters> & { openToWork: boolean };
 
 interface CachedAiSearch {
   expanded: ExpandedQuery;
@@ -141,13 +179,16 @@ export class HrCandidatesService {
       'ძიების ლიმიტი ამოიწურა, სცადეთ მოგვიანებით',
     );
 
-    const keywords = splitKeywords(dto.keyword);
-    if (!keywords.length) throw new BadRequestException('Enter at least one keyword');
+    const keywords = splitKeywords(dto.keyword ?? '');
+    const criteria = { location: dto.location?.trim(), seniority: dto.seniority, ...filtersFromDto(dto) };
+    const hasFilter =
+      !!criteria.location || !!criteria.seniority || [criteria.universities, criteria.skills, criteria.languages].some((l) => l.length);
+    if (!keywords.length && !hasFilter) throw new BadRequestException('შეიყვანეთ საძიებო სიტყვა ან აირჩიეთ ფილტრი');
 
-    const ranked = (await this.findCandidatePool({ keywords, location: dto.location, seniority: dto.seniority })).slice(
-      0,
-      MAX_RANKED,
-    );
+    // Without a keyword: the CVs that pass the filters, newest first, with no match score
+    const ranked: { cv: Cv; score?: { match: number; matchedKeywords: string[] } }[] = (
+      keywords.length ? await this.findCandidatePool({ keywords, ...criteria }) : await this.findByFilters(criteria)
+    ).slice(0, MAX_RANKED);
 
     const page = dto.page ?? 1;
     const limit = dto.limit ?? 20;
@@ -173,7 +214,10 @@ export class HrCandidatesService {
     const query = dto.query.replace(/\s+/g, ' ').trim();
     if (!query) throw new BadRequestException('Describe the candidate you are looking for');
 
-    const cacheKey = `hr:ai-search:${createHash('sha256').update(query.toLowerCase()).digest('hex')}`;
+    const filters: AiSearchFilters = { ...filtersFromDto(dto), openToWork: dto.openToWork ?? false };
+    // Other filters make another search, cached apart
+    const cacheId = `${query}|${JSON.stringify(filters)}`.toLowerCase();
+    const cacheKey = `hr:ai-search:${createHash('sha256').update(cacheId).digest('hex')}`;
     let search = await this.limits.getJson<CachedAiSearch>(cacheKey);
     const fresh = !search;
     if (!search) {
@@ -183,7 +227,7 @@ export class HrCandidatesService {
         3600,
         'AI ძიების ლიმიტი ამოიწურა, სცადეთ მოგვიანებით',
       );
-      search = await this.runAiSearch(hr, query);
+      search = await this.runAiSearch(hr, query, filters);
       const ttl = search.linkedin === 'ok' ? AI_SEARCH_CACHE_SEC : AI_SEARCH_PARTIAL_CACHE_SEC;
       await this.limits.setJson(cacheKey, search, ttl);
     }
@@ -227,14 +271,17 @@ export class HrCandidatesService {
     };
   }
 
-  private async runAiSearch(hr: User, query: string): Promise<CachedAiSearch> {
+  private async runAiSearch(hr: User, query: string, filters: AiSearchFilters): Promise<CachedAiSearch> {
     const expanded = parseExpandedQuery(
       await this.aiService.generateJson(buildExpandPrompt(query), 'hrAiSearch.expand'),
     ) ?? { keywords: queryWords(query), titles: queryWords(query).slice(0, 3) };
     const empty = { expanded, poolSize: 0, linkedinProfiles: [], rankings: [] };
     if (!expanded.keywords.length) return { ...empty, linkedin: 'ok', aiRanked: false };
 
-    const [fullPool, linkedin] = await Promise.all([this.findCandidatePool(expanded), this.searchLinkedinForAi(hr, expanded)]);
+    const [fullPool, linkedin] = await Promise.all([
+      this.findCandidatePool({ ...expanded, ...filters }),
+      this.searchLinkedinForAi(hr, expanded, filters),
+    ]);
     const pool = fullPool.slice(0, AI_RANK_POOL);
     const base = { expanded, poolSize: pool.length, linkedinProfiles: linkedin.profiles, linkedin: linkedin.status };
     if (!pool.length && !linkedin.profiles.length) return { ...base, rankings: [], aiRanked: true };
@@ -266,6 +313,7 @@ export class HrCandidatesService {
   private async searchLinkedinForAi(
     hr: User,
     expanded: ExpandedQuery,
+    filters: AiSearchFilters,
   ): Promise<{ profiles: LinkedinProfile[]; status: AiLinkedinStatus }> {
     if (
       hr.role !== UserRole.ADMIN &&
@@ -279,7 +327,15 @@ export class HrCandidatesService {
     let timer: NodeJS.Timeout | undefined;
     try {
       const res = await Promise.race([
-        this.linkedinSearchService.search({ keyword: expanded.titles.join(','), location }),
+        this.linkedinSearchService.search({
+          keyword: expanded.titles.join(','),
+          location,
+          company: filters.companies.join(','),
+          university: filters.universities.join(','),
+          skills: filters.skills.join(','),
+          languages: filters.languages.join(','),
+          openToWork: filters.openToWork,
+        }),
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => reject(new Error('timed out')), AI_LINKEDIN_TIMEOUT_MS);
         }),
@@ -298,11 +354,7 @@ export class HrCandidatesService {
    * this is the step to swap for a vector search once keywords stop finding the right people.
    */
   private async findCandidatePool(criteria: CandidateCriteria) {
-    const cvs = await this.cvRepository
-      .createQueryBuilder('cv')
-      .where('cv.summary IS NOT NULL')
-      // HR-added records are private to their HR (they have no summary either; this is the rule itself)
-      .andWhere('cv.addedByHrId IS NULL')
+    const cvs = await this.poolQuery(criteria)
       .andWhere(
         new Brackets((qb) =>
           criteria.keywords.forEach((k, i) =>
@@ -310,14 +362,35 @@ export class HrCandidatesService {
           ),
         ),
       )
-      .orderBy('cv.updatedAt', 'DESC')
-      .take(PREFILTER_LIMIT)
       .getMany();
 
     return cvs
       .map((cv) => ({ cv, score: scoreCvForCriteria(cv.summary!, criteria) }))
       .filter((r): r is { cv: Cv; score: NonNullable<typeof r.score> } => r.score !== null)
       .sort((a, b) => b.score.match - a.score.match || b.cv.updatedAt.getTime() - a.cv.updatedAt.getTime());
+  }
+
+  /** Filters only, no keyword: the searchable CVs that pass them, newest first. */
+  private async findByFilters(criteria: Omit<CandidateCriteria, 'keywords'>) {
+    const cvs = await this.poolQuery(criteria).getMany();
+    return cvs.filter((cv) => fitsWithoutKeywords(cv.summary!, criteria)).map((cv) => ({ cv }));
+  }
+
+  /** Searchable CVs passing the filters (employers, universities, skills, languages from the summary), newest first. */
+  private poolQuery(criteria: CandidateFilters) {
+    return this.cvRepository
+      .createQueryBuilder('cv')
+      .where('cv.summary IS NOT NULL')
+      // HR-added records are private to their HR (they have no summary either; this is the rule itself)
+      .andWhere('cv.addedByHrId IS NULL')
+      // Any of the companies; any of the universities (by its English names)
+      .andWhere(summaryListFilter(['companies'], [criteria.companies ?? []], 'co'))
+      .andWhere(summaryListFilter(['universities'], [(criteria.universities ?? []).flatMap(universityEnglishNames)], 'uni'))
+      // Every skill; every language
+      .andWhere(summaryListFilter(['primarySkills', 'secondarySkills'], (criteria.skills ?? []).map((s) => [s]), 'sk'))
+      .andWhere(summaryListFilter(['languages'], (criteria.languages ?? []).map((l) => [l]), 'lang'))
+      .orderBy('cv.updatedAt', 'DESC')
+      .take(PREFILTER_LIMIT);
   }
 
   /**

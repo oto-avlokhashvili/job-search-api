@@ -15,5 +15,15 @@ export interface CvSummaryDetails {
   locationPreference: string;
   careerDirection: string;
   searchQueries: string[];
+  // Facts for the HR filters. Missing on summaries made before they were added, until the CV is
+  // re-analyzed (CvService.startReanalysis).
+  /** Employers, most recent first */
+  companies?: string[];
+  /** Universities and colleges; Georgian ones by their GEORGIAN_UNIVERSITIES name */
+  universities?: string[];
+  /** Spoken languages, in English ("English", "Russian") */
+  languages?: string[];
+  /** Total paid work experience in years (0 = none yet) */
+  yearsOfExperience?: number;
   promptVersion?: number;
 }

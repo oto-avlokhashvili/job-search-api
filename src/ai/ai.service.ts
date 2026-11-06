@@ -9,6 +9,8 @@ import { JobService } from 'src/job/job.service';
 import { UserService } from 'src/user/user.service';
 import { jsonrepair } from 'jsonrepair';
 import { CV_SUMMARY_PROMPT_VERSION, CvSummaryDetails } from 'src/cv/dto/cv-summary.dto';
+import { GEORGIAN_UNIVERSITIES } from 'src/cv/georgian-universities';
+import { normalizeSummaryFacts } from 'src/cv/summary-facts';
 import { AiMatchedJobsService } from 'src/ai-matched-jobs/ai-matched-jobs.service';
 import mammoth from 'mammoth';
 import { CvParserService } from 'src/cv/cv-parser.service';
@@ -193,7 +195,7 @@ export class AiService {
 
 async summarizeCv(cvFile: Express.Multer.File): Promise<CvSummaryDetails | null> {
   const summary = await this.requestCvSummary(cvFile);
-  return summary ? { ...summary, promptVersion: CV_SUMMARY_PROMPT_VERSION } : null;
+  return summary ? normalizeSummaryFacts({ ...summary, promptVersion: CV_SUMMARY_PROMPT_VERSION }) : null;
 }
 
 private async requestCvSummary(cvFile: Express.Multer.File): Promise<CvSummaryDetails | null> {
@@ -238,6 +240,17 @@ STEP 4 — Cross-check: if STEP 1 and STEP 2 conflict, trust STEP 2 (years) over
 - Ignore formatting artifacts: font names, colors, bullet styles (Arial, Calibri, bold, etc.)
 - locationPreference: extract city if mentioned, otherwise "Not specified"
 - careerDirection: infer the direction they are heading, not just current role
+- yearsOfExperience: total paid work experience in years as a number, counted as in STEP 2 (one decimal at most;
+  0 for students, graduates and people with only internships, volunteering or personal projects)
+- companies: the employers the candidate has worked for, most recent first, max 8, the company name only
+  (no city, department or legal suffix like LLC/შპს), in Latin script when the CV gives it (e.g. "TBC Bank").
+  Empty array when none are named.
+- universities: the universities and colleges the candidate studied at (no schools, courses or bootcamps), max 4.
+  A Georgian university MUST be written exactly as its name in this list (match Georgian or other spellings to it):
+  ${GEORGIAN_UNIVERSITIES.map((u) => u.name).join('; ')}.
+  Any other university: its official English name. Empty array when none are named.
+- languages: the languages the candidate speaks, as English names ("Georgian", "English", "Russian"), max 6.
+  Include the native language when the CV implies it. Empty array when none can be told.
 
 ## SEARCH QUERIES — role titles and distinctive specializations (NO seniority prefixes):
 
@@ -326,6 +339,10 @@ Return ONLY valid raw JSON, no markdown, no backticks:
   "domains": ["string"],
   "locationPreference": "string",
   "careerDirection": "string",
+  "yearsOfExperience": number,
+  "companies": ["string"],
+  "universities": ["string"],
+  "languages": ["string"],
   "searchQueries": ["string"],
   "salaryEstimates": {
     "georgia": "string",

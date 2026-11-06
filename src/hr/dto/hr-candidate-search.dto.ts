@@ -1,16 +1,18 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
-import type { SeniorityLevel } from 'src/cv/dto/cv-summary.dto';
-import { LEVEL_ORDER } from 'src/cv/public-cv-search.service';
+import { Transform, Type } from 'class-transformer';
+import { IsBoolean, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { toBool } from 'src/linkedin-search/dto/linkedin-search.dto';
+import { EXPERIENCE_FILTERS } from '../candidate-score';
+import type { ExperienceFilter } from '../candidate-score';
 
 export class HrCandidateSearchDto {
-  // Same convention as the LinkedIn search: comma-separated values are OR-ed
-  @ApiProperty({ example: 'Angular,React', description: 'Role or skills. Comma-separated values are OR-ed' })
+  // Same convention as the LinkedIn search: comma-separated values are OR-ed.
+  // Optional: a search with filters only lists the matching CVs, newest first, without a match score.
+  @ApiPropertyOptional({ example: 'Angular,React', description: 'Role or skills. Comma-separated values are OR-ed. Optional when a filter is set' })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @MaxLength(200)
-  keyword: string;
+  keyword?: string;
 
   @ApiPropertyOptional({ example: 'Tbilisi' })
   @IsOptional()
@@ -18,10 +20,33 @@ export class HrCandidateSearchDto {
   @MaxLength(100)
   location?: string;
 
-  @ApiPropertyOptional({ enum: LEVEL_ORDER, description: 'CVs 2+ levels away are excluded' })
+  // No company filter here: the CV base is searched by role and skills (the AI search and LinkedIn have it)
+
+  @ApiPropertyOptional({ example: 'Free University of Tbilisi', description: 'University studied at. Comma-separated values are OR-ed' })
   @IsOptional()
-  @IsIn(LEVEL_ORDER)
-  seniority?: SeniorityLevel;
+  @IsString()
+  @MaxLength(300)
+  university?: string;
+
+  @ApiPropertyOptional({ example: 'React,TypeScript', description: 'Skills the candidate must all have. Comma-separated values are AND-ed' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  skills?: string;
+
+  @ApiPropertyOptional({ example: 'English,Russian', description: 'Languages the candidate must all speak. Comma-separated values are AND-ed' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  languages?: string;
+
+  @ApiPropertyOptional({
+    enum: EXPERIENCE_FILTERS,
+    description: 'CVs 2+ levels away are excluded. Entry: Junior CVs with under a year of work (no experience)',
+  })
+  @IsOptional()
+  @IsIn(EXPERIENCE_FILTERS)
+  seniority?: ExperienceFilter;
 
   @ApiPropertyOptional({ default: 1 })
   @IsOptional()
@@ -48,6 +73,36 @@ export class HrAiCandidateSearchDto {
   @IsNotEmpty()
   @MaxLength(500)
   query: string;
+
+  @ApiPropertyOptional({ example: 'TBC Bank', description: 'Current or past employer: filters our CVs and the LinkedIn half. Comma-separated values are OR-ed' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  company?: string;
+
+  @ApiPropertyOptional({ example: 'Free University of Tbilisi', description: 'University studied at. Comma-separated values are OR-ed' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  university?: string;
+
+  @ApiPropertyOptional({ example: 'React,TypeScript', description: 'Skills the candidate must all have. Comma-separated values are AND-ed' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  skills?: string;
+
+  @ApiPropertyOptional({ example: 'English,Russian', description: 'Languages the candidate must all speak. Comma-separated values are AND-ed' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  languages?: string;
+
+  @ApiPropertyOptional({ default: false, description: 'LinkedIn half: only profiles that say they are open to work' })
+  @IsOptional()
+  @Transform(toBool)
+  @IsBoolean()
+  openToWork?: boolean = false;
 
   @ApiPropertyOptional({ default: 1 })
   @IsOptional()

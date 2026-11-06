@@ -73,7 +73,7 @@ describe('HrCandidatesService AI search', () => {
     const { service, linkedinSearch, limits, logs } = setup();
     const res = await service.searchCvsWithAi(hr, { query: 'Senior React dev, fintech, Tbilisi' });
 
-    expect(linkedinSearch).toHaveBeenCalledWith({ keyword: 'React Developer', location: 'Tbilisi' });
+    expect(linkedinSearch).toHaveBeenCalledWith({ keyword: 'React Developer', location: 'Tbilisi', company: '', university: '', skills: '', languages: '', openToWork: false });
     expect(limits.tryConsume).toHaveBeenCalledWith(expect.stringMatching(/^hr:linkedin:7:/), expect.any(Number), expect.any(Number));
     expect(res.linkedin).toBe('ok');
     expect(res.total).toBe(3);
@@ -85,6 +85,25 @@ describe('HrCandidatesService AI search', () => {
     expect(res.candidates[0]).toMatchObject({ source: 'linkedin', profile, reason: 'React developer at a bank' });
     expect(res.candidates[1]).toMatchObject({ source: 'cv', id: 2, unlocked: false, contact: null, missing: ['fintech'] });
     expect(logs.insert).toHaveBeenCalledWith(expect.objectContaining({ linkedinCount: 1, resultCvIds: [2, 1] }));
+  });
+
+  it('applies the company filter to both halves and passes the open-to-work choice on', async () => {
+    const { service, linkedinSearch, limits } = setup();
+    await service.searchCvsWithAi(hr, { query: 'Senior React dev', company: 'TBC Bank, Liberty', university: 'TSU', openToWork: true });
+
+    expect(linkedinSearch).toHaveBeenCalledWith(
+      expect.objectContaining({ company: 'TBC Bank,Liberty', university: 'TSU', openToWork: true }),
+    );
+    expect((service as any).findCandidatePool).toHaveBeenCalledWith(
+      expect.objectContaining({ companies: ['TBC Bank', 'Liberty'], universities: ['TSU'] }),
+    );
+    // A different filter is a different search, not the cached one
+    const [plainKey] = (await (async () => {
+      const other = setup();
+      await other.service.searchCvsWithAi(hr, { query: 'Senior React dev' });
+      return other.limits.setJson.mock.calls[0] as any[];
+    })());
+    expect(limits.setJson.mock.calls[0][0]).not.toBe(plainKey);
   });
 
   it('leaves LinkedIn out when the daily LinkedIn quota is used up', async () => {

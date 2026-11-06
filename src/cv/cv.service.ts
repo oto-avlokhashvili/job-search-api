@@ -14,6 +14,7 @@ import { PublicCvUploadDto } from './dto/public-cv-upload.dto';
 import { PublicCvReconnectDto } from './dto/public-cv-reconnect.dto';
 import { PublicCvLimitsService } from './public-cv-limits.service';
 import { hashSearchToken } from './public-cv-search.service';
+import { CvReanalysis, ReanalysisStatus } from './cv-reanalysis';
 
 const DAY_SEC = 24 * 60 * 60;
 const envInt = (name: string, fallback: number) => Number(process.env[name]) || fallback;
@@ -24,6 +25,7 @@ const PUBLIC_CV_AI_DAILY_BUDGET = envInt('PUBLIC_CV_AI_DAILY_BUDGET', 300);
 const PUBLIC_CV_RECONNECTS_PER_IP_PER_HOUR = envInt('PUBLIC_CV_RECONNECTS_PER_IP_PER_HOUR', 20);
 
 const sha256 = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
+
 
 @Injectable()
 export class CvService {
@@ -253,6 +255,26 @@ export class CvService {
       return this.cvRepository.save(Object.assign(existing, fields));
     }
     return this.cvRepository.save(this.cvRepository.create({ userId: null, email, ...fields }));
+  }
+
+  // ─── Re-analysis (admin) ───────────────────────────────────
+  // Adds the HR filter facts to every CV's summary, throttled (see CvReanalysis)
+  private reanalysisJob?: CvReanalysis;
+  private get reanalysis(): CvReanalysis {
+    return (this.reanalysisJob ??= new CvReanalysis({
+      repo: this.cvRepository,
+      download: (path) => this.r2StorageService.downloadFile(path),
+      summarize: (file) => this.aiService.summarizeCv(file),
+      logger: this.logger,
+    }));
+  }
+
+  reanalysisStatus(): Promise<ReanalysisStatus> {
+    return this.reanalysis.status();
+  }
+
+  startReanalysis(): Promise<ReanalysisStatus> {
+    return this.reanalysis.start().status;
   }
 
   /**

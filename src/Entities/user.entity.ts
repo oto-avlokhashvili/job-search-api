@@ -2,6 +2,7 @@ import { BeforeInsert, Column, CreateDateColumn, Entity, OneToOne, PrimaryGenera
 import * as bcrypt from 'bcrypt';
 import { Subscription } from "src/enums/subscriptions.enum";
 import { UserRole } from "src/enums/user-role.enum";
+import { HrType } from "src/enums/hr-type.enum";
 import { Subscription as SubscriptionDetails } from "./subscription.entity";
 
 @Entity()
@@ -25,9 +26,13 @@ export class User {
     })
     role: UserRole;
 
-    // HR only: the company the recruiter signed up for.
+    // HR only: the company the recruiter signed up for (an outsource HR's agency, if they named one).
     @Column({ type: 'varchar', length: 150, nullable: true })
     companyName?: string | null;
+
+    // HR only: company HR or outsource recruiter. Null on HR accounts made before this existed (= company).
+    @Column({ type: 'enum', enum: HrType, nullable: true, default: null })
+    hrType?: HrType | null;
 
     // HR only: set by an admin; RolesGuard blocks HR routes until true.
     @Column({ default: false })

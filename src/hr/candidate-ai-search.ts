@@ -81,6 +81,10 @@ export const toCvRankItem = (cvId: number, s: CvSummaryDetails) => ({
   secondarySkills: s.secondarySkills,
   domains: s.domains,
   location: s.locationPreference,
+  yearsOfExperience: s.yearsOfExperience ?? null,
+  companies: s.companies ?? [],
+  universities: s.universities ?? [],
+  languages: s.languages ?? [],
 });
 
 /** What the ranking sees of a LinkedIn result: headline and search snippet, without the name. */

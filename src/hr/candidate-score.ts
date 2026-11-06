@@ -1,10 +1,50 @@
 import { CvSummaryDetails, SeniorityLevel } from 'src/cv/dto/cv-summary.dto';
 import { containsWord, LEVEL_ORDER } from 'src/cv/public-cv-search.service';
 
-export interface CandidateCriteria {
+/** The HR form's hard filters on CVs: applied in SQL, not part of the score. */
+export interface CandidateFilters {
+  /** Current or past employers, any of them */
+  companies?: string[];
+  /** Universities studied at, any of them */
+  universities?: string[];
+  /** Skills, all of them */
+  skills?: string[];
+  /** Spoken languages, all of them */
+  languages?: string[];
+}
+
+/** The HR experience filter: a seniority level, or Entry = no work experience yet */
+export type ExperienceFilter = SeniorityLevel | 'Entry';
+export const EXPERIENCE_FILTERS: ExperienceFilter[] = ['Entry', 'Junior', 'Mid', 'Senior', 'Lead', 'Principal'];
+
+/** Below this, a CV counts as having no work experience */
+const ENTRY_MAX_YEARS = 1;
+
+/** No work experience yet: Junior, and under a year of work where the summary knows the years */
+const fitsEntry = (summary: CvSummaryDetails) =>
+  summary.seniorityLevel === 'Junior' &&
+  !(typeof summary.yearsOfExperience === 'number' && summary.yearsOfExperience >= ENTRY_MAX_YEARS);
+
+/**
+ * A search with filters only (no keyword) has nothing to score, so experience and location become
+ * plain filters: the exact level (or Entry), and no CV that names a different city (remote and
+ * unspecified locations stay in).
+ */
+export function fitsWithoutKeywords(summary: CvSummaryDetails, criteria: Omit<CandidateCriteria, 'keywords'>): boolean {
+  if (criteria.seniority === 'Entry' ? !fitsEntry(summary) : criteria.seniority && summary.seniorityLevel !== criteria.seniority) {
+    return false;
+  }
+  const wanted = (criteria.location || '').trim().toLowerCase();
+  const pref = (summary.locationPreference || '').trim().toLowerCase();
+  const specified = pref && pref !== 'not specified';
+  if (wanted && specified && !pref.includes(wanted) && !wanted.includes(pref) && !/remote|დისტანციურ/.test(pref)) return false;
+  return true;
+}
+
+export interface CandidateCriteria extends CandidateFilters {
   keywords: string[];
   location?: string;
-  seniority?: SeniorityLevel;
+  seniority?: ExperienceFilter;
 }
 
 /** Either side contains the other as a whole word: "React" ~ "React.js", "React Native developer" ~ "React Native". */
@@ -43,10 +83,21 @@ export function scoreCvForCriteria(
   if (domainHits.length) score += 5;
   domainHits.forEach((k) => hits.add(k.toLowerCase()));
 
+  // Employers, universities, languages: a keyword found only there still counts, below role and skills
+  if (hits.size === 0) {
+    const facts = [...(summary.companies || []), ...(summary.universities || []), ...(summary.languages || [])];
+    const factHits = keywords.filter((k) => facts.some((f) => matches(f, k)));
+    score += Math.min(factHits.length * 15, 30);
+    factHits.forEach((k) => hits.add(k.toLowerCase()));
+  }
+
   if (hits.size === 0) return null;
 
-  // Seniority: full points when not requested, so scores stay comparable across searches
-  if (criteria.seniority) {
+  // Seniority: full points when not requested, so scores stay comparable across searches.
+  if (criteria.seniority === 'Entry') {
+    if (!fitsEntry(summary)) return null;
+    score += 10;
+  } else if (criteria.seniority) {
     const wanted = LEVEL_ORDER.indexOf(criteria.seniority);
     const actual = LEVEL_ORDER.indexOf(summary.seniorityLevel);
     const distance = actual < 0 ? 1 : Math.abs(wanted - actual);
