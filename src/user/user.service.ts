@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Inject, forwardRef, OnModuleInit } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, forwardRef, OnModuleInit, ConflictException } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { CreateHrUserDto } from './dto/create-hr-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -9,6 +9,9 @@ import { Subscription } from 'src/Entities/subscription.entity';
 import { SubscriptionPlan, SubscriptionStatus } from 'src/enums/subscriptions.enum';
 import { EmailService } from '../email/email.service';
 import { UserRole } from 'src/enums/user-role.enum';
+
+/** Emails are compared trimmed and lowercased: "Name@Gmail.com" and "name@gmail.com" are one account. */
+export const normalizeEmail = (email: string | null | undefined) => (email ?? '').trim().toLowerCase();
 
 // Fields safe to return to clients (never the password hash or verification code).
 const PUBLIC_USER_FIELDS: (keyof User)[] = ['id', 'firstName', 'lastName', 'email', 'role', 'companyName', 'hrApproved', 'createdAt', 'subscription', 'telegramChatId', 'isEmailVerified', 'receiveMessages'];
@@ -50,7 +53,12 @@ export class UserService implements OnModuleInit {
 
   async create(createUserDto: CreateUserDto, isEmailVerified = false, extra: Pick<Partial<User>, 'role' | 'companyName'> = {}) {
     // Copy fields explicitly: the request body must never set role, hrApproved, subscription, etc.
-    const { firstName, lastName, email, password, receiveMessages } = createUserDto;
+    const { firstName, lastName, password, receiveMessages } = createUserDto;
+    const email = normalizeEmail(createUserDto.email);
+    // Without this check a double-submitted form or a returning user got a second, empty account
+    if (await this.findByEmail(email)) {
+      throw new ConflictException('ამ ელ-ფოსტით ანგარიში უკვე არსებობს. შედით ანგარიშში.');
+    }
     const user = this.userRepo.create({ firstName, lastName, email, password, receiveMessages, ...extra });
     user.isEmailVerified = isEmailVerified;
 
@@ -98,7 +106,7 @@ export class UserService implements OnModuleInit {
   }
 
   async verifyEmail(email: string, code: string): Promise<boolean> {
-    const user = await this.userRepo.findOne({ where: { email } });
+    const user = await this.findByEmail(email);
     if (!user || user.emailVerificationToken !== code) {
       return false;
     }
@@ -109,7 +117,7 @@ export class UserService implements OnModuleInit {
   }
 
   async resendVerification(email: string): Promise<{ success: boolean; message: string }> {
-    const user = await this.userRepo.findOne({ where: { email } });
+    const user = await this.findByEmail(email);
     if (!user) {
       throw new NotFoundException('User not found');
     }
@@ -164,12 +172,17 @@ export class UserService implements OnModuleInit {
   return this.findOne(id);
 }
 
+  /**
+   * Case-insensitive, and always the oldest account: duplicates from before registration
+   * checked for them exist, and an unordered lookup returned either one, so the same person
+   * sometimes landed in an empty account. The oldest is the one that holds their data.
+   */
   async findByEmail(email: string) {
-    return await this.userRepo.findOne({
-      where: {
-        email,
-      },
-    })
+    return await this.userRepo
+      .createQueryBuilder('user')
+      .where('LOWER(TRIM(user.email)) = :email', { email: normalizeEmail(email) })
+      .orderBy('user.id', 'ASC')
+      .getOne();
   }
   async linkTelegramToken(token: string, chatId: string) {
     const user = await this.userRepo.findOne({ where: { telegramToken: token } });

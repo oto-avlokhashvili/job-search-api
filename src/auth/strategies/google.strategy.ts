@@ -28,13 +28,19 @@ export class GoogleStrategy extends PassportStrategy(Strategy) {
         profile: Profile,
         done: VerifyCallback,
     ) {
-        console.log({ profile });
-        const user = await this.authService.validateGoogleUser({
-            email: profile.emails![0].value,
-            firstName: profile.name!.givenName,
-            lastName: profile.name!.familyName,
-            password: "",
-        });
-        done(null, user);
+        try {
+            const email = profile.emails?.[0]?.value;
+            if (!email) throw new Error('Google profile has no email');
+
+            // Many Google accounts have no family name (and some no given name), but both
+            // columns are NOT NULL: a missing one used to make sign-up fail.
+            const firstName = profile.name?.givenName || profile.displayName || email.split('@')[0];
+            const lastName = profile.name?.familyName || '';
+
+            const user = await this.authService.validateGoogleUser({ email, firstName, lastName, password: "" });
+            done(null, user);
+        } catch (err) {
+            done(err as Error);
+        }
     }
 }

@@ -73,6 +73,11 @@ googleLogin() {}
 @Get('google/callback')
 @UseGuards(GoogleAuthGuard)
 async googleCallback(@Req() req, @Res() res: Response) {
+  // GoogleAuthGuard leaves req.user empty when sign-in failed; the site shows the error
+  if (!req.user) {
+    return res.redirect(`${frontendUrl()}/home?authError=google`);
+  }
+
   const loginData = this.authService.login(req.user.id);
 
   // ✅ Set refresh token as httpOnly cookie (same as your local login)
