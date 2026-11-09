@@ -77,6 +77,53 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
         await this.stopBot();
     }
 
+    private pollingErrorStreak = 0;
+    private lastPollingErrorAt = 0;
+
+    private handlePollingError(error: any) {
+        const code: string | undefined = error?.code;
+        const status: number | undefined =
+            error?.response?.body?.error_code ?? error?.response?.statusCode;
+
+        // Network-level hiccups (connection recycled, timeouts, dev hot-reload).
+        const isNetworkIssue = code === 'EFATAL' || code === 'ECONNRESET' || code === 'ETIMEDOUT';
+        // Telegram-side outages (502/503/504...) and rate limiting are transient too.
+        const isTelegramTransient = code === 'ETELEGRAM' && (status === 429 || (status !== undefined && status >= 500));
+
+        if (isNetworkIssue || isTelegramTransient) {
+            // No "poll succeeded" event exists, so treat a quiet gap as recovery.
+            const now = Date.now();
+            if (now - this.lastPollingErrorAt > 2 * 60_000) this.pollingErrorStreak = 0;
+            this.lastPollingErrorAt = now;
+            this.pollingErrorStreak++;
+            // Log the first failure and then every 10th, so a long outage doesn't flood the logs.
+            if (this.pollingErrorStreak === 1 || this.pollingErrorStreak % 10 === 0) {
+                this.logger.warn(
+                    `Telegram polling transient error (${status ?? code}): ${error.message}. ` +
+                    `Retrying automatically (consecutive failures: ${this.pollingErrorStreak}).`,
+                );
+            }
+            return;
+        }
+
+        if (code === 'ETELEGRAM' && status === 401) {
+            // Invalid/revoked token: retrying will never succeed, stop hammering the API.
+            this.logger.error('Telegram rejected TELEGRAM_TOKEN (401 Unauthorized). Stopping polling.');
+            this.bot?.stopPolling().catch(() => undefined);
+            return;
+        }
+
+        if (code === 'ETELEGRAM' && status === 409) {
+            this.logger.error(
+                'Telegram polling conflict (409): another instance is polling with this token, or a webhook is set. ' +
+                'Run only one polling instance per bot token.',
+            );
+            return;
+        }
+
+        this.logger.error(`Unhandled Telegram polling error: ${error?.message}`, error?.stack);
+    }
+
     private setupCommands() {
         if (!this.token) {
             this.logger.error('TELEGRAM_TOKEN is not defined in environment variables');
@@ -93,16 +140,9 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
             },
         });
 
-        // Add error listener to handle ECONNRESET and other polling errors gracefully
-        this.bot.on('polling_error', (error: any) => {
-            // These errors are commonly related to the long polling connection being recycled
-            // or the dev server hot-reloading. We'll log them as warnings instead of errors.
-            if (error.code === 'EFATAL' || error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT') {
-                this.logger.warn(`Telegram Polling connection issue (${error.code}). Usually transient, retrying...`);
-                return;
-            }
-            this.logger.error(`Unhandled Telegram polling error: ${error.message}`, error.stack);
-        });
+        // The library keeps polling after an error (next attempt after `interval`), so most
+        // errors only need logging. Classify them so transient outages don't log as ERRORs.
+        this.bot.on('polling_error', (error: any) => this.handlePollingError(error));
 
         this.bot?.onText(/\/start(?: (.+))?/, async (msg, match) => {
             const chatId = msg.chat.id.toString();
