@@ -130,6 +130,14 @@ export class JobController {
     return await this.jobService.findForSitemap(Number.isInteger(n) && n > 0 ? n : undefined);
   }
 
+  @ApiSecurity('internalKey')
+  @UseGuards(InternalKeyGuard)
+  @ApiOperation({ summary: 'Delete non-Georgian LinkedIn jobs and strip requisition ids from titles (also runs after every scrape)' })
+  @Post('cleanup-listings')
+  async cleanupListings() {
+    return await this.jobService.cleanupListings();
+  }
+
   @ApiQuery({ name: 'search', required: false, type: String })
   @Get('cities')
   async getJobsCountByLocation(@Query('search') search?: string) {

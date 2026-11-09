@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import { JobData } from './jobs-ge.scraper';
+import { cleanJobTitle, isGeorgianLinkedinJob } from '../job/listing-quality';
 
 export interface LinkedinScraperOptions {
   keywords?: string;
@@ -151,6 +152,7 @@ export class LinkedinScraperService {
     const $ = cheerio.load(html);
     const listItems = $('li');
     const cards: ParsedJobCard[] = [];
+    let foreignSkipped = 0;
 
     listItems.each((_, el) => {
       const $el = $(el);
@@ -179,9 +181,10 @@ export class LinkedinScraperService {
         cleanLink = `https://www.linkedin.com/jobs/view/${jobId}`;
       }
 
-      const vacancy =
+      const vacancy = cleanJobTitle(
         $el.find('.base-search-card__title').text().trim() ||
-        $el.find('h3').text().trim();
+        $el.find('h3').text().trim(),
+      );
 
       const key = jobId || cleanLink;
       if (!key || !vacancy) return;
@@ -194,6 +197,12 @@ export class LinkedinScraperService {
       const location =
         $el.find('.job-search-card__location').text().trim().replace(/^[\s\-\–\—\•\.\,\/]+/g, '').trim() ||
         'საქართველო';
+
+      // Even scoped to Georgia's geo id, LinkedIn mixes in US-state ("Georgia") postings
+      if (!isGeorgianLinkedinJob({ location, vacancy, company })) {
+        foreignSkipped++;
+        return;
+      }
 
       // Lazy-loaded card image; only real company logos (not LinkedIn's gray placeholder)
       const logoUrl = $el.find('img').first().attr('data-delayed-url') || '';
@@ -218,6 +227,7 @@ export class LinkedinScraperService {
       });
     });
 
+    if (foreignSkipped > 0) this.logger.log(`Skipped ${foreignSkipped} postings outside Georgia (the country)`);
     return { cards, itemCount: listItems.length };
   }
 

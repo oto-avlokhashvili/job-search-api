@@ -103,6 +103,30 @@ describe('LinkedinScraperService', () => {
     expect(result.jobs[10].page).toBe(2);
   });
 
+  it('drops US-state "Georgia" postings, strips requisition ids, and still pages on the full card count', async () => {
+    jest.spyOn(service as any, 'applyHumanDelay').mockResolvedValue(undefined);
+    const li = (id: number, title: string, company: string, location: string) => `
+      <li><div class="base-card" data-entity-urn="urn:li:jobPosting:${id}">
+        <h3 class="base-search-card__title">${title}</h3>
+        <h4 class="base-search-card__subtitle">${company}</h4>
+        <span class="job-search-card__location">${location}</span>
+        <a class="base-card__full-link" href="https://ge.linkedin.com/jobs/view/job-${id}"></a>
+      </div></li>`;
+    const us = Array.from({ length: 8 }, (_, i) => li(100 + i, `HVAC Instructor (6589${i})`, 'UEI College', 'Georgia'));
+    mockedAxios.get
+      .mockResolvedValueOnce({
+        data: `<ul>${[...us, li(1, 'Startup Manager (12345)', 'NextVision', 'Tbilisi, Georgia'), li(2, 'Architect', 'Orbi Group', 'Batumi, Georgia')].join('')}</ul>`,
+        status: 200,
+      })
+      .mockResolvedValueOnce({ data: '<ul></ul>', status: 200 });
+
+    const result = await service.scrapeAllGeorgiaJobs();
+
+    expect(result.jobs.map((j) => j.vacancy)).toEqual(['Startup Manager', 'Architect']);
+    // 10 cards on page 1 (8 skipped) is still a full page, so page 2 was requested
+    expect(mockedAxios.get).toHaveBeenCalledTimes(2);
+  });
+
   it('should parse job description and criteria', async () => {
     const mockDetailHtml = `
       <div>

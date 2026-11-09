@@ -16,6 +16,7 @@ import * as crypto from 'crypto';
 import { CompanyLogoService } from 'src/companies/company-logo.service';
 import { companyKey } from 'src/companies/company-key';
 import { LogoCandidate } from 'src/companies/company-logo';
+import { cleanJobTitle, isGeorgianLinkedinJob } from './listing-quality';
 
 export interface LinkedinDuplicateCheckResult {
   nonDuplicatedJobs: JobData[];
@@ -605,6 +606,40 @@ export class JobService {
     return result;
   }
 
+  /**
+   * Fixes listings already in the table: deletes LinkedIn postings outside Georgia (the country)
+   * and strips requisition ids from titles. Runs after every merge; safe to run any time.
+   */
+  async cleanupListings(): Promise<{ foreignRemoved: number; titlesCleaned: number }> {
+    const linkedin = await this.jobRepo
+      .createQueryBuilder('job')
+      .select(['job.id', 'job.vacancy', 'job.company', 'job.location'])
+      .where('job.link LIKE :li', { li: '%linkedin%' })
+      .getMany();
+    const foreignIds = linkedin.filter((job) => !isGeorgianLinkedinJob(job)).map((job) => job.id);
+    for (let i = 0; i < foreignIds.length; i += 500) {
+      await this.jobRepo.delete({ id: In(foreignIds.slice(i, i + 500)) });
+    }
+
+    const withIds = await this.jobRepo
+      .createQueryBuilder('job')
+      .select(['job.id', 'job.vacancy'])
+      .where('job.vacancy ~ :idPattern', { idPattern: '[(\\[][^)\\]]*[0-9]{4,}[^)\\]]*[)\\]]|#[0-9]{4,}' })
+      .getMany();
+    let titlesCleaned = 0;
+    for (const job of withIds) {
+      const cleaned = cleanJobTitle(job.vacancy);
+      if (cleaned !== job.vacancy) {
+        await this.jobRepo.update(job.id, { vacancy: cleaned });
+        titlesCleaned++;
+      }
+    }
+
+    if (foreignIds.length || titlesCleaned) this.citiesCache = null;
+    this.logger.log(`Listing cleanup: removed ${foreignIds.length} non-Georgian LinkedIn jobs, cleaned ${titlesCleaned} titles`);
+    return { foreignRemoved: foreignIds.length, titlesCleaned };
+  }
+
   /** The jobs that still exist among `ids`, in the order given (missing ones are left out). */
   async findByIds(ids: number[]): Promise<JobEntity[]> {
     if (ids.length === 0) return [];
@@ -941,6 +976,7 @@ export class JobService {
       const sourceSeen: { signature: string; city: string }[] = [];
 
       for (const row of staged) {
+        row.vacancy = cleanJobTitle(row.vacancy);
         const v = this.normalizeText(row.vacancy);
         const c = this.normalizeText(row.company);
         const signature = `${v}|${c}`;
@@ -987,6 +1023,8 @@ export class JobService {
       .catch((error) => this.logger.error(`Company logos after run ${runId} failed: ${error.message}`));
 
     await this.scrapedJobRepo.delete({ runId });
+    // Catches rows saved before these rules existed; must never fail a merge either
+    await this.cleanupListings().catch((error) => this.logger.error(`Listing cleanup after run ${runId} failed: ${error.message}`));
     this.logger.log(`Merge for run ${runId} done: ${JSON.stringify(perSource)}`);
     return { runId, totalInserted, perSource };
   }
