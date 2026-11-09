@@ -109,6 +109,8 @@ export class JobController {
   @ApiQuery({ name: 'companyKey', required: false, type: String, description: 'Exact company (normalized name), for company pages' })
   @ApiQuery({ name: 'location', required: false, type: String })
   @ApiQuery({ name: 'publishDate', required: false, type: String })
+  @ApiQuery({ name: 'salary', required: false, type: String, description: "'true' = only vacancies that state a salary" })
+  @ApiQuery({ name: 'category', required: false, type: String, description: 'Title category: it, sales, finance, customer-service, admin, medicine, hospitality, marketing, logistics, engineering, education, legal, services' })
   @Get('all')
   async findAll(@Query() filterDto: FilterJobDto, @Req() req: any) {
     const page = Math.max(1, Number(filterDto.page) || 1);
@@ -136,6 +138,12 @@ export class JobController {
   @Post('cleanup-listings')
   async cleanupListings() {
     return await this.jobService.cleanupListings();
+  }
+
+  @ApiOperation({ summary: 'Active jobs per title category, for the category filter' })
+  @Get('categories')
+  async getJobsCountByCategory() {
+    return await this.jobService.getJobsCountByCategory();
   }
 
   @ApiQuery({ name: 'search', required: false, type: String })

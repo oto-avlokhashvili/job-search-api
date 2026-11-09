@@ -28,6 +28,16 @@ export class FilterJobDto {
   @IsString()
   publishDate?: string;
 
+  // 'true' or '1': only vacancies that state a salary amount
+  @IsOptional()
+  @IsString()
+  salary?: string;
+
+  // Title category key (see job-category.ts): it, sales, finance, customer-service, ...
+  @IsOptional()
+  @IsString()
+  category?: string;
+
   @IsOptional()
   @Type(() => Number)
   @IsNumber()

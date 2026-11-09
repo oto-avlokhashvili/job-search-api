@@ -47,3 +47,4 @@ describe('isGeorgianLinkedinJob', () => {
     expect(isGeorgianLinkedinJob(job)).toBe(true);
   });
 });
+

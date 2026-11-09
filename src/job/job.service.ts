@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Logger, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger, ConflictException, OnModuleInit } from '@nestjs/common';
 import { CreateJobDto } from './dto/create-job.dto';
 import { UpdateJobDto } from './dto/update-job.dto';
 import { Brackets, ILike, In, LessThan, Repository } from 'typeorm';
@@ -17,6 +17,8 @@ import { CompanyLogoService } from 'src/companies/company-logo.service';
 import { companyKey } from 'src/companies/company-key';
 import { LogoCandidate } from 'src/companies/company-logo';
 import { cleanJobTitle, isGeorgianLinkedinJob } from './listing-quality';
+import { extractJobSalary } from './salary';
+import { categorizeJob, JOB_CATEGORIES, JOB_CATEGORY_KEYS, toCategoryColumn } from './job-category';
 
 export interface LinkedinDuplicateCheckResult {
   nonDuplicatedJobs: JobData[];
@@ -193,9 +195,10 @@ export function getCityNameVariants(text: string): string[] {
 }
 
 @Injectable()
-export class JobService {
+export class JobService implements OnModuleInit {
   private readonly logger = new Logger(JobService.name);
   private citiesCache: { location: string; count: number }[] | null = null;
+  private categoriesCache: { category: string; count: number }[] | null = null;
 
   constructor(
     private readonly scraperService: JobsGeScraperService,
@@ -221,9 +224,14 @@ export class JobService {
     }
     createJobDto.page ??= 1;
     try {
-      const job = await this.jobRepo.save({ ...createJobDto, companyKey: companyKey(createJobDto.company) });
+      const job = await this.jobRepo.save({
+        ...createJobDto,
+        companyKey: companyKey(createJobDto.company),
+        salary: extractJobSalary(createJobDto),
+        categories: toCategoryColumn(categorizeJob(createJobDto.vacancy)),
+      });
       await this.companyLogoService.register([createJobDto.company], []).catch(() => {});
-      this.citiesCache = null; // Invalidate cache
+      this.invalidateListCaches();
       return job;
     } catch (err: any) {
       if (err?.code === '23505') { // unique_violation (link or fingerprint)
@@ -231,6 +239,80 @@ export class JobService {
       }
       throw err;
     }
+  }
+
+  onModuleInit() {
+    // In the background: startup doesn't wait for it
+    void this.fillMissingSalaries().catch((e) => this.logger.error(`Salary fill failed: ${e.message}`));
+    void this.fillMissingCategories().catch((e) => this.logger.error(`Category fill failed: ${e.message}`));
+  }
+
+  /**
+   * Works out the categories of jobs that don't have them stored yet (saved before the column
+   * existed), a batch at a time. To recompute every job after changing the keywords in
+   * job-category.ts, set the column to NULL and restart.
+   */
+  async fillMissingCategories(batchSize = 1000): Promise<number> {
+    let filled = 0;
+    for (;;) {
+      const jobs = await this.jobRepo
+        .createQueryBuilder('job')
+        .select(['job.id', 'job.vacancy'])
+        .where('job.categories IS NULL')
+        .orderBy('job.id', 'ASC')
+        .take(batchSize)
+        .getMany();
+      if (!jobs.length) break;
+
+      await this.jobRepo.query(
+        `UPDATE job_entity AS j SET categories = v.categories
+         FROM (SELECT * FROM unnest($1::int[], $2::varchar[]) AS t(id, categories)) AS v
+         WHERE j.id = v.id`,
+        [jobs.map((job) => job.id), jobs.map((job) => toCategoryColumn(categorizeJob(job.vacancy)))],
+      );
+      filled += jobs.length;
+    }
+    if (filled) {
+      this.categoriesCache = null;
+      this.logger.log(`Categories worked out for ${filled} jobs`);
+    }
+    return filled;
+  }
+
+  private invalidateListCaches() {
+    this.citiesCache = null;
+    this.categoriesCache = null;
+  }
+
+  /**
+   * Works out the salary of jobs that don't have one stored yet (saved before the column existed),
+   * a batch at a time. No AI: text matching only. To recompute every job after changing
+   * extractJobSalary, set the column to NULL and restart.
+   */
+  async fillMissingSalaries(batchSize = 500): Promise<number> {
+    let filled = 0;
+    for (;;) {
+      const jobs = await this.jobRepo
+        .createQueryBuilder('job')
+        .select(['job.id', 'job.vacancy', 'job.description'])
+        .where('job.salary IS NULL')
+        .orderBy('job.id', 'ASC')
+        .take(batchSize)
+        .getMany();
+      if (!jobs.length) break;
+
+      const values = jobs.map((job) => ({ id: job.id, salary: extractJobSalary(job) }));
+      // One statement per batch
+      await this.jobRepo.query(
+        `UPDATE job_entity AS j SET salary = v.salary
+         FROM (SELECT * FROM unnest($1::int[], $2::varchar[]) AS t(id, salary)) AS v
+         WHERE j.id = v.id`,
+        [values.map((v) => v.id), values.map((v) => v.salary)],
+      );
+      filled += jobs.length;
+    }
+    if (filled) this.logger.log(`Salary worked out for ${filled} jobs`);
+    return filled;
   }
 
   async scrapper() {
@@ -255,7 +337,12 @@ export class JobService {
         const sig = `${normalizedVacancy}|${normalizedCompany}|${normalizedLocation}`;
         dto.fingerprint = crypto.createHash('md5').update(sig).digest('hex');
       }
-      return { ...dto, companyKey: companyKey(dto.company) };
+      return {
+        ...dto,
+        companyKey: companyKey(dto.company),
+        salary: extractJobSalary(dto),
+        categories: toCategoryColumn(categorizeJob(dto.vacancy)),
+      };
     });
 
     const chunkSize = 500;
@@ -269,7 +356,7 @@ export class JobService {
         .orIgnore() // skips duplicates based on unique link/fingerprint constraints
         .execute();
     }
-    this.citiesCache = null; // Invalidate cache
+    this.invalidateListCaches();
   }
 
   async findDuplicates() {
@@ -285,7 +372,7 @@ export class JobService {
     return duplicates; // returns array of { link: '...', count: 2 }
   }
   async findAll(filterDto: FilterJobDto) {
-    const { query, page = 1, limit = 10, source, company, companyKey: companyKeyFilter, location, publishDate } = filterDto;
+    const { query, page = 1, limit = 10, source, company, companyKey: companyKeyFilter, location, publishDate, salary, category } = filterDto;
     const skip = (page - 1) * limit;
 
     const qb = this.jobRepo.createQueryBuilder('job');
@@ -408,6 +495,19 @@ export class JobService {
         END >= :publishDate::date`,
         { publishDate: publishDate.trim() }
       );
+    }
+
+    // Only vacancies that state an amount: the same stored salary the list shows (null = not worked out yet)
+    if (salary === 'true' || salary === '1') {
+      hasFilter = true;
+      qb.andWhere("job.salary IS NOT NULL AND job.salary <> ''");
+    }
+
+    // One title category (see job-category.ts); unknown keys are ignored rather than matching nothing
+    const categoryKey = category?.trim();
+    if (categoryKey && JOB_CATEGORY_KEYS.includes(categoryKey)) {
+      hasFilter = true;
+      qb.andWhere('job.categories LIKE :categoryLike', { categoryLike: `%,${categoryKey},%` });
     }
 
     const [jobs, filteredRecords] = await qb.take(limit).skip(skip).getManyAndCount();
@@ -559,6 +659,19 @@ export class JobService {
     return qb.getMany();
   }
 
+  /** Active jobs per category, in JOB_CATEGORIES order, for the filter dropdown. One pass, cached. */
+  async getJobsCountByCategory(): Promise<{ category: string; count: number }[]> {
+    if (!this.categoriesCache) {
+      const qb = this.jobRepo.createQueryBuilder('job').select(
+        JOB_CATEGORIES.map((_, i) => `COUNT(*) FILTER (WHERE job.categories LIKE :cat${i})`).map((sql, i) => `${sql} AS c${i}`),
+      );
+      JOB_CATEGORIES.forEach(({ key }, i) => qb.setParameter(`cat${i}`, `%,${key},%`));
+      const raw = await qb.getRawOne();
+      this.categoriesCache = JOB_CATEGORIES.map(({ key }, i) => ({ category: key, count: Number(raw?.[`c${i}`] ?? 0) }));
+    }
+    return this.categoriesCache;
+  }
+
   async getJobsCountByLocation(search?: string): Promise<{ location: string; count: number }[]> {
     if (!this.citiesCache) {
       const caseClauses: string[] = [];
@@ -635,7 +748,7 @@ export class JobService {
       }
     }
 
-    if (foreignIds.length || titlesCleaned) this.citiesCache = null;
+    if (foreignIds.length || titlesCleaned) this.invalidateListCaches();
     this.logger.log(`Listing cleanup: removed ${foreignIds.length} non-Georgian LinkedIn jobs, cleaned ${titlesCleaned} titles`);
     return { foreignRemoved: foreignIds.length, titlesCleaned };
   }
@@ -662,8 +775,10 @@ export class JobService {
       throw new NotFoundException(`Job with ID ${id} not found`);
     }
     const updated = Object.assign(job, updateJobDto)
+    updated.salary = extractJobSalary(updated);
+    updated.categories = toCategoryColumn(categorizeJob(updated.vacancy));
     await this.jobRepo.save(updated)
-    this.citiesCache = null; // Invalidate cache
+    this.invalidateListCaches();
     return updated;
   }
 
@@ -673,7 +788,7 @@ export class JobService {
       throw new NotFoundException(`Job with ID ${id} not found`);
     }
     const result = await this.jobRepo.remove(job);
-    this.citiesCache = null; // Invalidate cache
+    this.invalidateListCaches();
     return result;
   }
 
@@ -740,13 +855,13 @@ export class JobService {
       `)
       .execute();
 
-    this.citiesCache = null; // Invalidate cache
+    this.invalidateListCaches();
     return { deletedCount: result.affected || 0 };
   }
 
   async hardRemove() {
     const res = await this.jobRepo.clear();
-    this.citiesCache = null; // Invalidate cache
+    this.invalidateListCaches();
     return res;
   }
 
@@ -1260,13 +1375,14 @@ export class JobService {
   async enrichJobDescription(jobId: number): Promise<boolean> {
     const job = await this.jobRepo.findOne({
       where: { id: jobId },
-      select: ['id', 'link', 'description'],
+      select: ['id', 'link', 'vacancy', 'description'],
     });
     if (!job) return false;
 
     const desc = await this.fetchDescriptionForJob(job);
     if (desc && desc.trim().length > 0 && desc.trim() !== job.description) {
-      await this.jobRepo.update(job.id, { description: desc.trim() });
+      // The salary usually comes with the description
+      await this.jobRepo.update(job.id, { description: desc.trim(), salary: extractJobSalary({ vacancy: job.vacancy, description: desc }) });
       return true;
     }
     return false;

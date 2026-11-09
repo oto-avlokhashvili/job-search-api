@@ -69,3 +69,7 @@ export function isGeorgianLinkedinJob(job: { location?: string | null; vacancy?:
   const loc = location.toLowerCase();
   return GEORGIAN_PLACES.some((place) => loc.includes(place));
 }
+
+// ── Salary ─────────────────────────────────────────────────────────────
+
+
