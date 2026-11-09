@@ -10,6 +10,7 @@ import { ApiBearerAuth, ApiExcludeEndpoint } from '@nestjs/swagger';
 import { GoogleAuthGuard } from './guards/google-auth.guard';
 import { Public } from './decorators/public.decorator';
 import { frontendUrl } from 'src/hr/interview';
+import { clearRefreshCookieOptions, REFRESH_COOKIE, refreshCookieOptions } from './refresh-cookie';
 
 
 @Controller('auth')
@@ -30,12 +31,7 @@ export class AuthController {
     if (!user) throw new UnauthorizedException();
     const loginData = this.authService.login(req.user.id);
 
-    res.cookie('refreshToken', loginData.refreshToken, {
-      httpOnly: true,
-      path: '/',
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-    });
+    res.cookie(REFRESH_COOKIE, loginData.refreshToken, refreshCookieOptions());
 
     return {
       id: loginData.id,
@@ -57,7 +53,7 @@ export class AuthController {
 
   @Post('logout')
   async logout(@Res({ passthrough: true }) response: Response) {
-    response.clearCookie('refreshToken');
+    response.clearCookie(REFRESH_COOKIE, clearRefreshCookieOptions());
     return { message: 'Logged out successfully' };
   }
 
@@ -80,13 +76,8 @@ async googleCallback(@Req() req, @Res() res: Response) {
 
   const loginData = this.authService.login(req.user.id);
 
-  // ✅ Set refresh token as httpOnly cookie (same as your local login)
-  res.cookie('refreshToken', loginData.refreshToken, {
-    httpOnly: true,
-    path: '/',
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-  });
+  // Set on the domain this callback runs on: jobup.ge only when GOOGLE_CALLBACK_URL goes through the site's /api
+  res.cookie(REFRESH_COOKIE, loginData.refreshToken, refreshCookieOptions());
 
   // /profile's guard stores the token and drops it from the address bar.
   // Only FRONTEND_URL's origin: it may or may not carry a path.

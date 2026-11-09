@@ -69,7 +69,14 @@ export class UserService implements OnModuleInit {
       user.emailVerificationToken = code;
     }
 
-    const savedUser = await this.userRepo.save(user);
+    let savedUser: User;
+    try {
+      savedUser = await this.userRepo.save(user);
+    } catch (e: any) {
+      // A double-submitted form can pass the check above twice; the unique index stops the second
+      if (e?.code === '23505') throw new ConflictException('ამ ელ-ფოსტით ანგარიში უკვე არსებობს. შედით ანგარიშში.');
+      throw e;
+    }
 
     if (!isEmailVerified) {
       try {

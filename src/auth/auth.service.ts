@@ -7,14 +7,22 @@ import type { ConfigType } from '@nestjs/config';
 import refreshJwtConfig from './config/refresh-jwt-config';
 import { CreateUserDto } from 'src/user/dto/create-user.dto';
 
+const WRONG_CREDENTIALS = 'ელ-ფოსტა ან პაროლი არასწორია';
+const GOOGLE_ACCOUNT = 'ეს ანგარიში Google-ით არის შექმნილი. შედით ღილაკით „Google-ით შესვლა“';
+
 @Injectable()
 export class AuthService {
     constructor(private userService: UserService, private jwtService:JwtService, @Inject(refreshJwtConfig.KEY) private refreshTokenConfig: ConfigType<typeof refreshJwtConfig> ){}
     async validateUser(email:string, password:string){
         const user = await this.userService.findByEmail(email);
-        if(!user) throw new UnauthorizedException("user not found");
+        // One message for an unknown email and a wrong password, so the form doesn't reveal who has an account
+        if(!user) throw new UnauthorizedException(WRONG_CREDENTIALS);
         const isPasswordMatch = await compare(password, user.password);
-        if(!isPasswordMatch) throw new UnauthorizedException("Invalid Credentials")
+        if(!isPasswordMatch) {
+            // Accounts made with Google have no password of their own (an empty one is stored)
+            if (await compare('', user.password)) throw new UnauthorizedException(GOOGLE_ACCOUNT);
+            throw new UnauthorizedException(WRONG_CREDENTIALS);
+        }
 
         return {id:user.id};
     }

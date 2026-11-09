@@ -1,10 +1,13 @@
-import { BeforeInsert, Column, CreateDateColumn, Entity, OneToOne, PrimaryGeneratedColumn } from "typeorm";
+import { BeforeInsert, Column, CreateDateColumn, Entity, Index, OneToOne, PrimaryGeneratedColumn } from "typeorm";
 import * as bcrypt from 'bcrypt';
 import { Subscription } from "src/enums/subscriptions.enum";
 import { UserRole } from "src/enums/user-role.enum";
 import { HrType } from "src/enums/hr-type.enum";
 import { Subscription as SubscriptionDetails } from "./subscription.entity";
 
+// One account per email. Emails are stored trimmed and lowercased (UserService.create), so a plain
+// unique index covers "Name@x.com" vs "name@x.com" too. Created by hand first, under the same name.
+@Index('UQ_user_email', ['email'], { unique: true })
 @Entity()
 export class User {
     @PrimaryGeneratedColumn()
