@@ -74,6 +74,15 @@ export interface HrCandidate {
   secondarySkills: string[];
   domains: string[];
   locationPreference: string;
+  // Facts for the card, as recruiters scan them. Missing (null/[]) on CVs not re-analyzed yet.
+  /** Total paid work experience in years (0 = none yet) */
+  yearsOfExperience: number | null;
+  /** Employers, most recent first (at most 3) */
+  companies: string[];
+  /** Universities and colleges (at most 2) */
+  universities: string[];
+  /** Spoken languages, in English ("English", "Russian") */
+  languages: string[];
   updatedAt: Date;
   match?: number;
   matchedKeywords?: string[];
@@ -575,6 +584,10 @@ export class HrCandidatesService {
         secondarySkills: s?.secondarySkills ?? [],
         domains: s?.domains ?? [],
         locationPreference: s?.locationPreference ?? '',
+        yearsOfExperience: typeof s?.yearsOfExperience === 'number' ? s.yearsOfExperience : null,
+        companies: (s?.companies ?? []).slice(0, 3),
+        universities: (s?.universities ?? []).slice(0, 2),
+        languages: s?.languages ?? [],
         updatedAt: cv.updatedAt,
         unlocked: isUnlocked,
         contact: isUnlocked
