@@ -1,5 +1,5 @@
-import { ExecutionContext, Injectable } from '@nestjs/common';
-import { ThrottlerGuard } from '@nestjs/throttler';
+import { ExecutionContext, HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { ThrottlerGuard, ThrottlerLimitDetail } from '@nestjs/throttler';
 import { isTrustedProxy } from './secret-matches';
 
 /**
@@ -27,5 +27,32 @@ export class ClientIpThrottlerGuard extends ThrottlerGuard {
   protected async shouldSkip(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest();
     return isTrustedProxy(req) && !req.headers['x-client-ip'];
+  }
+
+  // Replaces the default English "ThrottlerException: Too Many Requests" with a Georgian message.
+  protected async throwThrottlingException(
+    _context: ExecutionContext,
+    detail: ThrottlerLimitDetail,
+  ): Promise<void> {
+    const seconds = Math.max(1, detail.timeToBlockExpire || detail.timeToExpire || 60);
+    const wait = seconds >= 60 ? `${Math.ceil(seconds / 60)} წუთის` : `${seconds} წამის`;
+    throw new HttpException(
+      {
+        statusCode: HttpStatus.TOO_MANY_REQUESTS,
+        message: `მოთხოვნების ლიმიტი ამოიწურა. გთხოვთ, სცადოთ ${wait} შემდეგ.`,
+        error: 'Too Many Requests',
+        retryAfterSeconds: seconds,
+      },
+      HttpStatus.TOO_MANY_REQUESTS,
+    );
+  }
+}
+
+// For authenticated routes: limits per user instead of per IP, so different accounts
+// behind the same IP (office, shared network, testing several users) don't share a bucket.
+@Injectable()
+export class UserThrottlerGuard extends ClientIpThrottlerGuard {
+  protected async getTracker(req: Record<string, any>): Promise<string> {
+    return req.user?.id ? `user:${req.user.id}` : resolveClientIp(req);
   }
 }

@@ -7,7 +7,7 @@ import { RequireSubscription } from 'src/auth/decorators/subscription.decorator'
 import { SubscriptionPlan } from 'src/enums/subscriptions.enum';
 import { EntitlementService } from 'src/subscription/entitlement.service';
 import { Throttle } from '@nestjs/throttler';
-import { ClientIpThrottlerGuard } from 'src/auth/guards/client-ip-throttler.guard';
+import { UserThrottlerGuard } from 'src/auth/guards/client-ip-throttler.guard';
 
 @Controller('ai')
 export class AiController {
@@ -39,10 +39,10 @@ export class AiController {
   }
 
   @Post('chat')
-  @UseGuards(JwtAuthGuard, ClientIpThrottlerGuard)
-  @Throttle({ default: { limit: 5, ttl: 600000 } }) // Limit to max 5 requests per 10 minutes
+  @UseGuards(JwtAuthGuard, UserThrottlerGuard)
+  @Throttle({ default: { limit: 20, ttl: 600000 } }) // Limit to max 20 requests per 10 minutes per user
   @ApiBearerAuth('bearerAuth')
-  @ApiOperation({ summary: 'Send a prompt to the career assistant (rate-limited to 5/10m + daily plan quota)' })
+  @ApiOperation({ summary: 'Send a prompt to the career assistant (rate-limited to 20/10m + daily plan quota)' })
   @ApiConsumes('application/json')
   @ApiBody({
     schema: {
