@@ -105,6 +105,20 @@ export class CvService {
     searchToken: string;
     searchAvailable: boolean;
   }> {
+    const { updated, summary, searchToken, searchAvailable } = await this.storePublicCv(dto, file, clientIp);
+    const message = updated ? 'თქვენი CV წარმატებით განახლდა' : 'თქვენი CV წარმატებით აიტვირთა';
+    return { success: true, message, summary, searchToken, searchAvailable };
+  }
+
+  /**
+   * Saves a CV from a candidate without an account (the landing page, quick apply): daily limits,
+   * storage, AI summary and a fresh search token. One CV per email: an earlier one is replaced.
+   */
+  async storePublicCv(
+    dto: PublicCvUploadDto,
+    file: Express.Multer.File,
+    clientIp: string,
+  ): Promise<{ cv: Cv; updated: boolean; summary: CvSummaryDetails | null; searchToken: string; searchAvailable: boolean }> {
     if (!dto.consent) {
       throw new BadRequestException('Consent is required to submit your CV');
     }
@@ -177,9 +191,9 @@ export class CvService {
       existing.summary = summary;
       existing.fileHash = fileHash;
       existing.searchTokenHash = searchTokenHash;
-      await this.cvRepository.save(existing);
+      const cv = await this.cvRepository.save(existing);
 
-      return { success: true, message: 'თქვენი CV წარმატებით განახლდა', summary, searchToken, searchAvailable };
+      return { cv, updated: true, summary, searchToken, searchAvailable };
     }
 
     // 6. Create new candidate record
@@ -202,7 +216,7 @@ export class CvService {
 
     await this.cvRepository.save(cv);
 
-    return { success: true, message: 'თქვენი CV წარმატებით აიტვირთა', summary, searchToken, searchAvailable };
+    return { cv, updated: false, summary, searchToken, searchAvailable };
   }
 
   /**

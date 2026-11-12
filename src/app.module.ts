@@ -23,6 +23,7 @@ import { StatsModule } from './stats/stats.module';
 import { LinkedinSearchModule } from './linkedin-search/linkedin-search.module';
 import { HrModule } from './hr/hr.module';
 import { FavoritesModule } from './favorites/favorites.module';
+import { QuickApplyModule } from './quick-apply/quick-apply.module';
 
 @Module({
   imports: [
@@ -110,6 +111,7 @@ import { FavoritesModule } from './favorites/favorites.module';
     StatsModule,
     LinkedinSearchModule,
     HrModule,
+    QuickApplyModule,
   ],
   controllers: [AppController],
   providers: [AppService, ScheduleService],

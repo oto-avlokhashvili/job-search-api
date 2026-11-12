@@ -42,6 +42,11 @@ export class JobEntity {
   @Column({ type: 'varchar', length: 255, nullable: true, default: null })
   categories?: string | null;
 
+  // Where the vacancy asks for CVs, for quick apply (see extractApplyEmail); '' = no address in the
+  // description (apply on the source site); null = not worked out yet (JobService fills those in).
+  @Column({ type: 'varchar', length: 255, nullable: true, default: null })
+  applyEmail?: string | null;
+
   // The company's logo (public 128px URL), copied here so every vacancy query returns it
   @Column({ type: 'varchar', length: 500, nullable: true, default: null })
   companyLogo?: string | null;

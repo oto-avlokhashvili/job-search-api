@@ -18,6 +18,7 @@ import { companyKey } from 'src/companies/company-key';
 import { LogoCandidate } from 'src/companies/company-logo';
 import { cleanJobTitle, isGeorgianLinkedinJob } from './listing-quality';
 import { extractJobSalary } from './salary';
+import { extractApplyEmail } from './apply-email';
 import { categorizeJob, JOB_CATEGORIES, JOB_CATEGORY_KEYS, toCategoryColumn } from './job-category';
 
 export interface LinkedinDuplicateCheckResult {
@@ -228,6 +229,7 @@ export class JobService implements OnModuleInit {
         ...createJobDto,
         companyKey: companyKey(createJobDto.company),
         salary: extractJobSalary(createJobDto),
+        applyEmail: extractApplyEmail(createJobDto.description),
         categories: toCategoryColumn(categorizeJob(createJobDto.vacancy)),
       });
       await this.companyLogoService.register([createJobDto.company], []).catch(() => {});
@@ -245,6 +247,36 @@ export class JobService implements OnModuleInit {
     // In the background: startup doesn't wait for it
     void this.fillMissingSalaries().catch((e) => this.logger.error(`Salary fill failed: ${e.message}`));
     void this.fillMissingCategories().catch((e) => this.logger.error(`Category fill failed: ${e.message}`));
+    void this.fillMissingApplyEmails().catch((e) => this.logger.error(`Apply email fill failed: ${e.message}`));
+  }
+
+  /**
+   * Works out the quick-apply address of jobs that don't have one stored yet (saved before the
+   * column existed), a batch at a time. To recompute every job after changing extractApplyEmail,
+   * set the column to NULL and restart.
+   */
+  async fillMissingApplyEmails(batchSize = 500): Promise<number> {
+    let filled = 0;
+    for (;;) {
+      const jobs = await this.jobRepo
+        .createQueryBuilder('job')
+        .select(['job.id', 'job.description'])
+        .where('job.applyEmail IS NULL')
+        .orderBy('job.id', 'ASC')
+        .take(batchSize)
+        .getMany();
+      if (!jobs.length) break;
+
+      await this.jobRepo.query(
+        `UPDATE job_entity AS j SET "applyEmail" = v.email
+         FROM (SELECT * FROM unnest($1::int[], $2::varchar[]) AS t(id, email)) AS v
+         WHERE j.id = v.id`,
+        [jobs.map((job) => job.id), jobs.map((job) => extractApplyEmail(job.description))],
+      );
+      filled += jobs.length;
+    }
+    if (filled) this.logger.log(`Apply email worked out for ${filled} jobs`);
+    return filled;
   }
 
   /**
@@ -341,6 +373,7 @@ export class JobService implements OnModuleInit {
         ...dto,
         companyKey: companyKey(dto.company),
         salary: extractJobSalary(dto),
+        applyEmail: extractApplyEmail(dto.description),
         categories: toCategoryColumn(categorizeJob(dto.vacancy)),
       };
     });
@@ -776,6 +809,7 @@ export class JobService implements OnModuleInit {
     }
     const updated = Object.assign(job, updateJobDto)
     updated.salary = extractJobSalary(updated);
+    updated.applyEmail = extractApplyEmail(updated.description);
     updated.categories = toCategoryColumn(categorizeJob(updated.vacancy));
     await this.jobRepo.save(updated)
     this.invalidateListCaches();
@@ -1382,7 +1416,11 @@ export class JobService implements OnModuleInit {
     const desc = await this.fetchDescriptionForJob(job);
     if (desc && desc.trim().length > 0 && desc.trim() !== job.description) {
       // The salary usually comes with the description
-      await this.jobRepo.update(job.id, { description: desc.trim(), salary: extractJobSalary({ vacancy: job.vacancy, description: desc }) });
+      await this.jobRepo.update(job.id, {
+        description: desc.trim(),
+        salary: extractJobSalary({ vacancy: job.vacancy, description: desc }),
+        applyEmail: extractApplyEmail(desc),
+      });
       return true;
     }
     return false;
