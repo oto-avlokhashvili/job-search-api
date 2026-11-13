@@ -1,6 +1,4 @@
 import { Module } from '@nestjs/common';
-import { APP_INTERCEPTOR } from '@nestjs/core';
-import { HideSourceLinksInterceptor } from './job/hide-source-links.interceptor';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -116,11 +114,6 @@ import { QuickApplyModule } from './quick-apply/quick-apply.module';
     QuickApplyModule,
   ],
   controllers: [AppController],
-  providers: [
-    AppService,
-    ScheduleService,
-    // Imported vacancies' original links never leave the API (LinkedIn and Job Up's own excepted)
-    { provide: APP_INTERCEPTOR, useClass: HideSourceLinksInterceptor },
-  ],
+  providers: [AppService, ScheduleService],
 })
 export class AppModule {}
