@@ -7,6 +7,7 @@ import { UserService } from '../user/user.service';
 import { AiMatchedJobsService } from '../ai-matched-jobs/ai-matched-jobs.service';
 import { SentJobsService } from '../sent-jobs/sent-jobs.service';
 import { EntitlementService } from '../subscription/entitlement.service';
+import { jobPageUrl } from '../job/public-link';
 
 /** Optional parts of a transactional email. Attachments are base64 (small files only: they travel in the queue job). */
 export interface EmailExtras {
@@ -250,7 +251,7 @@ export class EmailService {
             ${gapsHtml}
             
             <div style="margin-top: 15px;">
-              <a href="${job.link}" target="_blank" style="display: inline-block; background-color: #3b82f6; color: #ffffff; text-decoration: none; padding: 8px 16px; font-size: 14px; font-weight: 600; border-radius: 6px;">ვაკანსიის ნახვა →</a>
+              <a href="${jobPageUrl(job)}" target="_blank" style="display: inline-block; background-color: #3b82f6; color: #ffffff; text-decoration: none; padding: 8px 16px; font-size: 14px; font-weight: 600; border-radius: 6px;">ვაკანსიის ნახვა →</a>
             </div>
           </div>
         `;

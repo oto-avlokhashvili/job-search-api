@@ -13,6 +13,7 @@ import { UserService } from 'src/user/user.service';
 import { EntitlementService } from 'src/subscription/entitlement.service';
 import { SubscriptionService } from 'src/subscription/subscription.service';
 import { User } from 'src/Entities/user.entity';
+import { jobPageUrl } from 'src/job/public-link';
 
 /** Only jobs at least this good a fit are sent to Telegram. */
 const TELEGRAM_MIN_MATCH = 60;
@@ -398,7 +399,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
                         (job.matchedKeywords.length
                             ? `🔑 ${job.matchedKeywords.map((k) => k.replace(/[_*`\[\]]/g, '')).join(', ')}\n`
                             : '') +
-                        `🔗 [დეტალები](${job.link})\n` +
+                        `🔗 [დეტალები](${jobPageUrl(job)})\n` +
                         `━━━━━━━━━━━━━━━━━━━`,
                         { parse_mode: 'Markdown' }
                     );

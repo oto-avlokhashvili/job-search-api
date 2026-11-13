@@ -50,6 +50,10 @@ describe('extractApplyEmail', () => {
     expect(extractApplyEmail('info@jobs.ge noreply@company.ge logo@2x.png pdp.officer@x.ge personaldata@x.ge')).toBe('');
   });
 
+  it('ignores security, legal and press mailboxes', () => {
+    expect(extractApplyEmail('Report issues to security@toloka.ai or press@x.ge')).toBe('');
+  });
+
   it('returns empty without a description or an address', () => {
     expect(extractApplyEmail(null)).toBe('');
     expect(extractApplyEmail('დაგვიკავშირდით: 577 123 456')).toBe('');

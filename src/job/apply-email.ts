@@ -22,7 +22,7 @@ const BLOCKED_DOMAINS = new Set([
 
 // Mailboxes that never take applications (data-protection officers, robots, ...)
 const BLOCKED_LOCAL =
-  /^(no-?reply|do-?not-?reply|donotreply|privacy|p?dpo|pdp([._-]?officer)?|personal-?data|gdpr|data-?protection|abuse|postmaster|webmaster|mailer-daemon|complaints?)$/;
+  /^(no-?reply|do-?not-?reply|donotreply|privacy|p?dpo|pdp([._-]?officer)?|personal-?data|gdpr|data-?protection|abuse|security|legal|billing|press|postmaster|webmaster|mailer-daemon|complaints?)$/;
 
 // File names that look like addresses ("logo@2x.png")
 const FILE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'pdf', 'doc', 'docx']);
