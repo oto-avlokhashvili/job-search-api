@@ -50,6 +50,7 @@ export class QuickApplyProcessor extends WorkerHost {
         candidateName: application.candidateName,
         candidateEmail: application.candidateEmail,
         candidatePhone: application.candidatePhone,
+        toEmail: application.toEmail,
         siteUrl: frontendUrl(),
       });
       await this.emailService.sendDirectEmail(

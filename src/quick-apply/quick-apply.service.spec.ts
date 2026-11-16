@@ -72,6 +72,14 @@ describe('QuickApplyService.apply', () => {
     expect(queue.add).not.toHaveBeenCalled();
   });
 
+  it('refuses a vacancy whose deadline has passed, before storing anything', async () => {
+    const { service, queue, limits, cvService } = setup({ job: { ...job, deadline: '01/01/2020' } });
+    await expect(service.apply(7, dto(), file, null, 'ip')).rejects.toMatchObject({ response: { code: 'DEADLINE_PASSED' } });
+    expect(limits.consume).not.toHaveBeenCalled();
+    expect(cvService.storePublicCv).not.toHaveBeenCalled();
+    expect(queue.add).not.toHaveBeenCalled();
+  });
+
   it("works the address out when the job's column isn't filled in yet", async () => {
     const { service, applicationRepository } = setup({ job: { ...job, applyEmail: null } });
     await service.apply(7, dto(), undefined, user, 'ip');

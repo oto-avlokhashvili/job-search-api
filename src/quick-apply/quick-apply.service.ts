@@ -15,6 +15,7 @@ import { CvFileValidationPipe } from 'src/cv/cv-file-validation.pipe';
 import { PublicCvLimitsService } from 'src/cv/public-cv-limits.service';
 import { TurnstileService } from 'src/cv/turnstile.service';
 import { extractApplyEmail } from 'src/job/apply-email';
+import { deadlinePassed } from 'src/job/deadline';
 import { QuickApplyDto } from './dto/quick-apply.dto';
 
 export const QUICK_APPLY_QUEUE = 'quick-apply';
@@ -28,7 +29,8 @@ const envInt = (name: string, fallback: number) => Number(process.env[name]) || 
 // Per candidate (account or email), per employer address, and for the whole site (the Brevo plan's
 // daily sending limit is shared with the alert emails)
 const PER_CANDIDATE_PER_DAY = envInt('QUICK_APPLY_PER_CANDIDATE_PER_DAY', 20);
-const PER_EMPLOYER_PER_DAY = envInt('QUICK_APPLY_PER_EMPLOYER_PER_DAY', 100);
+// Kept low so one employer's inbox never feels flooded by us
+const PER_EMPLOYER_PER_DAY = envInt('QUICK_APPLY_PER_EMPLOYER_PER_DAY', 30);
 const SITE_PER_DAY = envInt('QUICK_APPLY_SITE_PER_DAY', 250);
 
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -115,6 +117,14 @@ export class QuickApplyService {
         code: 'NO_APPLY_EMAIL',
         message: 'ამ ვაკანსიაზე განაცხადი წყარო საიტზე იგზავნება',
         link: job.link,
+      });
+    }
+    // A CV for a closed vacancy only annoys the employer (and gets our mail reported as spam)
+    if (deadlinePassed(job.deadline)) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'DEADLINE_PASSED',
+        message: 'ამ ვაკანსიის ვადა ამოიწურა',
       });
     }
 
