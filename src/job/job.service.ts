@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Logger, ConflictException, OnModuleInit } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger, ConflictException, ForbiddenException, OnModuleInit } from '@nestjs/common';
 import { CreateJobDto } from './dto/create-job.dto';
 import { UpdateJobDto } from './dto/update-job.dto';
 import { Brackets, ILike, In, LessThan, Repository } from 'typeorm';
@@ -19,6 +19,7 @@ import { LogoCandidate } from 'src/companies/company-logo';
 import { cleanJobTitle, isGeorgianLinkedinJob } from './listing-quality';
 import { extractJobSalary } from './salary';
 import { extractApplyEmail } from './apply-email';
+import { BLOCKED_COMPANY_KEYS, isBlockedCompany } from './blocked-companies';
 import { categorizeJob, JOB_CATEGORIES, JOB_CATEGORY_KEYS, toCategoryColumn } from './job-category';
 
 export interface LinkedinDuplicateCheckResult {
@@ -216,6 +217,9 @@ export class JobService implements OnModuleInit {
 
   }
   async create(createJobDto: CreateJobDto) {
+    if (isBlockedCompany(createJobDto.company)) {
+      throw new ForbiddenException('This company asked not to have its vacancies listed');
+    }
     if (!createJobDto.fingerprint) {
       const normalizedVacancy = this.normalizeText(createJobDto.vacancy);
       const normalizedCompany = this.normalizeText(createJobDto.company);
@@ -361,7 +365,8 @@ export class JobService implements OnModuleInit {
 
 
   async insertMany(createJobDto: CreateJobDto[]) {
-    const values = createJobDto.map(dto => {
+    // Every scraper saves through here: companies that opted out never reach the table
+    const values = createJobDto.filter((dto) => !isBlockedCompany(dto.company)).map(dto => {
       if (!dto.fingerprint) {
         const normalizedVacancy = this.normalizeText(dto.vacancy);
         const normalizedCompany = this.normalizeText(dto.company);
@@ -756,7 +761,17 @@ export class JobService implements OnModuleInit {
    * Fixes listings already in the table: deletes LinkedIn postings outside Georgia (the country)
    * and strips requisition ids from titles. Runs after every merge; safe to run any time.
    */
-  async cleanupListings(): Promise<{ foreignRemoved: number; titlesCleaned: number }> {
+  async cleanupListings(): Promise<{ foreignRemoved: number; titlesCleaned: number; blockedRemoved: number }> {
+    // Companies that asked to be taken off the site, including rows saved before they were blocked
+    const blockedRemoved = BLOCKED_COMPANY_KEYS.length
+      ? ((await this.jobRepo
+          .createQueryBuilder()
+          .delete()
+          .from(JobEntity)
+          .where('"companyKey" = ANY(:keys)', { keys: [...BLOCKED_COMPANY_KEYS] })
+          .execute()).affected ?? 0)
+      : 0;
+
     const linkedin = await this.jobRepo
       .createQueryBuilder('job')
       .select(['job.id', 'job.vacancy', 'job.company', 'job.location'])
@@ -781,9 +796,11 @@ export class JobService implements OnModuleInit {
       }
     }
 
-    if (foreignIds.length || titlesCleaned) this.invalidateListCaches();
-    this.logger.log(`Listing cleanup: removed ${foreignIds.length} non-Georgian LinkedIn jobs, cleaned ${titlesCleaned} titles`);
-    return { foreignRemoved: foreignIds.length, titlesCleaned };
+    if (foreignIds.length || titlesCleaned || blockedRemoved) this.invalidateListCaches();
+    this.logger.log(
+      `Listing cleanup: removed ${foreignIds.length} non-Georgian LinkedIn jobs and ${blockedRemoved} from blocked companies, cleaned ${titlesCleaned} titles`,
+    );
+    return { foreignRemoved: foreignIds.length, titlesCleaned, blockedRemoved };
   }
 
   /** The jobs that still exist among `ids`, in the order given (missing ones are left out). */

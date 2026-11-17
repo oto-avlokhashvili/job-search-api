@@ -269,6 +269,28 @@ describe('JobService', () => {
     });
   });
 
+  describe('blocked companies', () => {
+    const job = (company: string) =>
+      ({ vacancy: 'მოლარე', company, location: 'თბილისი', link: `https://x/${company}`, publishDate: '', deadline: '' }) as any;
+
+    it('insertMany never saves their vacancies', async () => {
+      await service.insertMany([job('შპს ისი პარი'), job('Acme')]);
+      const saved = queryBuilderMock.values.mock.calls.flatMap((c: any[]) => c[0]);
+      expect(saved.map((j: any) => j.company)).toEqual(['Acme']);
+    });
+
+    it('create refuses them', async () => {
+      await expect(service.create(job('ისი პარი'))).rejects.toThrow('asked not to have its vacancies listed');
+    });
+
+    it('cleanupListings deletes the ones already saved', async () => {
+      queryBuilderMock.execute.mockResolvedValueOnce({ affected: 6 });
+      const result = await service.cleanupListings();
+      expect(queryBuilderMock.where).toHaveBeenCalledWith('"companyKey" = ANY(:keys)', { keys: ['ისიპარი', 'isipari'] });
+      expect(result.blockedRemoved).toBe(6);
+    });
+  });
+
   describe('removeOutdated', () => {
     it('should run delete query and return deletedCount', async () => {
       queryBuilderMock.execute.mockResolvedValue({ affected: 5 });
