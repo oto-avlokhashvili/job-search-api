@@ -20,6 +20,7 @@ import { cleanJobTitle, isGeorgianLinkedinJob } from './listing-quality';
 import { extractJobSalary } from './salary';
 import { extractApplyEmail } from './apply-email';
 import { BLOCKED_COMPANY_KEYS, isBlockedCompany } from './blocked-companies';
+import { hasSearchCriterion, MAX_SEARCH_RESULTS } from './search-limits';
 import { categorizeJob, JOB_CATEGORIES, JOB_CATEGORY_KEYS, toCategoryColumn } from './job-category';
 
 export interface LinkedinDuplicateCheckResult {
@@ -409,9 +410,25 @@ export class JobService implements OnModuleInit {
 
     return duplicates; // returns array of { link: '...', count: 2 }
   }
+  /**
+   * Vacancy search. Job Up is a search, not a catalogue: nothing comes back without something to
+   * search for (a query, city, category or "salary shown"), and never more than MAX_SEARCH_RESULTS
+   * per search, so the whole table can't be paged through.
+   */
   async findAll(filterDto: FilterJobDto) {
-    const { query, page = 1, limit = 10, source, company, companyKey: companyKeyFilter, location, publishDate, salary, category } = filterDto;
+    const { query, page = 1, limit = 10, source, location, publishDate, salary, category } = filterDto;
     const skip = (page - 1) * limit;
+    const take = Math.min(limit, MAX_SEARCH_RESULTS - skip);
+
+    if (!hasSearchCriterion(filterDto) || take <= 0) {
+      const [totalRecords, portalCounts] = await Promise.all([this.jobRepo.count(), countJobsByPortal(this.jobRepo)]);
+      return {
+        jobs: [],
+        counts: { totalRecords, filteredRecords: take <= 0 ? MAX_SEARCH_RESULTS : 0, ...portalCounts },
+        page,
+        limit,
+      };
+    }
 
     const qb = this.jobRepo.createQueryBuilder('job');
 
@@ -484,16 +501,6 @@ export class JobService implements OnModuleInit {
       }
     }
 
-    if (company && company.trim().length > 0) {
-      hasFilter = true;
-      qb.andWhere('LOWER(job.company) LIKE :company', { company: `%${company.trim().toLowerCase()}%` });
-    }
-
-    if (companyKeyFilter && companyKeyFilter.trim().length > 0) {
-      hasFilter = true;
-      qb.andWhere('job.companyKey = :companyKeyFilter', { companyKeyFilter: companyKeyFilter.trim() });
-    }
-
     if (location && location.trim().length > 0) {
       hasFilter = true;
       const trimmedLoc = location.trim();
@@ -548,32 +555,25 @@ export class JobService implements OnModuleInit {
       qb.andWhere('job.categories LIKE :categoryLike', { categoryLike: `%,${categoryKey},%` });
     }
 
-    const [jobs, filteredRecords] = await qb.take(limit).skip(skip).getManyAndCount();
+    const [jobs, filteredRecords] = await qb.take(take).skip(skip).getManyAndCount();
     const [totalRecords, portalCounts] = await Promise.all([
       this.jobRepo.count(),
       countJobsByPortal(this.jobRepo),
     ]);
 
     return {
-      jobs,
+      // Results are a list of vacancies, not copies of them: no descriptions (the vacancy's modal
+      // fetches its own). Server-rendered pages embed this response, so it would end up in their HTML.
+      jobs: jobs.map(({ description: _description, ...job }) => job),
       counts: {
         totalRecords,
-        filteredRecords: hasFilter ? filteredRecords : totalRecords,
+        // What this search can show, not everything that matched
+        filteredRecords: Math.min(hasFilter ? filteredRecords : totalRecords, MAX_SEARCH_RESULTS),
         ...portalCounts,
       },
       page,
       limit,
     };
-  }
-
-  /** Only the fields the sitemap and indexing notifier need, newest first. */
-  async findForSitemap(limit?: number) {
-    const qb = this.jobRepo
-      .createQueryBuilder('job')
-      .select(['job.id', 'job.vacancy', 'job.company', 'job.publishDate', 'job.deadline'])
-      .orderBy('job.id', 'DESC');
-    if (limit) qb.take(limit);
-    return { jobs: await qb.getMany() };
   }
 
   /** `limit` defaults to 60; pass null to return every matching job. */

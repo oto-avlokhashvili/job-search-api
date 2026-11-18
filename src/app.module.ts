@@ -24,6 +24,7 @@ import { LinkedinSearchModule } from './linkedin-search/linkedin-search.module';
 import { HrModule } from './hr/hr.module';
 import { FavoritesModule } from './favorites/favorites.module';
 import { QuickApplyModule } from './quick-apply/quick-apply.module';
+import { SearchModule } from './search/search.module';
 
 @Module({
   imports: [
@@ -112,6 +113,7 @@ import { QuickApplyModule } from './quick-apply/quick-apply.module';
     LinkedinSearchModule,
     HrModule,
     QuickApplyModule,
+    SearchModule,
   ],
   controllers: [AppController],
   providers: [AppService, ScheduleService],

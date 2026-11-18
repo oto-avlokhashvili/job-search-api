@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { JobService, buildWordBoundaryRegex, buildPhraseRegex, buildSalaryRegex, parseSearchQuery, getCityNameVariants } from './job.service';
 import { JobEntity } from 'src/Entities/job.entity';
+import { MAX_SEARCH_RESULTS } from './search-limits';
 import { ScrapedJobEntity } from 'src/Entities/scraped-job.entity';
 import { JobsGeScraperService } from '../scrapers/jobs-ge.scraper';
 import { HrGeScraperService } from '../scrapers/hr-ge-scraper.service';
@@ -214,6 +215,33 @@ describe('JobService', () => {
         salaryRegex0: buildSalaryRegex('1500'),
       });
       expect(queryBuilderMock.setParameter).toHaveBeenCalledWith('phraseRegex', buildPhraseRegex('გაყიდვების მენეჯერი'));
+    });
+
+    it('returns nothing without something to search for, so the catalogue cannot be browsed', async () => {
+      const result = await service.findAll({ page: 1, limit: 10, source: 'hr.ge' });
+      expect(result.jobs).toEqual([]);
+      expect(queryBuilderMock.getManyAndCount).not.toHaveBeenCalled();
+    });
+
+    it('lists vacancies without their descriptions', async () => {
+      queryBuilderMock.getManyAndCount.mockResolvedValue([[{ id: 1, vacancy: 'მოლარე', description: 'სრული ტექსტი' }], 1]);
+      const result = await service.findAll({ query: 'მოლარე', page: 1, limit: 10 });
+      expect(result.jobs).toEqual([{ id: 1, vacancy: 'მოლარე' }]);
+    });
+
+    it('never shows more than MAX_SEARCH_RESULTS per search', async () => {
+      queryBuilderMock.getManyAndCount.mockResolvedValue([[], 500]);
+      const first = await service.findAll({ query: 'მოლარე', page: 1, limit: 30 });
+      expect(first.counts.filteredRecords).toBe(MAX_SEARCH_RESULTS);
+
+      // Page 3 of 25 starts at 50: only the last 10 of the 60 are left
+      await service.findAll({ query: 'მოლარე', page: 3, limit: 25 });
+      expect(queryBuilderMock.take).toHaveBeenLastCalledWith(MAX_SEARCH_RESULTS - 50);
+
+      queryBuilderMock.getManyAndCount.mockClear();
+      const beyond = await service.findAll({ query: 'მოლარე', page: 3, limit: 30 });
+      expect(beyond.jobs).toEqual([]);
+      expect(queryBuilderMock.getManyAndCount).not.toHaveBeenCalled();
     });
 
     it('should also match the other spelling of a city in location', async () => {

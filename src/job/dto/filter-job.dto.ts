@@ -13,15 +13,6 @@ export class FilterJobDto {
 
   @IsOptional()
   @IsString()
-  company?: string;
-
-  // Exact company (normalized name, see companyKey()); `company` above is a substring match
-  @IsOptional()
-  @IsString()
-  companyKey?: string;
-
-  @IsOptional()
-  @IsString()
   location?: string;
 
   @IsOptional()
@@ -44,12 +35,11 @@ export class FilterJobDto {
   @Min(1)
   page?: number = 1;
 
-  // Capped so a single request can't download the whole table; the sitemap uses
-  // the internal /job/sitemap endpoint instead.
+  // Per page; a whole search never shows more than MAX_SEARCH_RESULTS (see search-limits.ts)
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
   @Min(1)
-  @Max(50)
+  @Max(30)
   limit?: number = 10;
 }

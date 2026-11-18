@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ParseIntPipe, BadRequestException, ForbiddenException, NotFoundException, UseGuards, Req, Logger } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, ParseIntPipe, BadRequestException, NotFoundException, UseGuards, Logger } from '@nestjs/common';
 import { ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiConflictResponse, ApiCreatedResponse, ApiOperation, ApiQuery, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { InternalKeyGuard } from 'src/auth/guards/internal-key.guard';
@@ -101,35 +101,20 @@ export class JobController {
   @ApiBearerAuth('bearerAuth')
   @UseGuards(OptionalJwtAuthGuard, ClientIpThrottlerGuard)
   @Throttle({ default: { limit: 60, ttl: 60000 } }) // 60 requests per minute per visitor
-  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Max 50' })
+  @ApiOperation({
+    summary: 'Vacancy search: needs a query, location, category or salary=true; at most 60 results per search',
+  })
+  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Max 30' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'query', required: false, type: String })
   @ApiQuery({ name: 'source', required: false, type: String, description: 'Source filter (e.g. jobs.ge, hr.ge, awork.ge, myjobs.ge, linkedin)' })
-  @ApiQuery({ name: 'company', required: false, type: String })
-  @ApiQuery({ name: 'companyKey', required: false, type: String, description: 'Exact company (normalized name), for company pages' })
   @ApiQuery({ name: 'location', required: false, type: String })
   @ApiQuery({ name: 'publishDate', required: false, type: String })
   @ApiQuery({ name: 'salary', required: false, type: String, description: "'true' = only vacancies that state a salary" })
   @ApiQuery({ name: 'category', required: false, type: String, description: 'Title category: it, sales, finance, customer-service, admin, medicine, hospitality, marketing, logistics, engineering, education, legal, services' })
   @Get('all')
-  async findAll(@Query() filterDto: FilterJobDto, @Req() req: any) {
-    const page = Math.max(1, Number(filterDto.page) || 1);
-
-    if (page > 5 && !req?.user) {
-      throw new ForbiddenException('Authentication is required to view pages beyond page 5');
-    }
-
+  async findAll(@Query() filterDto: FilterJobDto) {
     return await this.jobService.findAll(filterDto);
-  }
-
-  @ApiSecurity('internalKey')
-  @UseGuards(InternalKeyGuard)
-  @ApiOperation({ summary: 'Lightweight list of all jobs, newest first, for the sitemap and indexing notifier' })
-  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Only the newest N jobs' })
-  @Get('sitemap')
-  async sitemap(@Query('limit') limit?: string) {
-    const n = Number(limit);
-    return await this.jobService.findForSitemap(Number.isInteger(n) && n > 0 ? n : undefined);
   }
 
   @ApiSecurity('internalKey')

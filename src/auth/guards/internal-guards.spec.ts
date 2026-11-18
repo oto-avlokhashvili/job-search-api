@@ -59,8 +59,9 @@ describe('FilterJobDto limit', () => {
   const errorsFor = async (limit: unknown) =>
     validate(plainToInstance(FilterJobDto, { limit }, { enableImplicitConversion: true }));
 
-  it('allows up to 50', async () => {
-    expect(await errorsFor('50')).toHaveLength(0);
+  it('allows up to 30', async () => {
+    expect(await errorsFor('30')).toHaveLength(0);
+    expect((await errorsFor('31'))[0]?.property).toBe('limit');
   });
 
   it('rejects anything larger', async () => {

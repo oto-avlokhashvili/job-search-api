@@ -1,28 +1,20 @@
 import { frontendUrl } from 'src/hr/interview';
 
 /**
- * Where notifications send the user. LinkedIn postings and Job Up's own open directly; every other
- * imported vacancy opens on its Job Up page, which credits the source portal and links to the original.
+ * Where notifications send the user: the vacancy's original post (hr.ge, jobs.ge, LinkedIn, ...).
+ * Job Up has no page per vacancy, so a job without a usable link sends the user to the search (home).
  */
-const DIRECT_HOSTS = ['linkedin.com', 'jobup.ge'];
+export function jobPageUrl(job: { id?: number | null; link?: string | null }): string {
+  return sourceUrl(job.link) ?? `${frontendUrl()}/home`;
+}
 
-function hostOf(link: string): string | null {
+/** The link only when it's a real web address: scraped data can hold anything. */
+function sourceUrl(link: unknown): string | null {
+  if (typeof link !== 'string' || !link) return null;
   try {
-    return new URL(link).hostname.toLowerCase();
+    const url = new URL(link);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? link : null;
   } catch {
     return null;
   }
-}
-
-function opensDirectly(link: unknown): link is string {
-  if (typeof link !== 'string' || !link) return false;
-  const host = hostOf(link);
-  if (!host) return false;
-  return DIRECT_HOSTS.some((d) => host === d || host.endsWith(`.${d}`)) || host === hostOf(frontendUrl());
-}
-
-/** Where a notification should send the user: the original (LinkedIn/Job Up) or the vacancy's Job Up page. */
-export function jobPageUrl(job: { id?: number | null; link?: string | null }): string {
-  if (opensDirectly(job.link)) return job.link;
-  return job.id ? `${frontendUrl()}/vacancies/${job.id}` : `${frontendUrl()}/vacancies`;
 }
